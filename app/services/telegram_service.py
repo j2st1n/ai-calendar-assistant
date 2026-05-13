@@ -144,7 +144,22 @@ class TelegramBotRuntime:
         self._last_error = ""
 
     def reload(self, token: str) -> str:
-        self.stop()
+        old_app = self._application
+        old_task = self._task
+
+        if old_app is not None:
+            try:
+                old_app.stop_running()
+            except Exception:
+                pass
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+
+        self._task = None
+        self._application = None
+        self.running = False
+        self._last_error = ""
+
         from telegram import Update
         from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
