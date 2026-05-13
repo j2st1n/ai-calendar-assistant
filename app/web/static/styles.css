@@ -29,6 +29,10 @@ a { color: #2454d6; text-decoration: none; }
 .metric span { color: #68758a; display: block; }
 .metric strong { display: block; font-size: 32px; margin-top: 8px; }
 
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.chip { background: #eef3ff; border-radius: 999px; color: #2454d6; padding: 6px 10px; }
+
 label { display: grid; gap: 8px; }
 input { border: 1px solid #cbd5e1; border-radius: 10px; font: inherit; padding: 10px 12px; }
 button { background: #2454d6; border: 0; border-radius: 10px; color: white; cursor: pointer; font: inherit; padding: 10px 14px; }

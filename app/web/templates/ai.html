@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>AI Settings</h1>
+  <p class="muted">这里先完成 AI Provider、Base URL、API Key、模型列表的配置基础。真正的连接测试后续接入。</p>
+  {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
+  {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
+  <form method="post" action="/admin/ai" class="stack">
+    <label>
+      Provider
+      <select name="provider_name">
+        {% for provider in providers %}
+        <option value="{{ provider.name }}" {% if provider.name == provider_name %}selected{% endif %}>
+          {{ provider.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Provider Type
+      <select name="provider_type">
+        <option value="openai_compatible" {% if provider_type == 'openai_compatible' %}selected{% endif %}>openai_compatible</option>
+        <option value="anthropic" {% if provider_type == 'anthropic' %}selected{% endif %}>anthropic</option>
+      </select>
+    </label>
+    <label>
+      Base URL
+      <input name="base_url" value="{{ base_url }}" required>
+    </label>
+    <label>
+      API Key
+      <input name="api_key" type="password" value="" placeholder="{{ api_key_masked or '留空表示保持现有值' }}" autocomplete="off">
+    </label>
+    <label>
+      Model
+      <input name="model" value="{{ model }}" placeholder="可拉取后选择，也可手动输入">
+    </label>
+    <label>
+      可用模型列表（逗号分隔）
+      <input name="available_models_raw" value="{{ available_models | join(',') }}" placeholder="gpt-4o-mini,gpt-4o">
+    </label>
+    <div class="row">
+      <button type="submit">保存 AI 设置</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>模型列表</h2>
+  <p class="muted">当前列表来自本地预设或上一次“拉取模型”结果。</p>
+  <div class="chips">
+    {% for model_name in available_models %}
+    <span class="chip">{{ model_name }}</span>
+    {% endfor %}
+  </div>
+  <form method="post" action="/admin/ai/models" class="row">
+    <input type="hidden" name="provider_name" value="{{ provider_name }}">
+    <input type="hidden" name="provider_type" value="{{ provider_type }}">
+    <button type="submit">拉取模型列表</button>
+  </form>
+  <form method="post" action="/admin/ai/test" class="row">
+    <button type="submit">测试连接</button>
+  </form>
+</section>
+{% endblock %}

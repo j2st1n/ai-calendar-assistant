@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
+from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
 from app.db.models import EventRecord
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
@@ -38,6 +39,32 @@ def dashboard_stats(session: Session) -> dict[str, int]:
     failed = session.scalar(select(func.count()).select_from(EventRecord).where(EventRecord.status == "failed")) or 0
     pending = session.scalar(select(func.count()).select_from(EventRecord).where(EventRecord.status == "pending")) or 0
     return {"total_events": total, "failed_events": failed, "pending_events": pending}
+
+
+def ai_settings_payload(settings_service: SettingsService) -> dict[str, str | list[dict[str, str]]]:
+    provider_name = settings_service.get("ai_provider_name") or "OpenAI"
+    provider_type = settings_service.get("ai_provider_type") or "openai_compatible"
+    base_url = settings_service.get("ai_base_url") or next(
+        (preset.base_url for preset in PROVIDER_PRESETS if preset.name == provider_name),
+        "https://api.openai.com/v1",
+    )
+    model = settings_service.get("ai_model") or ""
+    api_key_masked = settings_service.get_masked("ai_api_key")
+    available_models = settings_service.get("ai_available_models") or (
+        ",".join(CLAUDE_MODELS) if provider_type == "anthropic" else ""
+    )
+    return {
+        "provider_name": provider_name,
+        "provider_type": provider_type,
+        "base_url": base_url,
+        "model": model,
+        "api_key_masked": api_key_masked,
+        "available_models": [item for item in available_models.split(",") if item],
+        "providers": [
+            {"name": preset.name, "provider_type": preset.provider_type, "base_url": preset.base_url}
+            for preset in PROVIDER_PRESETS
+        ],
+    }
 
 
 @router.get("", response_class=HTMLResponse)
@@ -101,6 +128,73 @@ async def system_settings(
     )
 
 
+@router.get("/ai", response_class=HTMLResponse)
+async def ai_settings(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    settings_service = SettingsService(session)
+    payload = ai_settings_payload(settings_service)
+    payload.update({
+        "request": request,
+        "message": request.query_params.get("message"),
+        "error": request.query_params.get("error"),
+    })
+    return templates.TemplateResponse(request, "ai.html", payload)
+
+
+@router.post("/ai")
+async def update_ai_settings(
+    provider_name: str = Form(...),
+    provider_type: str = Form(...),
+    base_url: str = Form(...),
+    api_key: str = Form(""),
+    model: str = Form(""),
+    available_models_raw: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    settings_service.set("ai_provider_name", provider_name)
+    settings_service.set("ai_provider_type", provider_type)
+    settings_service.set("ai_base_url", base_url)
+    if api_key:
+        settings_service.set("ai_api_key", api_key, encrypted=True)
+    settings_service.set("ai_model", model)
+    settings_service.set("ai_available_models", available_models_raw)
+    settings_service.commit()
+    return redirect("/admin/ai?message=AI 设置已保存。")
+
+
+@router.post("/ai/models")
+async def pull_ai_models(
+    provider_name: str = Form(...),
+    provider_type: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    if provider_type == "anthropic":
+        models = CLAUDE_MODELS
+    else:
+        models = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"]
+    settings_service.set("ai_provider_name", provider_name)
+    settings_service.set("ai_provider_type", provider_type)
+    settings_service.set("ai_available_models", ",".join(models))
+    if models and not settings_service.get("ai_model"):
+        settings_service.set("ai_model", models[0])
+    settings_service.commit()
+    return redirect("/admin/ai?message=模型列表已更新。")
+
+
+@router.post("/ai/test")
+async def test_ai_connection(
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    return redirect("/admin/ai?error=AI 测试连接暂未接入，当前仅完成配置保存与模型列表基础结构。")
+
+
 @router.post("/system")
 async def update_system_settings(
     username: str = Form(...),
@@ -145,6 +239,6 @@ async def clear_event_records(
 
 
 def prune_event_records(session: Session, limit: int) -> None:
-    ids_to_keep = select(EventRecord.id).order_by(EventRecord.created_at.desc()).limit(limit)
-    session.execute(delete(EventRecord).where(EventRecord.id.not_in(ids_to_keep)))
+    ids_to_keep = select(EventRecord.id).order_by(EventRecord.created_at.desc()).limit(limit).subquery()
+    session.execute(delete(EventRecord).where(EventRecord.id.not_in(select(ids_to_keep.c.id))))
     session.commit()
