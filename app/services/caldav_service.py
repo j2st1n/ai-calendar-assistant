@@ -52,7 +52,7 @@ class CalDAVService:
         client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
 
         calendars = None
-        for method in [_list_via_get_calendars, _list_via_principal, _list_via_direct]:
+        for method in [_list_via_direct, _list_via_get_calendars, _list_via_principal]:
             try:
                 calendars = method(client, url)
                 if calendars:
@@ -189,7 +189,30 @@ def _list_via_principal(client, url: str) -> list:
 
 def _list_via_direct(client, url: str) -> list:
     try:
-        cal = client.calendar(url)
-        return [cal]
+        resp = client.propfind(
+            url,
+            props=caldav.DAVClient.CALENDAR_LIST_PROPS,
+            depth=1,
+        )
+        calendars = []
+        for href, attrs in resp.items() if isinstance(resp, dict) else []:
+            if href == url or not href:
+                continue
+            full_url = client.url.join(href) if hasattr(client.url, 'join') else url.rstrip("/") + "/" + href.lstrip("/")
+            name = ""
+            for attr_list in attrs.values() if isinstance(attrs, dict) else []:
+                for attr in attr_list if isinstance(attr_list, list) else []:
+                    if hasattr(attr, 'text') and attr.text:
+                        name = attr.text
+                        break
+            if not name:
+                name = href.strip("/").split("/")[-1]
+            try:
+                cal = client.calendar(full_url)
+                cal.name = name
+                calendars.append(cal)
+            except Exception:
+                continue
+        return calendars
     except Exception:
         return []
