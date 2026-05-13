@@ -79,24 +79,39 @@ def _try_principal_calendars(client, url: str) -> list:
 
 
 def _try_propfind(client, url: str) -> list:
-    from lxml import etree
+    principal = client.principal()
+    if principal is None:
+        return []
 
-    resp = client.propfind(url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
+    home_url = str(principal.url).strip()
+    try:
+        home_url = client._make_absolute_url(home_url)
+    except Exception:
+        pass
+
+    resp = client.propfind(home_url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
+    print(f"[caldav debug] home_url={home_url} status={resp.status} len={len(getattr(resp, 'raw', '') or '')}", flush=True)
+
+    if resp.status // 100 != 2:
+        try:
+            cal = client.calendar(url)
+            cal.name = url.rstrip("/").split("/")[-1]
+            return [cal]
+        except Exception:
+            pass
+        return []
+
     try:
         resp.find_objects_and_props()
     except Exception:
         pass
 
-    objects = getattr(resp, 'objects', None)
-    raw = resp.raw if hasattr(resp, 'raw') else ""
-    status = resp.status if hasattr(resp, 'status') else "?"
-    reason = resp.reason if hasattr(resp, 'reason') else "?"
-    print(f"[caldav debug] status={status} reason={reason} raw={raw[:500]}", flush=True)
+    objects = getattr(resp, 'objects', None) or {}
     if not objects:
         try:
-            raw = resp.raw if hasattr(resp, 'raw') else ""
-            print(f"[caldav debug] trying manual XML parse, raw length={len(raw)}", flush=True)
-            tree = resp.tree if hasattr(resp, 'tree') else etree.fromstring(raw.encode() if isinstance(raw, str) else raw)
+            from lxml import etree
+            raw = getattr(resp, 'raw', '') or ''
+            tree = resp.tree if hasattr(resp, 'tree') and resp.tree is not None else etree.fromstring(raw.encode() if isinstance(raw, str) else raw)
             ns = {"D": "DAV:"}
             objects = {}
             for response_el in tree.findall(".//D:response", ns):
@@ -109,18 +124,14 @@ def _try_propfind(client, url: str) -> list:
                     props_dict[prop_el.tag] = prop_el
                 if props_dict:
                     objects[href] = props_dict
-            print(f"[caldav debug] manual parse found {len(objects)} hrefs", flush=True)
-        except Exception as exc:
-            print(f"[caldav debug] manual XML parse failed: {exc}", flush=True)
+        except Exception:
             return []
 
     calendars = []
     for href, props in objects.items():
         if not href:
             continue
-        print(f"[caldav debug] href={href}", flush=True)
-        if href == url or href == url.rstrip("/") or href.rstrip("/") == url.rstrip("/"):
-            print(f"[caldav debug] skipping self-href", flush=True)
+        if href == home_url or href == home_url.rstrip("/") or href.rstrip("/") == home_url.rstrip("/"):
             continue
         try:
             cal = client.calendar(href)
