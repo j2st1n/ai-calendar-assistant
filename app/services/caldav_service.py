@@ -51,25 +51,55 @@ class CalDAVService:
         url = url.strip().rstrip("/")
         client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
 
-        calendars = None
-        for method in [_list_via_direct, _list_via_get_calendars, _list_via_principal]:
+        errors = []
+        for method in [_try_get_calendars, _try_principal_calendars, _try_propfind]:
             try:
                 calendars = method(client, url)
                 if calendars:
+                    results: list[dict[str, str]] = []
+                    for cal in calendars:
+                        results.append({
+                            "name": getattr(cal, "name", "") or str(cal.url),
+                            "url": str(cal.url),
+                        })
+                    return results
+            except Exception as exc:
+                errors.append(f"{method.__name__}: {exc}")
+
+        error_detail = "; ".join(errors) if errors else "所有方法均未发现日历"
+        raise CalDAVServiceError(f"未发现任何日历，请检查 CalDAV 账号是否包含日历。({error_detail})")
+
+
+def _try_get_calendars(client, url: str) -> list:
+    return client.get_calendars()
+
+
+def _try_principal_calendars(client, url: str) -> list:
+    return client.principal().calendars()
+
+
+def _try_propfind(client, url: str) -> list:
+    resp = client.propfind(url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
+    resp.find_objects_and_props()
+    objects = getattr(resp, 'objects', {}) or {}
+    calendars = []
+    for href, props in objects.items():
+        if href == url or not href:
+            continue
+        try:
+            cal = client.calendar(href)
+            for prop_element in props.values():
+                text = getattr(prop_element, 'text', None)
+                if text:
+                    cal.name = text
                     break
-            except Exception:
-                continue
-
-        if not calendars:
-            raise CalDAVServiceError("未发现任何日历，请检查 CalDAV 账号是否包含日历。")
-
-        results: list[dict[str, str]] = []
-        for cal in calendars:
-            results.append({
-                "name": getattr(cal, "name", "") or str(cal.url),
-                "url": str(cal.url),
-            })
-        return results
+            if not getattr(cal, 'name', None):
+                parts = href.strip("/").split("/")
+                cal.name = parts[-1] if parts else href
+            calendars.append(cal)
+        except Exception:
+            continue
+    return calendars
 
     async def create_event(
         self,
@@ -177,42 +207,3 @@ class CalDAVService:
             except Exception:
                  continue
         return False
-
-
-def _list_via_get_calendars(client, url: str) -> list:
-    return client.get_calendars()
-
-
-def _list_via_principal(client, url: str) -> list:
-    return client.principal().calendars()
-
-
-def _list_via_direct(client, url: str) -> list:
-    try:
-        resp = client.propfind(
-            url,
-            props=["{DAV:}resourcetype", "{DAV:}displayname"],
-            depth=1,
-        )
-        resp.find_objects_and_props()
-        objects = getattr(resp, 'objects', {}) or {}
-        calendars = []
-        for href, props in objects.items():
-            if href == url or not href:
-                continue
-            try:
-                cal = client.calendar(href)
-                for prop_element in props.values():
-                    text = getattr(prop_element, 'text', None)
-                    if text:
-                        cal.name = text
-                        break
-                if not getattr(cal, 'name', None):
-                    parts = href.strip("/").split("/")
-                    cal.name = parts[-1] if parts else href
-                calendars.append(cal)
-            except Exception:
-                continue
-        return calendars
-    except Exception:
-        return []
