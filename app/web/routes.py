@@ -409,6 +409,60 @@ async def disable_telegram_user(
     return redirect_with_query("/console/telegram", message=f"已禁用用户 {user_id}。")
 
 
+@router.get("/events", response_class=HTMLResponse)
+async def event_records(
+    request: Request,
+    status_filter: str = "",
+    search: str = "",
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    query = select(EventRecord).order_by(EventRecord.created_at.desc()).limit(100)
+    if status_filter and status_filter != "all":
+        query = select(EventRecord).where(EventRecord.status == status_filter).order_by(EventRecord.created_at.desc()).limit(100)
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = select(EventRecord).where(
+            EventRecord.original_text.contains(search.strip()) | EventRecord.title.contains(search.strip())
+        ).order_by(EventRecord.created_at.desc()).limit(100)
+        if status_filter and status_filter != "all":
+            query = select(EventRecord).where(
+                (EventRecord.original_text.contains(search.strip()) | EventRecord.title.contains(search.strip()))
+                & (EventRecord.status == status_filter)
+            ).order_by(EventRecord.created_at.desc()).limit(100)
+
+    records = session.execute(query).scalars().all()
+    events = []
+    for rec in records:
+        events.append({
+            "id": rec.id,
+            "time": rec.created_at.strftime("%Y-%m-%d %H:%M") if rec.created_at else "",
+            "source": rec.source or "",
+            "user": rec.telegram_user_id or "",
+            "operation": rec.operation or "",
+            "title": rec.title or "",
+            "start_time": rec.start_time or "",
+            "is_recurring": "🔁" if rec.is_recurring else "",
+            "status": rec.status or "",
+            "error": rec.error_message or "",
+            "original_text": rec.original_text or "",
+            "event_json": rec.event_json or "",
+            "caldav_href": rec.caldav_href or "",
+            "caldav_uid": rec.caldav_uid or "",
+        })
+
+    return templates.TemplateResponse(
+        request,
+        "events.html",
+        {
+            "events": events,
+            "status_filter": status_filter,
+            "search": search,
+            "statuses": ["all", "success", "failed", "pending"],
+        },
+    )
+
+
 @router.post("/system")
 async def update_system_settings(
     username: str = Form(...),

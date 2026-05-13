@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Event Records</h1>
+  <p class="muted">最近的事件创建、修改、删除记录。只查看，不做手动操作。</p>
+
+  <form method="get" action="/console/events" class="row" style="margin-bottom: 16px;">
+    <select name="status_filter" style="border:1px solid #cbd5e1;border-radius:10px;padding:8px 12px;font:inherit;">
+      {% for s in statuses %}
+      <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>
+        {{ s }}
+      </option>
+      {% endfor %}
+    </select>
+    <input name="search" value="{{ search }}" placeholder="搜索原始输入或标题…" style="flex:1;">
+    <button type="submit">过滤</button>
+    {% if status_filter or search %}
+    <a href="/console/events" class="button-link">清除</a>
+    {% endif %}
+  </form>
+
+  {% if events %}
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;min-width:900px;">
+      <tr style="color:#68758a;text-align:left;">
+        <th style="padding:6px 8px;">时间</th>
+        <th style="padding:6px 8px;">来源</th>
+        <th style="padding:6px 8px;">用户</th>
+        <th style="padding:6px 8px;">操作</th>
+        <th style="padding:6px 8px;">标题</th>
+        <th style="padding:6px 8px;">开始时间</th>
+        <th style="padding:6px 8px;">重复</th>
+        <th style="padding:6px 8px;">状态</th>
+      </tr>
+      {% for event in events %}
+      <tr style="border-top:1px solid #dde3ee; {% if event.status == 'failed' %}background:#fef2f2;{% endif %}">
+        <td style="padding:6px 8px;white-space:nowrap;">{{ event.time }}</td>
+        <td style="padding:6px 8px;">{{ event.source }}</td>
+        <td style="padding:6px 8px;">{{ event.user }}</td>
+        <td style="padding:6px 8px;">{{ event.operation }}</td>
+        <td style="padding:6px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;">{{ event.title }}</td>
+        <td style="padding:6px 8px;white-space:nowrap;">{{ event.start_time }}</td>
+        <td style="padding:6px 8px;">{{ event.is_recurring }}</td>
+        <td style="padding:6px 8px;">
+          {% if event.status == 'success' %}
+          <span class="chip" style="background:#ecfdf3;color:#176b3a;">success</span>
+          {% elif event.status == 'failed' %}
+          <span class="chip" style="background:#fef2f2;color:#b42318;">failed</span>
+          {% else %}
+          <span class="chip" style="background:#fefce8;color:#854d0e;">pending</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <details style="margin-top:16px;">
+    <summary style="cursor:pointer;color:#68758a;">展开查看详情（原始输入 / 结构化结果 / CalDAV）</summary>
+    {% for event in events %}
+    <div style="border:1px solid #dde3ee;border-radius:10px;margin-top:12px;padding:12px;">
+      <strong>{{ event.title or '(无标题)' }}</strong>
+      <span class="muted"> — {{ event.time }}</span>
+      {% if event.original_text %}
+      <div style="margin-top:8px;">
+        <span class="muted">原始输入：</span>
+        <pre style="background:#f5f7fb;border-radius:6px;font:inherit;margin:4px 0 0;padding:8px;white-space:pre-wrap;">{{ event.original_text }}</pre>
+      </div>
+      {% endif %}
+      {% if event.event_json %}
+      <div style="margin-top:8px;">
+        <span class="muted">结构化结果：</span>
+        <pre style="background:#f5f7fb;border-radius:6px;font:inherit;margin:4px 0 0;padding:8px;white-space:pre-wrap;max-height:200px;overflow:auto;">{{ event.event_json }}</pre>
+      </div>
+      {% endif %}
+      <div style="margin-top:8px; color:#68758a;font-size:0.85em;">
+        {% if event.caldav_href %}
+        <div>CalDAV href: {{ event.caldav_href }}</div>
+        {% endif %}
+        {% if event.caldav_uid %}
+        <div>CalDAV uid: {{ event.caldav_uid }}</div>
+        {% endif %}
+        {% if event.error %}
+        <div style="color:#b42318;">错误: {{ event.error }}</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </details>
+
+  {% else %}
+  <p class="muted">暂无事件记录。当 Telegram 或 Web 创建/修改/删除日程时，记录会显示在这里。</p>
+  {% endif %}
+</section>
+{% endblock %}
