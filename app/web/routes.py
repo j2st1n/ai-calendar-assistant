@@ -12,6 +12,7 @@ from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
 from app.db.models import EventRecord
 from app.db.session import SessionLocal
 from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
+from app.services.caldav_service import CalDAVService, CalDAVServiceError
 from app.services.settings_service import SettingsService
 
 
@@ -213,6 +214,128 @@ def current_ai_provider_config(settings_service: SettingsService) -> AIProviderC
         api_key=settings_service.get("ai_api_key"),
         model=settings_service.get("ai_model"),
     )
+
+
+def caldav_payload(settings_service: SettingsService) -> dict:
+    return {
+        "caldav_url": settings_service.get("caldav_url") or "",
+        "caldav_username": settings_service.get("caldav_username") or "",
+        "caldav_password_masked": settings_service.get_masked("caldav_password"),
+        "caldav_calendar_url": settings_service.get("caldav_calendar_url") or "",
+        "caldav_calendar_name": settings_service.get("caldav_calendar_name") or "",
+        "caldav_timezone": settings_service.get("caldav_timezone") or "Asia/Shanghai",
+        "caldav_reminder_minutes": settings_service.get("caldav_reminder_minutes") or "30",
+        "caldav_default_duration": settings_service.get("caldav_default_duration") or "60",
+    }
+
+
+@router.get("/caldav", response_class=HTMLResponse)
+async def caldav_settings(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    settings_service = SettingsService(session)
+    payload = caldav_payload(settings_service)
+    payload["request"] = request
+    payload["message"] = request.query_params.get("message")
+    payload["error"] = request.query_params.get("error")
+    cal_url = request.query_params.get("cal_url")
+    cal_name = request.query_params.get("cal_name")
+    if cal_url and not payload.get("caldav_calendar_url"):
+        payload["caldav_calendar_url"] = cal_url
+    if cal_name and not payload.get("caldav_calendar_name"):
+        payload["caldav_calendar_name"] = cal_name
+    cal_urls = request.query_params.get("cal_urls")
+    if cal_urls:
+        payload["cal_urls"] = cal_urls
+    return templates.TemplateResponse(request, "caldav.html", payload)
+
+
+@router.post("/caldav")
+async def update_caldav_settings(
+    caldav_url: str = Form(""),
+    caldav_username: str = Form(""),
+    caldav_password: str = Form(""),
+    caldav_calendar_url: str = Form(""),
+    caldav_calendar_name: str = Form(""),
+    caldav_timezone: str = Form("Asia/Shanghai"),
+    caldav_reminder_minutes: str = Form("30"),
+    caldav_default_duration: str = Form("60"),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    settings_service.set("caldav_url", caldav_url.strip())
+    settings_service.set("caldav_username", caldav_username.strip())
+    if caldav_password:
+        settings_service.set("caldav_password", caldav_password, encrypted=True)
+    settings_service.set("caldav_calendar_url", caldav_calendar_url.strip())
+    settings_service.set("caldav_calendar_name", caldav_calendar_name.strip())
+    settings_service.set("caldav_timezone", caldav_timezone.strip())
+    settings_service.set("caldav_reminder_minutes", caldav_reminder_minutes.strip())
+    settings_service.set("caldav_default_duration", caldav_default_duration.strip())
+    settings_service.commit()
+    return redirect_with_query("/console/caldav", message="CalDAV 设置已保存。")
+
+
+@router.post("/caldav/test")
+async def test_caldav_connection(
+    caldav_url: str = Form(""),
+    caldav_username: str = Form(""),
+    caldav_password: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    url = caldav_url.strip()
+    username = caldav_username.strip()
+    password = caldav_password.strip()
+    if not url or not username or not password:
+        settings_service = SettingsService(session)
+        if not url and not username:
+            stored_url = settings_service.get("caldav_url") or ""
+            stored_username = settings_service.get("caldav_username") or ""
+            if stored_url:
+                url = stored_url
+            if stored_username:
+                username = stored_username
+        password = password or settings_service.get("caldav_password") or ""
+    if not url:
+        return redirect_with_query("/console/caldav", error="请填写 CalDAV Server URL。")
+    try:
+        await CalDAVService().test_connection(url, username, password)
+    except CalDAVServiceError as exc:
+        return redirect_with_query("/console/caldav", error=str(exc))
+    return redirect_with_query("/console/caldav", message="连接测试成功。")
+
+
+@router.post("/caldav/calendars")
+async def list_caldav_calendars(
+    caldav_url: str = Form(""),
+    caldav_username: str = Form(""),
+    caldav_password: str = Form(""),
+) -> RedirectResponse:
+    url = caldav_url.strip()
+    username = caldav_username.strip()
+    password = caldav_password.strip()
+    if not url:
+        return redirect_with_query("/console/caldav", error="请填写 CalDAV Server URL。")
+    try:
+        calendars = await CalDAVService().list_calendars(url, username, password)
+    except CalDAVServiceError as exc:
+        return redirect_with_query("/console/caldav", error=str(exc))
+
+    cal_names = [cal["name"] for cal in calendars]
+    cal_urls = ",".join(cal["url"] for cal in calendars)
+    msg = f"发现 {len(calendars)} 个日历：{'、'.join(cal_names)}"
+    if len(calendars) == 1:
+        return redirect_with_query(
+            "/console/caldav",
+            message=msg,
+            cal_url=calendars[0]["url"],
+            cal_name=calendars[0]["name"],
+        )
+    return redirect_with_query("/console/caldav", message=msg, cal_urls=cal_urls)
 
 
 @router.post("/system")
