@@ -13,6 +13,8 @@ AI Calendar Assistant 是一个自部署的私人 AI 日程管理助手。它通
 - Docker 本地部署。
 - Web 管理后台，仅用于配置和记录查看。
 - 默认仅绑定本机访问，`docker-compose` 暴露为 `127.0.0.1:9527:9527`。
+- 默认不要求用户手动创建 `.env`，首次启动自动生成本地密钥和管理员强密码。
+- 正式部署以 `docker compose up -d` 为目标；源码开发使用 `docker-compose.dev.yml` 构建。
 - Telegram 作为第一版唯一消息渠道。
 - Telegram Bot Token 保存后支持热重载，不要求重启容器。
 - Telegram 用户授权支持一次性绑定链接和手动 user_id 添加。
@@ -46,7 +48,90 @@ AI Calendar Assistant 是一个自部署的私人 AI 日程管理助手。它通
 - 密码哈希：bcrypt。
 - 部署：Docker + Docker Compose。
 
-## 4. Web 后台
+## 4. Docker 部署
+
+### 正式用户启动方式
+
+第一版的部署目标是零配置本地启动：
+
+```bash
+docker compose up -d
+docker compose logs app
+```
+
+应用默认监听容器内 `9527`，并通过 Compose 只绑定宿主机本地地址：
+
+```text
+127.0.0.1:9527:9527
+```
+
+用户访问：
+
+```text
+http://127.0.0.1:9527
+```
+
+### 开发者启动方式
+
+源码开发或本地构建使用：
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+### 首次启动初始化
+
+首次启动时，如果 `data/` 中还没有初始化数据，系统自动完成：
+
+- 创建 `data/secrets.json`，保存本地 `APP_SECRET_KEY`。
+- 创建 `data/app.db`，初始化 SQLite 表结构。
+- 创建默认管理员账号 `admin`。
+- 生成随机强密码，并只在首次启动日志中打印一次。
+
+日志示例：
+
+```text
+AI Calendar Assistant initialized
+Web UI: http://127.0.0.1:9527
+Username: admin
+Password: <generated-password>
+Please change this password in System Settings.
+```
+
+后续重启不再打印密码，只提示应用已经初始化。
+
+### `.env` 策略
+
+`.env` 不是必需文件。高级用户可以使用 `.env` 覆盖默认配置，例如端口、数据库路径、Session 天数等；普通用户可以不创建 `.env`。
+
+### 镜像与 Compose 文件
+
+- `docker-compose.yml`：正式部署入口，目标体验是 `docker compose up -d`。
+- `docker-compose.dev.yml`：开发入口，从本地源码构建镜像。
+- 当前源码阶段允许 `docker-compose.yml` 使用本地 build；发布镜像后可切换为预构建镜像。
+
+### 容器用户与文件权限
+
+- 容器内应用进程固定使用非 root 用户 `1000:1000`。
+- `data/` 尽量设置为 `700`。
+- `data/secrets.json` 尽量设置为 `600`。
+- 如果宿主机上 `data/` 权限导致容器无法写入，用户可执行：
+
+```bash
+sudo chown -R 1000:1000 data
+chmod 700 data
+```
+
+### 升级方式
+
+发布镜像后，用户升级流程为：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+## 5. Web 后台
 
 Web 后台只做配置和记录查看，不承担日程交互入口。
 
@@ -63,7 +148,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 ### 登录
 
 - 第一版只有一个管理员。
-- 初始用户名和密码来自 `.env`。
+- 初始用户名为 `admin`，初始密码首次启动自动生成并打印到 Docker 日志；`.env` 可作为高级覆盖方式。
 - 登录后使用 Session Cookie。
 - 默认 Session 有效期为 7 天，可在 System Settings 修改。
 - 管理员用户名和密码可在后台修改。
@@ -78,17 +163,17 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - 手动清空 Event Records。
 - 显示 `APP_SECRET_KEY` 是否配置，不允许在页面修改。
 
-## 5. 数据安全
+## 6. 数据安全
 
 - 自部署单用户，不上传数据到第三方服务，除非用户配置的 AI Provider 和 CalDAV 服务需要。
 - SQLite 数据库存放于 `data/app.db`。
-- `.env` 中的 `APP_SECRET_KEY` 用于加密敏感字段。
+- `data/secrets.json` 中的 `APP_SECRET_KEY` 用于加密敏感字段。
 - 加密字段包括 AI API Key、Telegram Bot Token、CalDAV 密码。
 - 敏感字段不明文回显，只显示脱敏值。
 - 日志中不得输出完整密钥、密码或 Token。
-- `data/app.db` 和 `.env` 都视为敏感文件，由用户自行备份和保护。
+- `data/app.db`、`data/secrets.json` 和可选 `.env` 都视为敏感文件，由用户自行备份和保护。
 
-## 6. AI Provider 配置
+## 7. AI Provider 配置
 
 ### Provider Preset
 
@@ -122,7 +207,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - 系统内置创建、修改、删除、补全缺失字段的结构化 Prompt。
 - 后端必须使用 Pydantic Schema 校验模型输出。
 
-## 7. CalDAV 配置
+## 8. CalDAV 配置
 
 ### 配置流程
 
@@ -144,7 +229,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - 默认事件时长为 1 小时。
 - 第一版不做 Google Calendar API。
 
-## 8. Telegram 配置与授权
+## 9. Telegram 配置与授权
 
 ### Bot Token
 
@@ -163,7 +248,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - 保留手动添加 Telegram user_id 作为备用方式。
 - 未授权用户访问时，Bot 返回自己的 user_id，并提示到后台生成绑定链接。
 
-## 9. Telegram Bot 命令
+## 10. Telegram Bot 命令
 
 - `/start`：查看简介或处理绑定链接。
 - `/help`：查看帮助。
@@ -172,7 +257,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - `/list`：默认查看未来 7 天日程。
 - `/list <days>`：查看未来 N 天日程，最大 30 天。
 
-## 10. 日程交互规则
+## 11. 日程交互规则
 
 ### 创建
 
@@ -210,7 +295,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 
 确认有效期 24 小时。
 
-## 11. AI Intent 与 Schema
+## 12. AI Intent 与 Schema
 
 ### Intent
 
@@ -242,7 +327,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 }
 ```
 
-## 12. 重复日程
+## 13. 重复日程
 
 ### 支持
 
@@ -267,7 +352,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 
 `识别到重复日程，但当前仅支持：每天、每周几、每个工作日、每月几号。请改写后重试。`
 
-## 13. 时间解析规则
+## 14. 时间解析规则
 
 - 默认时区：`Asia/Shanghai`，可配置。
 - 当前时间和时区必须传给 AI。
@@ -281,7 +366,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - 默认时长 1 小时。
 - 支持全天事件，例如生日、纪念日、放假、全天、整天。
 
-## 14. Telegram 回复风格
+## 15. Telegram 回复风格
 
 第一版使用纯文本，不做按钮。回复可使用 emoji，但要保持清晰。
 
@@ -303,7 +388,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 
 当前版本只有一个日历，成功回复不显示日历名。
 
-## 15. Event Records
+## 16. Event Records
 
 ### 展示字段
 
@@ -329,14 +414,14 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - 支持手动清空记录。
 - 清空记录不删除 CalDAV 中已创建的日程。
 
-## 16. 失败处理
+## 17. 失败处理
 
 - AI 未识别日程：`未识别到日程信息，请补充时间和事件内容。`
 - 缺关键字段：直接说明缺什么并请求补充。
 - CalDAV 写入失败：保留本地记录，状态为 failed，返回脱敏错误。
 - 复杂重复规则：直接说明当前支持范围。
 
-## 17. 项目结构
+## 18. 项目结构
 
 ```text
 ai-calendar-assistant/
