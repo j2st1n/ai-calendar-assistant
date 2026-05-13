@@ -370,14 +370,15 @@ async def update_telegram_settings(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    service = TelegramService()
-    token = bot_token.strip()
+    settings_service = SettingsService(session)
+    token = bot_token.strip() or settings_service.get("telegram_bot_token") or ""
+    username = bot_username.strip() or settings_service.get("telegram_bot_username") or ""
     if token:
-        service.save_token(session, token, bot_username.strip())
-    if token and bot_username.strip():
+        service = TelegramService()
+        service.save_token(session, token, username)
         service.reload_bot(token)
         return redirect_with_query("/console/telegram", message="Telegram Bot 已保存并重载。")
-    return redirect_with_query("/console/telegram", message="Telegram 设置已保存。")
+    return redirect_with_query("/console/telegram", message="请填写 Bot Token。")
 
 
 @router.post("/telegram/bind")
