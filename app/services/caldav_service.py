@@ -88,6 +88,10 @@ def _try_propfind(client, url: str) -> list:
         pass
 
     objects = getattr(resp, 'objects', None)
+    raw = resp.raw if hasattr(resp, 'raw') else ""
+    status = resp.status if hasattr(resp, 'status') else "?"
+    reason = resp.reason if hasattr(resp, 'reason') else "?"
+    print(f"[caldav debug] status={status} reason={reason} raw={raw[:500]}", flush=True)
     if not objects:
         try:
             raw = resp.raw if hasattr(resp, 'raw') else ""
