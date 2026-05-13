@@ -26,7 +26,7 @@ class CalDAVService:
             raise CalDAVServiceError(f"连接测试失败：{exc}") from exc
 
     def _test_connection_sync(self, url: str, username: str, password: str) -> None:
-        url = url.strip().rstrip("/")
+        url = url.strip()
         try:
             client = caldav.DAVClient(url=url, username=username, password=password)
             principal = client.principal()
@@ -48,7 +48,7 @@ class CalDAVService:
             raise CalDAVServiceError(f"拉取日历列表失败：{exc}") from exc
 
     def _list_calendars_sync(self, url: str, username: str, password: str) -> list[dict[str, str]]:
-        url = url.strip().rstrip("/")
+        url = url.strip()
         client = caldav.DAVClient(url=url, username=username, password=password)
         principal = client.principal()
         calendars = principal.calendars()
@@ -98,7 +98,7 @@ class CalDAVService:
             location, description, reminders, recurrence, is_all_day,
         ) = args
 
-        client = caldav.DAVClient(url=caldav_url.strip().rstrip("/"), username=username, password=password)
+        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password)
         principal = client.principal()
         calendars = principal.calendars()
         target_cal = None
@@ -158,7 +158,7 @@ class CalDAVService:
             return False
 
     def _delete_event_sync(self, caldav_url: str, username: str, password: str, uid: str) -> bool:
-        client = caldav.DAVClient(url=caldav_url.strip().rstrip("/"), username=username, password=password)
+        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password)
         principal = client.principal()
         for cal in principal.calendars():
             try:
