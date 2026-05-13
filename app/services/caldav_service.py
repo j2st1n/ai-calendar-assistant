@@ -191,25 +191,25 @@ def _list_via_direct(client, url: str) -> list:
     try:
         resp = client.propfind(
             url,
-            props=caldav.DAVClient.CALENDAR_LIST_PROPS,
+            props=["{DAV:}resourcetype", "{DAV:}displayname"],
             depth=1,
         )
+        resp.find_objects_and_props()
+        objects = getattr(resp, 'objects', {}) or {}
         calendars = []
-        for href, attrs in resp.items() if isinstance(resp, dict) else []:
+        for href, props in objects.items():
             if href == url or not href:
                 continue
-            full_url = client.url.join(href) if hasattr(client.url, 'join') else url.rstrip("/") + "/" + href.lstrip("/")
-            name = ""
-            for attr_list in attrs.values() if isinstance(attrs, dict) else []:
-                for attr in attr_list if isinstance(attr_list, list) else []:
-                    if hasattr(attr, 'text') and attr.text:
-                        name = attr.text
-                        break
-            if not name:
-                name = href.strip("/").split("/")[-1]
             try:
-                cal = client.calendar(full_url)
-                cal.name = name
+                cal = client.calendar(href)
+                for prop_element in props.values():
+                    text = getattr(prop_element, 'text', None)
+                    if text:
+                        cal.name = text
+                        break
+                if not getattr(cal, 'name', None):
+                    parts = href.strip("/").split("/")
+                    cal.name = parts[-1] if parts else href
                 calendars.append(cal)
             except Exception:
                 continue
