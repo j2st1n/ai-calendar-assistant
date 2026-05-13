@@ -252,6 +252,10 @@ async def caldav_settings(
     cal_urls = request.query_params.get("cal_urls")
     if cal_urls:
         payload["cal_urls"] = cal_urls
+
+    stored_calendars = request.session.get("caldav_calendars", [])
+    if stored_calendars:
+        payload["calendars"] = stored_calendars
     return templates.TemplateResponse(request, "caldav.html", payload)
 
 
@@ -314,6 +318,7 @@ async def test_caldav_connection(
 
 @router.post("/caldav/calendars")
 async def list_caldav_calendars(
+    request: Request,
     caldav_url: str = Form(""),
     caldav_username: str = Form(""),
     caldav_password: str = Form(""),
@@ -330,8 +335,8 @@ async def list_caldav_calendars(
     except CalDAVServiceError as exc:
         return redirect_with_query("/console/caldav", error=str(exc))
 
+    request.session["caldav_calendars"] = calendars
     cal_names = [cal["name"] for cal in calendars]
-    cal_urls = ",".join(cal["url"] for cal in calendars)
     msg = f"发现 {len(calendars)} 个日历：{'、'.join(cal_names)}"
     if len(calendars) == 1:
         return redirect_with_query(
@@ -340,7 +345,7 @@ async def list_caldav_calendars(
             cal_url=calendars[0]["url"],
             cal_name=calendars[0]["name"],
         )
-    return redirect_with_query("/console/caldav", message=msg, cal_urls=cal_urls)
+    return redirect_with_query("/console/caldav", message=msg)
 
 
 @router.get("/telegram", response_class=HTMLResponse)

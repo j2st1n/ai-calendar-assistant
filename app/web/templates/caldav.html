@@ -1,10 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
+<script>
+function selectCalendar() {
+  const sel = document.querySelector('select[name="caldav_calendar_name"]');
+  if (!sel) return;
+  const opt = sel.options[sel.selectedIndex];
+  const urlInput = document.querySelector('input[name="caldav_calendar_url"]');
+  if (urlInput && opt.dataset.url) urlInput.value = opt.dataset.url;
+}
+</script>
+
 <section class="card">
   <h1>CalDAV Settings</h1>
   <p class="muted">配置 CalDAV 服务器，用于日程写入。支持 Apple iCloud、Nextcloud、Radicale 等标准 CalDAV 服务。</p>
   {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
+
   <form method="post" action="/console/caldav" class="stack">
     <label>
       CalDAV Server URL
@@ -18,13 +29,26 @@
       Password / App Password
       <input name="caldav_password" type="password" value="" placeholder="{{ caldav_password_masked or '留空表示保持现有值' }}" autocomplete="off">
     </label>
+
+    <div class="row" style="align-items: flex-end;">
+      <label style="flex: 1;">
+        Calendar
+        {% if calendars %}
+        <select name="caldav_calendar_name" onchange="selectCalendar()">
+          {% for cal in calendars %}
+          <option value="{{ cal.name }}" data-url="{{ cal.url }}" {% if caldav_calendar_name == cal.name %}selected{% endif %}>{{ cal.name }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <input name="caldav_calendar_name" value="{{ caldav_calendar_name }}" placeholder="先拉取日历列表后选择">
+        {% endif %}
+      </label>
+      <button type="submit" formaction="/console/caldav/calendars">拉取日历列表</button>
+    </div>
+
     <label>
       Calendar URL
-      <input name="caldav_calendar_url" value="{{ caldav_calendar_url }}" placeholder="拉取日历列表后自动填充，也可手动输入">
-    </label>
-    <label>
-      Calendar Name
-      <input name="caldav_calendar_name" value="{{ caldav_calendar_name }}" placeholder="Work">
+      <input name="caldav_calendar_url" value="{{ caldav_calendar_url }}" placeholder="拉取日历列表后自动填充" readonly>
     </label>
     <label>
       Default Timezone
@@ -40,31 +64,8 @@
     </label>
     <div class="row">
       <button type="submit">保存 CalDAV 设置</button>
+      <button type="submit" formaction="/console/caldav/test" style="background:#68758a;">测试连接</button>
     </div>
   </form>
-</section>
-
-<section class="card">
-  <h2>连接与日历</h2>
-  <div class="row">
-    <form method="post" action="/console/caldav/test" class="row">
-      <input type="hidden" name="caldav_url" value="{{ caldav_url }}">
-      <input type="hidden" name="caldav_username" value="{{ caldav_username }}">
-      <button type="submit">测试连接</button>
-    </form>
-    <form method="post" action="/console/caldav/calendars" class="row">
-      <input type="hidden" name="caldav_url" value="{{ caldav_url }}">
-      <input type="hidden" name="caldav_username" value="{{ caldav_username }}">
-      <button type="submit">拉取日历列表</button>
-    </form>
-  </div>
-  {% if cal_urls %}
-  <div class="chips" style="margin-top: 16px;">
-    {% set urls = cal_urls.split(',') %}
-    {% for u in urls %}
-    <span class="chip">{{ u }}</span>
-    {% endfor %}
-  </div>
-  {% endif %}
 </section>
 {% endblock %}
