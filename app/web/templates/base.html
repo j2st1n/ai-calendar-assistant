@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Calendar Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <strong>AI Calendar Assistant</strong>
+        <span class="muted">自部署日程助手</span>
+      </div>
+      {% if request.session.get('admin_authenticated') %}
+      <nav>
+        <a href="/admin">Dashboard</a>
+        <a href="/admin/system">System</a>
+        <form method="post" action="/admin/logout">
+          <button type="submit">退出</button>
+        </form>
+      </nav>
+      {% endif %}
+    </header>
+    <main class="container">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
