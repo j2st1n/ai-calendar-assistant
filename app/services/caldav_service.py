@@ -90,25 +90,33 @@ def _try_propfind(client, url: str) -> list:
     objects = getattr(resp, 'objects', None)
     if not objects:
         try:
-            tree = resp.tree if hasattr(resp, 'tree') else etree.fromstring(resp.raw)
+            raw = resp.raw if hasattr(resp, 'raw') else ""
+            print(f"[caldav debug] trying manual XML parse, raw length={len(raw)}", flush=True)
+            tree = resp.tree if hasattr(resp, 'tree') else etree.fromstring(raw.encode() if isinstance(raw, str) else raw)
             ns = {"D": "DAV:"}
             objects = {}
             for response_el in tree.findall(".//D:response", ns):
                 href_el = response_el.find("D:href", ns)
                 if href_el is None:
                     continue
-                href = href_el.text or ""
+                href = (href_el.text or "").strip()
                 props_dict = {}
                 for prop_el in response_el.findall(".//D:prop/*", ns):
                     props_dict[prop_el.tag] = prop_el
                 if props_dict:
                     objects[href] = props_dict
-        except Exception:
+            print(f"[caldav debug] manual parse found {len(objects)} hrefs", flush=True)
+        except Exception as exc:
+            print(f"[caldav debug] manual XML parse failed: {exc}", flush=True)
             return []
 
     calendars = []
     for href, props in objects.items():
-        if not href or href == url or href == url.rstrip("/") or href.rstrip("/") == url.rstrip("/"):
+        if not href:
+            continue
+        print(f"[caldav debug] href={href}", flush=True)
+        if href == url or href == url.rstrip("/") or href.rstrip("/") == url.rstrip("/"):
+            print(f"[caldav debug] skipping self-href", flush=True)
             continue
         try:
             cal = client.calendar(href)
