@@ -151,6 +151,9 @@ async def ai_settings(
         "message": request.query_params.get("message"),
         "error": request.query_params.get("error"),
     })
+    stored_models = request.session.get("ai_models", [])
+    if stored_models:
+        payload["available_models"] = stored_models
     return templates.TemplateResponse(request, "ai.html", payload)
 
 
@@ -179,11 +182,18 @@ async def update_ai_settings(
 
 @router.post("/ai/models")
 async def pull_ai_models(
+    request: Request,
+    provider_type: str = Form(""),
+    base_url: str = Form(""),
+    api_key: str = Form(""),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
-    config = current_ai_provider_config(settings_service)
+    provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
+    base_url = base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1"
+    api_key = api_key or settings_service.get("ai_api_key") or ""
+    config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key)
     try:
         models = await AIProviderService().list_models(config)
     except AIProviderError as exc:
@@ -193,16 +203,25 @@ async def pull_ai_models(
     if models and not settings_service.get("ai_model"):
         settings_service.set("ai_model", models[0])
     settings_service.commit()
+    request.session["ai_models"] = models
     return redirect_with_query("/console/ai", message=f"模型列表已更新，共 {len(models)} 个。")
 
 
 @router.post("/ai/test")
 async def test_ai_connection(
+    provider_type: str = Form(""),
+    base_url: str = Form(""),
+    api_key: str = Form(""),
+    model: str = Form(""),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
-    config = current_ai_provider_config(settings_service)
+    provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
+    base_url = base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1"
+    api_key = api_key or settings_service.get("ai_api_key") or ""
+    model = model or settings_service.get("ai_model") or ""
+    config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
     try:
         await AIProviderService().test_connection(config)
     except AIProviderError as exc:

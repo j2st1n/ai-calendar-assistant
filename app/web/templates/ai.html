@@ -1,10 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
+<script>
+function selectModel(sel) {
+  const input = document.querySelector('input[name="model"]');
+  if (input) input.value = sel.value;
+}
+</script>
+
 <section class="card">
   <h1>AI Settings</h1>
-  <p class="muted">配置 AI Provider、Base URL、API Key，并拉取模型列表或测试连接。</p>
+  <p class="muted">配置 AI Provider、Base URL、API Key，拉取模型列表选择，测试连接通过后保存。</p>
   {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
+
   <form method="post" action="/console/ai" class="stack">
     <label>
       Provider
@@ -31,33 +39,27 @@
       API Key
       <input name="api_key" type="password" value="" placeholder="{{ api_key_masked or '留空表示保持现有值' }}" autocomplete="off">
     </label>
-    <label>
-      Model
-      <input name="model" value="{{ model }}" placeholder="可拉取后选择，也可手动输入">
-    </label>
-    <label>
-      可用模型列表（逗号分隔）
-      <input name="available_models_raw" value="{{ available_models | join(',') }}" placeholder="gpt-4o-mini,gpt-4o">
-    </label>
+
+    <div class="row" style="align-items: flex-end;">
+      <label style="flex: 1;">
+        Model
+        {% if available_models %}
+        <select name="model" onchange="selectModel(this)">
+          {% for m in available_models %}
+          <option value="{{ m }}" {% if model == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <input name="model" value="{{ model }}" placeholder="先拉取模型列表后选择">
+        {% endif %}
+      </label>
+      <button type="submit" formaction="/console/ai/models">拉取模型列表</button>
+    </div>
+
     <div class="row">
       <button type="submit">保存 AI 设置</button>
+      <button type="submit" formaction="/console/ai/test" style="background:#68758a;">测试连接</button>
     </div>
-  </form>
-</section>
-
-<section class="card">
-  <h2>模型列表</h2>
-  <p class="muted">当前列表来自本地预设或上一次“拉取模型”结果。</p>
-  <div class="chips">
-    {% for model_name in available_models %}
-    <span class="chip">{{ model_name }}</span>
-    {% endfor %}
-  </div>
-  <form method="post" action="/console/ai/models" class="row">
-    <button type="submit">拉取模型列表</button>
-  </form>
-  <form method="post" action="/console/ai/test" class="row">
-    <button type="submit">测试连接</button>
   </form>
 </section>
 {% endblock %}
