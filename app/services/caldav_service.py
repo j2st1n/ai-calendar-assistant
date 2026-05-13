@@ -48,10 +48,18 @@ class CalDAVService:
             raise CalDAVServiceError(f"拉取日历列表失败：{exc}") from exc
 
     def _list_calendars_sync(self, url: str, username: str, password: str) -> list[dict[str, str]]:
-        url = url.strip()
+        url = url.strip().rstrip("/")
         client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
-        principal = client.principal()
-        calendars = principal.calendars()
+
+        calendars = None
+        for method in [_list_via_get_calendars, _list_via_principal, _list_via_direct]:
+            try:
+                calendars = method(client, url)
+                if calendars:
+                    break
+            except Exception:
+                continue
+
         if not calendars:
             raise CalDAVServiceError("未发现任何日历，请检查 CalDAV 账号是否包含日历。")
 
@@ -167,5 +175,21 @@ class CalDAVService:
                     events[0].delete()
                     return True
             except Exception:
-                continue
+                 continue
         return False
+
+
+def _list_via_get_calendars(client, url: str) -> list:
+    return client.get_calendars()
+
+
+def _list_via_principal(client, url: str) -> list:
+    return client.principal().calendars()
+
+
+def _list_via_direct(client, url: str) -> list:
+    try:
+        cal = client.calendar(url)
+        return [cal]
+    except Exception:
+        return []
