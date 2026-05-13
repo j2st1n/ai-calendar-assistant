@@ -15,7 +15,7 @@ from app.services.ai_provider_service import AIProviderConfig, AIProviderError, 
 from app.services.settings_service import SettingsService
 
 
-router = APIRouter(prefix="/admin")
+router = APIRouter(prefix="/console")
 templates = Jinja2Templates(directory="app/web/templates")
 
 
@@ -29,7 +29,7 @@ def get_db() -> Generator[Session, None, None]:
 
 def require_admin(request: Request) -> None:
     if not request.session.get("admin_authenticated"):
-        raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/admin/login"})
+        raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/console/login"})
 
 
 def redirect(path: str) -> RedirectResponse:
@@ -81,7 +81,7 @@ async def dashboard(request: Request, session: Session = Depends(get_db), _: Non
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request) -> HTMLResponse:
     if request.session.get("admin_authenticated"):
-        return redirect("/admin")
+        return redirect("/console")
     return templates.TemplateResponse(request, "login.html", {"error": None})
 
 
@@ -99,7 +99,7 @@ async def login(
         request.session.clear()
         request.session["admin_authenticated"] = True
         request.session["admin_username"] = username
-        return redirect("/admin")
+        return redirect("/console")
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -111,7 +111,7 @@ async def login(
 @router.post("/logout")
 async def logout(request: Request) -> RedirectResponse:
     request.session.clear()
-    return redirect("/admin/login")
+    return redirect("/console/login")
 
 
 @router.get("/system", response_class=HTMLResponse)
@@ -170,7 +170,7 @@ async def update_ai_settings(
     settings_service.set("ai_model", model)
     settings_service.set("ai_available_models", available_models_raw)
     settings_service.commit()
-    return redirect("/admin/ai?message=AI 设置已保存。")
+    return redirect("/console/ai?message=AI 设置已保存。")
 
 
 @router.post("/ai/models")
@@ -183,13 +183,13 @@ async def pull_ai_models(
     try:
         models = await AIProviderService().list_models(config)
     except AIProviderError as exc:
-        return redirect_with_query("/admin/ai", error=str(exc))
+        return redirect_with_query("/console/ai", error=str(exc))
 
     settings_service.set("ai_available_models", ",".join(models))
     if models and not settings_service.get("ai_model"):
         settings_service.set("ai_model", models[0])
     settings_service.commit()
-    return redirect_with_query("/admin/ai", message=f"模型列表已更新，共 {len(models)} 个。")
+    return redirect_with_query("/console/ai", message=f"模型列表已更新，共 {len(models)} 个。")
 
 
 @router.post("/ai/test")
@@ -202,8 +202,8 @@ async def test_ai_connection(
     try:
         await AIProviderService().test_connection(config)
     except AIProviderError as exc:
-        return redirect_with_query("/admin/ai", error=str(exc))
-    return redirect_with_query("/admin/ai", message="AI 连接测试成功。")
+        return redirect_with_query("/console/ai", error=str(exc))
+    return redirect_with_query("/console/ai", message="AI 连接测试成功。")
 
 
 def current_ai_provider_config(settings_service: SettingsService) -> AIProviderConfig:
@@ -227,17 +227,17 @@ async def update_system_settings(
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     if session_days < 1 or session_days > 365:
-        return redirect("/admin/system?error=Session 有效期必须在 1 到 365 天之间。")
+        return redirect("/console/system?error=Session 有效期必须在 1 到 365 天之间。")
     if event_record_limit < 1 or event_record_limit > 100000:
-        return redirect("/admin/system?error=记录保留数量必须在 1 到 100000 之间。")
+        return redirect("/console/system?error=记录保留数量必须在 1 到 100000 之间。")
 
     settings_service = SettingsService(session)
     saved_password_hash = settings_service.get("admin_password_hash")
     if new_password or confirm_password:
         if new_password != confirm_password:
-            return redirect("/admin/system?error=两次输入的新密码不一致。")
+            return redirect("/console/system?error=两次输入的新密码不一致。")
         if not saved_password_hash or not verify_password(current_password, saved_password_hash):
-            return redirect("/admin/system?error=当前密码不正确。")
+            return redirect("/console/system?error=当前密码不正确。")
         settings_service.set("admin_password_hash", hash_password(new_password))
 
     settings_service.set("admin_username", username.strip() or "admin")
@@ -245,7 +245,7 @@ async def update_system_settings(
     settings_service.set("event_record_limit", str(event_record_limit))
     settings_service.commit()
     prune_event_records(session, event_record_limit)
-    return redirect("/admin/system?message=系统设置已保存。")
+    return redirect("/console/system?message=系统设置已保存。")
 
 
 @router.post("/system/clear-events")
@@ -255,7 +255,7 @@ async def clear_event_records(
 ) -> RedirectResponse:
     session.execute(delete(EventRecord))
     session.commit()
-    return redirect("/admin/system?message=事件记录已清空。")
+    return redirect("/console/system?message=事件记录已清空。")
 
 
 def prune_event_records(session: Session, limit: int) -> None:

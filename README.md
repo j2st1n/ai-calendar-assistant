@@ -8,7 +8,7 @@
 
 ## MVP 范围
 
-- Web 后台只做配置和记录查看。
+- Web Console 只做配置、状态和记录查看。
 - Telegram 是第一版唯一交互渠道。
 - CalDAV 是第一版唯一日历写入目标。
 - AI Provider 支持常见 OpenAI-compatible 服务和自定义 Base URL。
@@ -37,7 +37,7 @@ app/
   core/        配置、加密、安全
   db/          SQLAlchemy 数据模型
   services/    业务服务
-  web/         Web 后台路由、模板、静态资源
+  web/         Web Console 路由、模板、静态资源
 docs/
   requirements.md
 data/

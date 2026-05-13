@@ -5,7 +5,7 @@
   <p class="muted">配置 AI Provider、Base URL、API Key，并拉取模型列表或测试连接。</p>
   {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
-  <form method="post" action="/admin/ai" class="stack">
+  <form method="post" action="/console/ai" class="stack">
     <label>
       Provider
       <select name="provider_name">
@@ -53,10 +53,10 @@
     <span class="chip">{{ model_name }}</span>
     {% endfor %}
   </div>
-  <form method="post" action="/admin/ai/models" class="row">
+  <form method="post" action="/console/ai/models" class="row">
     <button type="submit">拉取模型列表</button>
   </form>
-  <form method="post" action="/admin/ai/test" class="row">
+  <form method="post" action="/console/ai/test" class="row">
     <button type="submit">测试连接</button>
   </form>
 </section>

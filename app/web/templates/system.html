@@ -4,7 +4,7 @@
   <h1>System Settings</h1>
   {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
-  <form method="post" action="/admin/system" class="stack">
+  <form method="post" action="/console/system" class="stack">
     <label>
       管理员用户名
       <input name="username" value="{{ username }}" required>
@@ -36,7 +36,7 @@
 <section class="card danger-zone">
   <h2>清空 Event Records</h2>
   <p class="muted">只清空本地记录，不删除已经写入 CalDAV 的日程。</p>
-  <form method="post" action="/admin/system/clear-events">
+  <form method="post" action="/console/system/clear-events">
     <button type="submit" class="danger">清空事件记录</button>
   </form>
 </section>

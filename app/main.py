@@ -28,4 +28,4 @@ app = create_app()
 
 @app.get("/")
 async def index() -> RedirectResponse:
-    return RedirectResponse(url="/admin")
+    return RedirectResponse(url="/console")

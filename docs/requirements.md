@@ -11,7 +11,7 @@ AI Calendar Assistant 是一个自部署的私人 AI 日程管理助手。它通
 ### 包含
 
 - Docker 本地部署。
-- Web 管理后台，仅用于配置和记录查看。
+- Web Console 仅用于配置、状态和记录查看。
 - 默认仅绑定本机访问，`docker-compose` 暴露为 `127.0.0.1:9527:9527`。
 - 默认不要求用户手动创建 `.env`，首次启动自动生成本地密钥和管理员强密码。
 - 正式部署以 `docker compose up -d` 为目标；源码开发使用 `docker-compose.dev.yml` 构建。
@@ -131,14 +131,14 @@ docker compose pull
 docker compose up -d
 ```
 
-## 5. Web 后台
+## 5. Web Console
 
-Web 后台只做配置和记录查看，不承担日程交互入口。
+Web Console 只做配置、状态和记录查看，不承担日程交互入口。
 
 ### 页面
 
 1. Login。
-2. Dashboard。
+2. Status。
 3. AI Settings。
 4. CalDAV Settings。
 5. Telegram Settings。
@@ -151,7 +151,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 - 初始用户名为 `admin`，初始密码首次启动自动生成并打印到 Docker 日志；`.env` 可作为高级覆盖方式。
 - 登录后使用 Session Cookie。
 - 默认 Session 有效期为 7 天，可在 System Settings 修改。
-- 管理员用户名和密码可在后台修改。
+- 管理员用户名和密码可在 Console 中修改。
 - 密码使用 bcrypt 哈希保存。
 
 ### System Settings
@@ -233,7 +233,7 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 
 ### Bot Token
 
-- 在 Web 后台填写。
+- 在 Web Console 中填写。
 - 加密保存。
 - 支持测试连接。
 - 保存后热重载 Bot：停止旧 polling，使用新 Token 初始化并启动新 polling。
@@ -242,11 +242,11 @@ Web 后台只做配置和记录查看，不承担日程交互入口。
 ### 用户授权
 
 - 主流程为一次性绑定链接。
-- Web 后台生成绑定链接：`https://t.me/<bot_username>?start=bind_<token>`。
+- Web Console 生成绑定链接：`https://t.me/<bot_username>?start=bind_<token>`。
 - 绑定 token 10 分钟过期，只能使用一次。
 - 用户点击链接后，Bot 收到 `/start bind_<token>` 并加入授权列表。
 - 保留手动添加 Telegram user_id 作为备用方式。
-- 未授权用户访问时，Bot 返回自己的 user_id，并提示到后台生成绑定链接。
+- 未授权用户访问时，Bot 返回自己的 user_id，并提示到 Console 生成绑定链接。
 
 ## 10. Telegram Bot 命令
 
