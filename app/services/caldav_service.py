@@ -52,7 +52,7 @@ class CalDAVService:
         client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
 
         errors = []
-        for method in [_try_get_calendars, _try_principal_calendars, _try_propfind]:
+        for method in [_try_propfind, _try_get_calendars, _try_principal_calendars]:
             try:
                 calendars = method(client, url)
                 if calendars:
@@ -79,16 +79,42 @@ def _try_principal_calendars(client, url: str) -> list:
 
 
 def _try_propfind(client, url: str) -> list:
+    from lxml import etree
+
     resp = client.propfind(url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
-    resp.find_objects_and_props()
-    objects = getattr(resp, 'objects', {}) or {}
+    try:
+        resp.find_objects_and_props()
+    except Exception:
+        pass
+
+    objects = getattr(resp, 'objects', None)
+    if not objects:
+        try:
+            tree = resp.tree if hasattr(resp, 'tree') else etree.fromstring(resp.raw)
+            ns = {"D": "DAV:"}
+            objects = {}
+            for response_el in tree.findall(".//D:response", ns):
+                href_el = response_el.find("D:href", ns)
+                if href_el is None:
+                    continue
+                href = href_el.text or ""
+                props_dict = {}
+                for prop_el in response_el.findall(".//D:prop/*", ns):
+                    props_dict[prop_el.tag] = prop_el
+                if props_dict:
+                    objects[href] = props_dict
+        except Exception:
+            return []
+
     calendars = []
     for href, props in objects.items():
-        if href == url or not href:
+        if not href or href == url or href == url.rstrip("/") or href.rstrip("/") == url.rstrip("/"):
             continue
         try:
             cal = client.calendar(href)
-            for prop_element in props.values():
+            for prop_element in (props or {}).values() if isinstance(props, dict) else []:
+                if prop_element is None:
+                    continue
                 text = getattr(prop_element, 'text', None)
                 if text:
                     cal.name = text
