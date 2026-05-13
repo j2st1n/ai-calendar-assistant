@@ -137,6 +137,7 @@ _runtime: "TelegramBotRuntime | None" = None
 class TelegramBotRuntime:
     def __init__(self) -> None:
         self._application = None
+        self._task = None
         self.running = False
         self._last_error = ""
 
@@ -155,16 +156,21 @@ class TelegramBotRuntime:
         self._application = app
         self.running = True
 
-        asyncio.create_task(self._start_bot(app))
+        loop = asyncio.get_running_loop()
+        self._task = loop.create_task(self._start_bot(app))
         logger.info("Telegram bot reload triggered")
         return "started"
 
     async def _start_bot(self, app) -> None:
         try:
-            await app.initialize()
-            await app.start()
-            await app.updater.start_polling(drop_pending_updates=True)
-            logger.info("Telegram bot started successfully")
+            async with app:
+                await app.updater.start_polling(drop_pending_updates=True)
+                logger.info("Telegram bot started successfully")
+                while True:
+                    await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            logger.info("Telegram bot task cancelled")
+            self.running = False
         except Exception as exc:
             logger.exception("Telegram bot failed to start")
             self.running = False
@@ -172,6 +178,9 @@ class TelegramBotRuntime:
 
     def stop(self) -> None:
         self.running = False
+        if self._task:
+            self._task.cancel()
+            self._task = None
         self._application = None
 
 
