@@ -46,6 +46,7 @@ class TelegramService:
         token_masked = settings_service.get_masked("telegram_bot_token")
         bot_username = settings_service.get("telegram_bot_username") or ""
         bot_running = _runtime is not None and _runtime.running
+        bot_error = _runtime._last_error if _runtime else ""
 
         identities = session.execute(
             select(TelegramIdentity).where(TelegramIdentity.enabled.is_(True))
@@ -64,6 +65,7 @@ class TelegramService:
             "bot_token_set": bool(token),
             "bot_username": bot_username,
             "bot_running": bot_running,
+            "bot_error": bot_error,
             "allowed_users": allowed,
             "rejected_users": rejected,
         }
@@ -136,6 +138,7 @@ class TelegramBotRuntime:
     def __init__(self) -> None:
         self._application = None
         self.running = False
+        self._last_error = ""
 
     def reload(self, token: str) -> str:
         self.stop()
@@ -161,9 +164,11 @@ class TelegramBotRuntime:
             await app.initialize()
             await app.start()
             await app.updater.start_polling(drop_pending_updates=True)
+            logger.info("Telegram bot started successfully")
         except Exception as exc:
-            logger.exception("Telegram bot failed to start", exc_info=exc)
+            logger.exception("Telegram bot failed to start")
             self.running = False
+            self._last_error = str(exc)
 
     def stop(self) -> None:
         self.running = False

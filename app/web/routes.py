@@ -303,6 +303,11 @@ async def test_caldav_connection(
     try:
         await CalDAVService().test_connection(url, username, password)
     except CalDAVServiceError as exc:
+        error_msg = str(exc)
+        if "405" in error_msg or "Not Allowed" in error_msg or "nginx" in error_msg:
+            error_msg = f"连接失败：URL 可能不是 CalDAV 端点。请确认填的是 CalDAV 地址，不是网站首页。\n常见：iCloud: https://caldav.icloud.com，Nextcloud: https://your.domain/remote.php/dav/"
+        return redirect_with_query("/console/caldav", error=error_msg)
+    except CalDAVServiceError as exc:
         return redirect_with_query("/console/caldav", error=str(exc))
     return redirect_with_query("/console/caldav", message="连接测试成功。")
 

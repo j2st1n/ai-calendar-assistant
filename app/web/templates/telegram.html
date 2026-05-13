@@ -27,6 +27,9 @@
     {% else %}
     <span class="chip" style="background:#fef2f2;color:#b42318;">未启动</span>
     {% endif %}
+    {% if bot_error %}
+    <span class="chip" style="background:#fef2f2;color:#b42318;">{{ bot_error[:80] }}</span>
+    {% endif %}
     {% if bot_token_set %}
     <span class="chip" style="background:#eef3ff">Bot Token 已配置</span>
     {% endif %}
