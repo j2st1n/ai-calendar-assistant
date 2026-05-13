@@ -2,7 +2,7 @@
 {% block content %}
 <section class="card">
   <h1>AI Settings</h1>
-  <p class="muted">这里先完成 AI Provider、Base URL、API Key、模型列表的配置基础。真正的连接测试后续接入。</p>
+  <p class="muted">配置 AI Provider、Base URL、API Key，并拉取模型列表或测试连接。</p>
   {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
   <form method="post" action="/admin/ai" class="stack">
@@ -54,8 +54,6 @@
     {% endfor %}
   </div>
   <form method="post" action="/admin/ai/models" class="row">
-    <input type="hidden" name="provider_name" value="{{ provider_name }}">
-    <input type="hidden" name="provider_type" value="{{ provider_type }}">
     <button type="submit">拉取模型列表</button>
   </form>
   <form method="post" action="/admin/ai/test" class="row">

@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -10,6 +11,7 @@ from app.core.security import hash_password, verify_password
 from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
 from app.db.models import EventRecord
 from app.db.session import SessionLocal
+from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
 from app.services.settings_service import SettingsService
 
 
@@ -32,6 +34,10 @@ def require_admin(request: Request) -> None:
 
 def redirect(path: str) -> RedirectResponse:
     return RedirectResponse(url=path, status_code=status.HTTP_303_SEE_OTHER)
+
+
+def redirect_with_query(path: str, **params: str) -> RedirectResponse:
+    return redirect(f"{path}?{urlencode(params)}")
 
 
 def dashboard_stats(session: Session) -> dict[str, int]:
@@ -169,30 +175,44 @@ async def update_ai_settings(
 
 @router.post("/ai/models")
 async def pull_ai_models(
-    provider_name: str = Form(...),
-    provider_type: str = Form(...),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
-    if provider_type == "anthropic":
-        models = CLAUDE_MODELS
-    else:
-        models = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"]
-    settings_service.set("ai_provider_name", provider_name)
-    settings_service.set("ai_provider_type", provider_type)
+    config = current_ai_provider_config(settings_service)
+    try:
+        models = await AIProviderService().list_models(config)
+    except AIProviderError as exc:
+        return redirect_with_query("/admin/ai", error=str(exc))
+
     settings_service.set("ai_available_models", ",".join(models))
     if models and not settings_service.get("ai_model"):
         settings_service.set("ai_model", models[0])
     settings_service.commit()
-    return redirect("/admin/ai?message=模型列表已更新。")
+    return redirect_with_query("/admin/ai", message=f"模型列表已更新，共 {len(models)} 个。")
 
 
 @router.post("/ai/test")
 async def test_ai_connection(
+    session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    return redirect("/admin/ai?error=AI 测试连接暂未接入，当前仅完成配置保存与模型列表基础结构。")
+    settings_service = SettingsService(session)
+    config = current_ai_provider_config(settings_service)
+    try:
+        await AIProviderService().test_connection(config)
+    except AIProviderError as exc:
+        return redirect_with_query("/admin/ai", error=str(exc))
+    return redirect_with_query("/admin/ai", message="AI 连接测试成功。")
+
+
+def current_ai_provider_config(settings_service: SettingsService) -> AIProviderConfig:
+    return AIProviderConfig(
+        provider_type=settings_service.get("ai_provider_type") or "openai_compatible",
+        base_url=settings_service.get("ai_base_url") or "https://api.openai.com/v1",
+        api_key=settings_service.get("ai_api_key"),
+        model=settings_service.get("ai_model"),
+    )
 
 
 @router.post("/system")
