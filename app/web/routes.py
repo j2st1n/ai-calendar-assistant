@@ -101,6 +101,8 @@ async def login(
         request.session.clear()
         request.session["admin_authenticated"] = True
         request.session["admin_username"] = username
+        if settings_service.get("admin_password_changed") == "false":
+            return redirect_with_query("/console/system", message="首次登录，请修改管理员密码。")
         return redirect("/console")
     return templates.TemplateResponse(
         request,
@@ -291,16 +293,11 @@ async def test_caldav_connection(
     url = caldav_url.strip()
     username = caldav_username.strip()
     password = caldav_password.strip()
-    if not url or not username or not password:
-        settings_service = SettingsService(session)
-        if not url and not username:
-            stored_url = settings_service.get("caldav_url") or ""
-            stored_username = settings_service.get("caldav_username") or ""
-            if stored_url:
-                url = stored_url
-            if stored_username:
-                username = stored_username
-        password = password or settings_service.get("caldav_password") or ""
+    settings_service = SettingsService(session)
+
+    url = url or settings_service.get("caldav_url") or ""
+    username = username or settings_service.get("caldav_username") or ""
+    password = password or settings_service.get("caldav_password") or ""
     if not url:
         return redirect_with_query("/console/caldav", error="请填写 CalDAV Server URL。")
     try:
@@ -316,9 +313,9 @@ async def list_caldav_calendars(
     caldav_username: str = Form(""),
     caldav_password: str = Form(""),
 ) -> RedirectResponse:
-    url = caldav_url.strip()
-    username = caldav_username.strip()
-    password = caldav_password.strip()
+    url = caldav_url.strip() or ""
+    username = caldav_username.strip() or ""
+    password = caldav_password.strip() or ""
     if not url:
         return redirect_with_query("/console/caldav", error="请填写 CalDAV Server URL。")
     try:
@@ -487,6 +484,7 @@ async def update_system_settings(
         if not saved_password_hash or not verify_password(current_password, saved_password_hash):
             return redirect("/console/system?error=当前密码不正确。")
         settings_service.set("admin_password_hash", hash_password(new_password))
+        settings_service.set("admin_password_changed", "true")
 
     settings_service.set("admin_username", username.strip() or "admin")
     settings_service.set("session_days", str(session_days))

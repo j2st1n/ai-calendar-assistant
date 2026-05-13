@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -150,8 +151,19 @@ class TelegramBotRuntime:
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
         self._application = app
         self.running = True
-        logger.info("Telegram bot initialized")
+
+        asyncio.create_task(self._start_bot(app))
+        logger.info("Telegram bot reload triggered")
         return "started"
+
+    async def _start_bot(self, app) -> None:
+        try:
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling(drop_pending_updates=True)
+        except Exception as exc:
+            logger.exception("Telegram bot failed to start", exc_info=exc)
+            self.running = False
 
     def stop(self) -> None:
         self.running = False

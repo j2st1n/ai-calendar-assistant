@@ -80,6 +80,7 @@ def ensure_admin(settings_service: SettingsService) -> None:
     admin_password = settings.admin_password or generate_password()
     settings_service.set("admin_username", admin_username)
     settings_service.set("admin_password_hash", hash_password(admin_password))
+    settings_service.set("admin_password_changed", "false")
     settings_service.commit()
     print_initial_credentials(admin_username, admin_password)
 
