@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    image: ai-calendar-assistant:dev
+    user: "1000:1000"
+    ports:
+      - "127.0.0.1:9527:9527"
+    volumes:
+      - ./data:/app/data
