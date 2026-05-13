@@ -317,10 +317,16 @@ async def list_caldav_calendars(
     caldav_url: str = Form(""),
     caldav_username: str = Form(""),
     caldav_password: str = Form(""),
+    session: Session = Depends(get_db),
 ) -> RedirectResponse:
     url = caldav_url.strip() or ""
     username = caldav_username.strip() or ""
     password = caldav_password.strip() or ""
+    if not url:
+        settings_service = SettingsService(session)
+        url = settings_service.get("caldav_url") or ""
+        username = username or settings_service.get("caldav_username") or ""
+        password = password or settings_service.get("caldav_password") or ""
     if not url:
         return redirect_with_query("/console/caldav", error="请填写 CalDAV Server URL。")
     try:
