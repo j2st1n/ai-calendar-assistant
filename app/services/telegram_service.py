@@ -230,15 +230,19 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        processor = MessageProcessor()
-        reply_id = str(update.effective_message.reply_to_message.message_id) if update.effective_message.reply_to_message else None
-        response, record_id = await processor.process(session, user_id, update.effective_message.text, reply_id)
-        sent = await update.effective_message.reply_text(response)
-        if record_id and sent:
-            rec = session.get(EventRecord, record_id)
-            if rec:
-                rec.bot_message_id = str(sent.message_id)
-                session.commit()
+        try:
+            processor = MessageProcessor()
+            reply_id = str(update.effective_message.reply_to_message.message_id) if update.effective_message.reply_to_message else None
+            response, record_id = await processor.process(session, user_id, update.effective_message.text, reply_id)
+            sent = await update.effective_message.reply_text(response)
+            if record_id and sent:
+                rec = session.get(EventRecord, record_id)
+                if rec:
+                    rec.bot_message_id = str(sent.message_id)
+                    session.commit()
+        except Exception as exc:
+            logger.exception("Message processing failed")
+            await update.effective_message.reply_text(f"处理消息时出错：{exc}")
 
 
 async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
