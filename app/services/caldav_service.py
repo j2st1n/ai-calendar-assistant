@@ -48,7 +48,7 @@ class CalDAVService:
             raise CalDAVServiceError(f"拉取日历列表失败：{exc}") from exc
 
     def _list_calendars_sync(self, url: str, username: str, password: str) -> list[dict[str, str]]:
-        url = url.strip().rstrip("/")
+        url = url.strip()
         client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
 
         errors = []
@@ -79,31 +79,30 @@ def _try_principal_calendars(client, url: str) -> list:
 
 
 def _try_propfind(client, url: str) -> list:
-    principal = client.principal()
-    if principal is None:
+    try:
+        client.principal()
+    except Exception:
         return []
 
-    home_url = str(principal.url).strip()
     try:
-        home_url = client._make_absolute_url(home_url)
-    except Exception:
-        pass
-
-    try:
-        resp = client.propfind(home_url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
+        resp = client.propfind(url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
         if resp.status // 100 == 2:
             resp.find_objects_and_props()
             objects = getattr(resp, 'objects', None) or {}
             if objects:
-                calendars = _parse_calendar_objects(client, objects, home_url)
+                calendars = _parse_calendar_objects(client, objects, url)
                 if calendars:
                     return calendars
     except Exception:
         pass
 
     try:
-        cal = client.calendar(home_url)
-        cal.get_display_name()
+        cal = client.calendar(url)
+        try:
+            cal.get_display_name()
+        except Exception:
+            parts = url.strip("/").split("/")
+            cal.name = parts[-1] if parts else url
         return [cal]
     except Exception:
         pass
