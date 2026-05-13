@@ -84,40 +84,10 @@ def _try_propfind(client, url: str) -> list:
     except Exception:
         return []
 
-    try:
-        parts = url.strip("/").split("/")
-        cal = client.calendar(url=url)
-        cal.name = parts[-1] if parts else url
-        return [cal]
-    except Exception:
-        pass
-
-    return []
-
-
-def _parse_calendar_objects(client, objects, home_url) -> list:
-    calendars = []
-    for href, props in objects.items():
-        if not href:
-            continue
-        if href == home_url or href == home_url.rstrip("/") or href.rstrip("/") == home_url.rstrip("/"):
-            continue
-        try:
-            cal = client.calendar(url=href)
-            for prop_element in (props or {}).values() if isinstance(props, dict) else []:
-                if prop_element is None:
-                    continue
-                text = getattr(prop_element, 'text', None)
-                if text:
-                    cal.name = text
-                    break
-            if not getattr(cal, 'name', None):
-                parts = href.strip("/").split("/")
-                cal.name = parts[-1] if parts else href
-            calendars.append(cal)
-        except Exception:
-            continue
-    return calendars
+    parts = url.strip("/").split("/")
+    cal = client.calendar(url=url)
+    cal.name = parts[-1] if parts else url
+    return [cal]
 
     async def create_event(
         self,
@@ -155,15 +125,14 @@ def _parse_calendar_objects(client, objects, home_url) -> list:
         ) = args
 
         client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password, ssl_verify_cert=False, timeout=120)
-        principal = client.principal()
-        calendars = principal.calendars()
+        calendars = client.get_calendars()
         target_cal = None
         for cal in calendars:
             if str(cal.url) == calendar_url.strip():
                 target_cal = cal
                 break
-        if target_cal is None and calendars:
-            target_cal = calendars[0]
+        if target_cal is None:
+            target_cal = client.calendar(url=calendar_url.strip())
         if target_cal is None:
             raise CalDAVServiceError("找不到目标日历。")
 
@@ -215,13 +184,13 @@ def _parse_calendar_objects(client, objects, home_url) -> list:
 
     def _delete_event_sync(self, caldav_url: str, username: str, password: str, uid: str) -> bool:
         client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password, ssl_verify_cert=False, timeout=120)
-        principal = client.principal()
-        for cal in principal.calendars():
+        calendars = client.get_calendars()
+        for cal in calendars:
             try:
                 events = cal.search(event_uid=uid)
                 if events:
                     events[0].delete()
                     return True
             except Exception:
-                 continue
+                continue
         return False
