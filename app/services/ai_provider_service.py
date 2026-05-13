@@ -17,6 +17,41 @@ class AIProviderConfig:
 
 
 class AIProviderService:
+    async def chat_completion(
+        self, config: AIProviderConfig, system_prompt: str, user_message: str, json_mode: bool = True
+    ) -> str:
+        if config.provider_type == "anthropic":
+            return await self._anthropic_chat(config, system_prompt, user_message)
+        return await self._openai_chat(config, system_prompt, user_message, json_mode)
+
+    async def _openai_chat(self, config: AIProviderConfig, system: str, user: str, json_mode: bool) -> str:
+        client = AsyncOpenAI(api_key=config.api_key or "local", base_url=config.base_url)
+        kwargs = dict(
+            model=config.model or "",
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.1,
+        )
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        resp = await client.chat.completions.create(**kwargs)
+        return resp.choices[0].message.content or ""
+
+    async def _anthropic_chat(self, config: AIProviderConfig, system: str, user: str) -> str:
+        if not config.api_key:
+            raise AIProviderError("Anthropic Provider 需要 API Key。")
+        client = AsyncAnthropic(api_key=config.api_key)
+        resp = await client.messages.create(
+            model=config.model or "",
+            max_tokens=4096,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            temperature=0.1,
+        )
+        content = resp.content
+        if isinstance(content, list) and len(content) > 0:
+            return content[0].text if hasattr(content[0], "text") else str(content[0])
+        return str(content) if content else ""
+
     async def list_models(self, config: AIProviderConfig) -> list[str]:
         if config.provider_type == "anthropic":
             return CLAUDE_MODELS

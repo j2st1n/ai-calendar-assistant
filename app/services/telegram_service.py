@@ -7,6 +7,7 @@ import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.channels.message_processor import MessageProcessor
 from app.core.crypto import mask_secret
 from app.db.models import TelegramIdentity
 from app.db.session import SessionLocal
@@ -197,6 +198,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-    await update.effective_message.reply_text(
-        "日程提取与日历写入功能即将接入。当前只完成了配置管理。"
-    )
+        processor = MessageProcessor()
+        reply_id = str(update.effective_message.reply_to_message.message_id) if update.effective_message.reply_to_message else None
+        response = await processor.process(session, user_id, update.effective_message.text, reply_id)
+        await update.effective_message.reply_text(response)
