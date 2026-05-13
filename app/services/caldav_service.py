@@ -85,24 +85,9 @@ def _try_propfind(client, url: str) -> list:
         return []
 
     try:
-        resp = client.propfind(url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
-        if resp.status // 100 == 2:
-            resp.find_objects_and_props()
-            objects = getattr(resp, 'objects', None) or {}
-            if objects:
-                calendars = _parse_calendar_objects(client, objects, url)
-                if calendars:
-                    return calendars
-    except Exception:
-        pass
-
-    try:
+        parts = url.strip("/").split("/")
         cal = client.calendar(url=url)
-        try:
-            cal.get_display_name()
-        except Exception:
-            parts = url.strip("/").split("/")
-            cal.name = parts[-1] if parts else url
+        cal.name = parts[-1] if parts else url
         return [cal]
     except Exception:
         pass
