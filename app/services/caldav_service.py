@@ -28,7 +28,7 @@ class CalDAVService:
     def _test_connection_sync(self, url: str, username: str, password: str) -> None:
         url = url.strip()
         try:
-            client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False)
+            client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
             principal = client.principal()
             if not principal:
                 raise CalDAVServiceError("无法获取 CalDAV principal，请检查 URL。")
@@ -49,7 +49,7 @@ class CalDAVService:
 
     def _list_calendars_sync(self, url: str, username: str, password: str) -> list[dict[str, str]]:
         url = url.strip()
-        client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False)
+        client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
         principal = client.principal()
         calendars = principal.calendars()
         if not calendars:
@@ -98,7 +98,7 @@ class CalDAVService:
             location, description, reminders, recurrence, is_all_day,
         ) = args
 
-        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password, ssl_verify_cert=False)
+        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password, ssl_verify_cert=False, timeout=120)
         principal = client.principal()
         calendars = principal.calendars()
         target_cal = None
@@ -158,7 +158,7 @@ class CalDAVService:
             return False
 
     def _delete_event_sync(self, caldav_url: str, username: str, password: str, uid: str) -> bool:
-        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password, ssl_verify_cert=False)
+        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password, ssl_verify_cert=False, timeout=120)
         principal = client.principal()
         for cal in principal.calendars():
             try:
