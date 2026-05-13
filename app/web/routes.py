@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
 from app.services.settings_service import SettingsService
+from app.services.telegram_service import TelegramService
 
 
 router = APIRouter(prefix="/console")
@@ -336,6 +337,76 @@ async def list_caldav_calendars(
             cal_name=calendars[0]["name"],
         )
     return redirect_with_query("/console/caldav", message=msg, cal_urls=cal_urls)
+
+
+@router.get("/telegram", response_class=HTMLResponse)
+async def telegram_settings(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    service = TelegramService()
+    payload = service.config_summary(session)
+    payload["request"] = request
+    payload["message"] = request.query_params.get("message")
+    payload["error"] = request.query_params.get("error")
+    payload["bind_link"] = request.query_params.get("bind_link")
+    return templates.TemplateResponse(request, "telegram.html", payload)
+
+
+@router.post("/telegram")
+async def update_telegram_settings(
+    bot_token: str = Form(""),
+    bot_username: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    service = TelegramService()
+    token = bot_token.strip()
+    if token:
+        service.save_token(session, token, bot_username.strip())
+    if token and bot_username.strip():
+        service.reload_bot(token)
+        return redirect_with_query("/console/telegram", message="Telegram Bot 已保存并重载。")
+    return redirect_with_query("/console/telegram", message="Telegram 设置已保存。")
+
+
+@router.post("/telegram/bind")
+async def generate_bind_link(
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    bot_username = settings_service.get("telegram_bot_username") or ""
+    if not bot_username:
+        return redirect_with_query("/console/telegram", error="请先配置 Bot Username。")
+    service = TelegramService()
+    link = service.generate_bind_link(bot_username)
+    return redirect_with_query("/console/telegram", bind_link=link, message="绑定链接已生成。")
+
+
+@router.post("/telegram/users/add")
+async def add_telegram_user(
+    user_id: str = Form(...),
+    username: str = Form(""),
+    display_name: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    service = TelegramService()
+    service.add_user(session, user_id.strip(), username.strip(), display_name.strip())
+    return redirect_with_query("/console/telegram", message=f"已添加用户 {user_id}。")
+
+
+@router.post("/telegram/users/disable")
+async def disable_telegram_user(
+    user_id: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    service = TelegramService()
+    service.disable_user(session, user_id.strip())
+    return redirect_with_query("/console/telegram", message=f"已禁用用户 {user_id}。")
 
 
 @router.post("/system")

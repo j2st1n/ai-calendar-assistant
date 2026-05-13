@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Telegram Settings</h1>
+  <p class="muted">配置 Telegram Bot Token，管理授权用户。</p>
+  {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
+  {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
+
+  <form method="post" action="/console/telegram" class="stack">
+    <label>
+      Bot Token
+      <input name="bot_token" type="password" value="" placeholder="{{ bot_token_masked or 'sk-••••••••abcd' }}" autocomplete="off">
+    </label>
+    <label>
+      Bot Username
+      <input name="bot_username" value="{{ bot_username }}" placeholder="my_calendar_bot">
+    </label>
+    <div class="row">
+      <button type="submit">保存并重载 Bot</button>
+    </div>
+  </form>
+
+  <div class="row" style="margin-top: 12px;">
+    <span class="muted">Bot 状态：</span>
+    {% if bot_running %}
+    <span class="chip" style="background:#ecfdf3;color:#176b3a;">运行中</span>
+    {% else %}
+    <span class="chip" style="background:#fef2f2;color:#b42318;">未启动</span>
+    {% endif %}
+    {% if bot_token_set %}
+    <span class="chip" style="background:#eef3ff">Bot Token 已配置</span>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <h2>绑定链接</h2>
+  <p class="muted">生成一次性绑定链接，用户点击后自动加入白名单。链接 10 分钟有效，只能使用一次。</p>
+  <form method="post" action="/console/telegram/bind" class="row">
+    <button type="submit">生成绑定链接</button>
+  </form>
+  {% if bind_link %}
+  <div class="alert success" style="margin-top: 12px; word-break: break-all;">
+    {{ bind_link }}
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>已授权用户</h2>
+  {% if allowed_users %}
+  <table style="width:100%; border-collapse:collapse;">
+    <tr style="color:#68758a; text-align:left;">
+      <th style="padding:8px;">User ID</th>
+      <th style="padding:8px;">Username</th>
+      <th style="padding:8px;"></th>
+    </tr>
+    {% for user in allowed_users %}
+    <tr style="border-top:1px solid #dde3ee;">
+      <td style="padding:8px;">{{ user.user_id }}</td>
+      <td style="padding:8px;">{{ user.username }}</td>
+      <td style="padding:8px; text-align:right;">
+        <form method="post" action="/console/telegram/users/disable" style="display:inline;">
+          <input type="hidden" name="user_id" value="{{ user.user_id }}">
+          <button type="submit" class="danger" style="padding:4px 8px; font-size:0.85em;">禁用</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">暂无授权用户。请生成绑定链接让用户加入。</p>
+  {% endif %}
+
+  <form method="post" action="/console/telegram/users/add" class="row" style="margin-top:16px; align-items:flex-end;">
+    <label style="flex:1;">
+      User ID
+      <input name="user_id" placeholder="123456789" required>
+    </label>
+    <label style="flex:1;">
+      Username
+      <input name="username" placeholder="someone">
+    </label>
+    <label style="flex:1;">
+      Display Name
+      <input name="display_name" placeholder="显示名">
+    </label>
+    <button type="submit">手动添加</button>
+  </form>
+</section>
+
+{% if rejected_users %}
+<section class="card">
+  <h2>最近被拒绝访问</h2>
+  <p class="muted">未授权用户访问时的记录，方便复制 User ID 加入白名单。</p>
+  <table style="width:100%; border-collapse:collapse;">
+    <tr style="color:#68758a; text-align:left;">
+      <th style="padding:8px;">User ID</th>
+      <th style="padding:8px;">Username</th>
+      <th style="padding:8px;">Display Name</th>
+    </tr>
+    {% for user in rejected_users %}
+    <tr style="border-top:1px solid #dde3ee;">
+      <td style="padding:8px;">{{ user.user_id }}</td>
+      <td style="padding:8px;">{{ user.username }}</td>
+      <td style="padding:8px;">{{ user.display_name }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+{% endblock %}
