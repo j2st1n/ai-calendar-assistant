@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.channels.message_processor import MessageProcessor
 from app.core.crypto import mask_secret
-from app.db.models import TelegramIdentity
+from app.db.models import EventRecord, TelegramIdentity
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 
@@ -143,6 +143,10 @@ class TelegramBotRuntime:
 
         app = Application.builder().token(token).build()
         app.add_handler(CommandHandler("start", _handle_start))
+        app.add_handler(CommandHandler("help", _handle_help))
+        app.add_handler(CommandHandler("list", _handle_list))
+        app.add_handler(CommandHandler("latest", _handle_latest))
+        app.add_handler(CommandHandler("status", _handle_status))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
         self._application = app
         self.running = True
@@ -200,5 +204,139 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         processor = MessageProcessor()
         reply_id = str(update.effective_message.reply_to_message.message_id) if update.effective_message.reply_to_message else None
-        response = await processor.process(session, user_id, update.effective_message.text, reply_id)
-        await update.effective_message.reply_text(response)
+        response, record_id = await processor.process(session, user_id, update.effective_message.text, reply_id)
+        sent = await update.effective_message.reply_text(response)
+        if record_id and sent:
+            rec = session.get(EventRecord, record_id)
+            if rec:
+                rec.bot_message_id = str(sent.message_id)
+                session.commit()
+
+
+async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None:
+        return
+    await update.effective_message.reply_text(
+        "命令：\n"
+        "/start - 查看简介或绑定链接\n"
+        "/help - 查看帮助\n"
+        "/list [days] - 查看未来 N 天日程（默认 7 天，最大 30 天）\n"
+        "/latest - 查看最近一条日程\n"
+        "/status - 查看当前 AI / CalDAV / Bot 配置状态\n\n"
+        "直接发送日程描述即可创建：\n"
+        "明天下午3点和张三开会，地点会议室A"
+    )
+
+
+async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None:
+        return
+    user_id = str(update.effective_user.id) if update.effective_user else ""
+    days = 7
+    if context.args:
+        try:
+            days = min(int(context.args[0]), 30)
+        except ValueError:
+            pass
+
+    with SessionLocal() as session:
+        service = TelegramService()
+        if not service.is_user_allowed(session, user_id):
+            await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            return
+
+        from datetime import datetime as dt
+        from sqlalchemy import select
+
+        records = session.execute(
+            select(EventRecord)
+            .where(
+                EventRecord.telegram_user_id == user_id,
+                EventRecord.operation.in_(["create", "update"]),
+                EventRecord.status == "success",
+            )
+            .order_by(EventRecord.created_at.desc())
+            .limit(30)
+        ).scalars().all()
+
+        if not records:
+            await update.effective_message.reply_text(f"未来 {days} 天暂无日程记录。")
+            return
+
+        lines = [f"最近 {days} 天的日程记录："]
+        for rec in records[:days]:
+            title = rec.title or "(无标题)"
+            created = rec.created_at.strftime("%m-%d %H:%M") if rec.created_at else ""
+            lines.append(f"- {created} {title}")
+        await update.effective_message.reply_text("\n".join(lines))
+
+
+async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None:
+        return
+    user_id = str(update.effective_user.id) if update.effective_user else ""
+
+    with SessionLocal() as session:
+        service = TelegramService()
+        if not service.is_user_allowed(session, user_id):
+            await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            return
+
+        from sqlalchemy import select
+
+        rec = session.execute(
+            select(EventRecord)
+            .where(
+                EventRecord.telegram_user_id == user_id,
+                EventRecord.operation.in_(["create", "update"]),
+                EventRecord.status == "success",
+            )
+            .order_by(EventRecord.created_at.desc())
+        ).scalar()
+
+        if rec is None:
+            await update.effective_message.reply_text("暂无日程记录。")
+            return
+
+        event_json = rec.event_json or "{}"
+        import json as _json
+        data = _json.loads(event_json) if event_json else {}
+        lines = ["最近一条日程：", ""]
+        lines.append(f"📌 标题：{rec.title or '(无标题)'}")
+        if data.get("start_time"):
+            lines.append(f"🕒 时间：{data['start_time'][:16].replace('T', ' ')}")
+        if data.get("location"):
+            lines.append(f"📍 地点：{data['location']}")
+        lines.append(f"📅 创建于：{rec.created_at.strftime('%Y-%m-%d %H:%M') if rec.created_at else ''}")
+        lines.append("")
+        lines.append("如需修改或删除，请直接回复这条消息。")
+        lines.append('"时间改成下午4点"')
+        lines.append('"删除这条"')
+        msg = await update.effective_message.reply_text("\n".join(lines))
+        rec.bot_message_id = str(msg.message_id)
+        session.commit()
+
+
+async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None:
+        return
+    user_id = str(update.effective_user.id) if update.effective_user else ""
+
+    with SessionLocal() as session:
+        service = TelegramService()
+        if not service.is_user_allowed(session, user_id):
+            await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            return
+
+        from app.services.settings_service import SettingsService
+        svc = SettingsService(session)
+        ai = f"{svc.get('ai_provider_name') or '未配置'} ({svc.get('ai_model') or '未选择'})"
+        caldav = "已配置" if svc.get("caldav_url") else "未配置"
+        tg = "已配置" if svc.get("telegram_bot_token") else "未配置"
+
+        await update.effective_message.reply_text(
+            f"状态：\n"
+            f"AI：{ai}\n"
+            f"CalDAV：{caldav}\n"
+            f"Telegram Bot：{tg}"
+        )
