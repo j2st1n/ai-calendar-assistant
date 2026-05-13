@@ -77,11 +77,13 @@ class TelegramService:
         settings_service.commit()
 
     def reload_bot(self, token: str) -> str:
+        global _runtime
         if _runtime is None:
             _runtime = TelegramBotRuntime()
         return _runtime.reload(token)
 
     def stop_bot(self) -> None:
+        global _runtime
         if _runtime is not None:
             _runtime.stop()
 
