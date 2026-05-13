@@ -89,44 +89,29 @@ def _try_propfind(client, url: str) -> list:
     except Exception:
         pass
 
-    resp = client.propfind(home_url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
-    print(f"[caldav debug] home_url={home_url} status={resp.status} len={len(getattr(resp, 'raw', '') or '')}", flush=True)
-
-    if resp.status // 100 != 2:
-        try:
-            cal = client.calendar(url)
-            cal.name = url.rstrip("/").split("/")[-1]
-            return [cal]
-        except Exception:
-            pass
-        return []
-
     try:
-        resp.find_objects_and_props()
+        resp = client.propfind(home_url, props=["{DAV:}resourcetype", "{DAV:}displayname"], depth=1)
+        if resp.status // 100 == 2:
+            resp.find_objects_and_props()
+            objects = getattr(resp, 'objects', None) or {}
+            if objects:
+                calendars = _parse_calendar_objects(client, objects, home_url)
+                if calendars:
+                    return calendars
     except Exception:
         pass
 
-    objects = getattr(resp, 'objects', None) or {}
-    if not objects:
-        try:
-            from lxml import etree
-            raw = getattr(resp, 'raw', '') or ''
-            tree = resp.tree if hasattr(resp, 'tree') and resp.tree is not None else etree.fromstring(raw.encode() if isinstance(raw, str) else raw)
-            ns = {"D": "DAV:"}
-            objects = {}
-            for response_el in tree.findall(".//D:response", ns):
-                href_el = response_el.find("D:href", ns)
-                if href_el is None:
-                    continue
-                href = (href_el.text or "").strip()
-                props_dict = {}
-                for prop_el in response_el.findall(".//D:prop/*", ns):
-                    props_dict[prop_el.tag] = prop_el
-                if props_dict:
-                    objects[href] = props_dict
-        except Exception:
-            return []
+    try:
+        cal = client.calendar(home_url)
+        cal.get_display_name()
+        return [cal]
+    except Exception:
+        pass
 
+    return []
+
+
+def _parse_calendar_objects(client, objects, home_url) -> list:
     calendars = []
     for href, props in objects.items():
         if not href:
