@@ -65,6 +65,7 @@ def _caldav_config(svc: SettingsService) -> dict:
 
 
 async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
+    print(f"[mp] _route: text={text[:50]}", flush=True)
     draft_key = f"draft_{user_id}"
     draft = _pending_drafts.get(draft_key)
     if draft and (time.time() - draft.get("ts", 0)) < PENDING_DRAFT_TTL:
