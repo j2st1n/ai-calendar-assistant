@@ -1,21 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="card">
-  <h1>Status</h1>
-  <p class="muted">当前阶段已完成登录、基础设置和事件记录清理能力。</p>
-  <div class="grid">
-    <div class="metric">
-      <span>事件记录</span>
-      <strong>{{ stats.total_events }}</strong>
-    </div>
-    <div class="metric">
-      <span>失败</span>
-      <strong>{{ stats.failed_events }}</strong>
-    </div>
-    <div class="metric">
-      <span>待处理</span>
-      <strong>{{ stats.pending_events }}</strong>
-    </div>
+<h2 class="section-title">Status</h2>
+<p class="section-sub">当前配置状态和系统运行概览</p>
+
+<div class="grid" style="grid-template-columns: repeat(3, 1fr);">
+  <div class="metric">
+    <span>事件记录</span>
+    <strong>{{ stats.total_events }}</strong>
   </div>
-</section>
+  <div class="metric">
+    <span>失败</span>
+    <strong>{{ stats.failed_events }}</strong>
+  </div>
+  <div class="metric">
+    <span>待处理</span>
+    <strong>{{ stats.pending_events }}</strong>
+  </div>
+</div>
 {% endblock %}

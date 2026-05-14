@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block content %}
+{% block content_login %}
 <section class="card narrow">
-  <h1>登录后台</h1>
-  <p class="muted">首次启动生成的管理员密码可在 Docker 日志中查看。</p>
+  <h1 style="font-size: 20px; font-weight: 590; letter-spacing: -0.24px; color: #f7f8f8;">登录后台</h1>
+  <p class="muted" style="margin-bottom: 20px;">首次启动生成的管理员密码可在 Docker 日志中查看。</p>
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
   <form method="post" action="/console/login" class="stack">
     <label>
-      用户名
-      <input name="username" autocomplete="username" required>
+      <span>用户名</span>
+      <input name="username" autocomplete="username" value="admin" required>
     </label>
     <label>
-      密码
+      <span>密码</span>
       <input name="password" type="password" autocomplete="current-password" required>
     </label>
-    <button type="submit">登录</button>
+    <button type="submit" style="width:100%;">登录</button>
   </form>
 </section>
 {% endblock %}
