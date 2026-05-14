@@ -103,12 +103,15 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
     if target is None:
         return "🤔 没有找到要删除的日程。请回复某条日程消息，或最近 24 小时内创建过日程。"
     title = target.title or "日程"
+    deleted = False
     if target.caldav_uid and caldav["url"]:
         cal = CalDAVService()
-        await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], target.caldav_uid)
-    _record(session, user_id, "delete", title, "", "success", target.event_json or "")
+        deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], target.caldav_uid)
+    _record(session, user_id, "delete", title, "", "success" if deleted else "failed",
+            target.event_json or "")
     session.commit()
-    return f"🗑️ 已删除日程：{title}"
+    status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
+    return f"🗑️ 已删除日程：{title}{status}"
 
 
 async def _do_modify(session, user_id, text, reply_to, extractor, caldav, svc) -> tuple[str, int | None]:

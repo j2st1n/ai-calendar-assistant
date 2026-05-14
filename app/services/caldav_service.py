@@ -133,10 +133,14 @@ class CalDAVService:
             try:
                 events = cal.search(event_uid=uid)
                 if events:
-                    events[0].delete()
+                    print(f"[caldav delete] found {len(events)} events for uid={uid}", flush=True)
+                    result = events[0].delete()
+                    print(f"[caldav delete] delete result: {result}", flush=True)
                     return True
-            except Exception:
+            except Exception as exc:
+                print(f"[caldav delete] error: {exc}", flush=True)
                 continue
+        print(f"[caldav delete] no events found for uid={uid}", flush=True)
         return False
 
 
