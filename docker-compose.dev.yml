@@ -7,3 +7,9 @@ services:
       - "127.0.0.1:9527:9527"
     volumes:
       - ./data:/app/data
+    command: >
+      sh -c '
+        git describe --tags --always > VERSION 2>/dev/null || echo "dev" > VERSION;
+        git log --format="- %s" -20 > CHANGES 2>/dev/null || echo "" > CHANGES;
+        uvicorn app.main:app --host 0.0.0.0 --port 9527
+      '

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h2 class="section-title">概览</h2>
+{% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 
 
 <div class="grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:24px;">
@@ -51,6 +52,7 @@
     <form method="post" action="/console/telegram" style="margin-top:8px;">
       <input type="hidden" name="bot_token" value="">
       <input type="hidden" name="bot_username" value="">
+      <input type="hidden" name="redirect" value="/console">
       <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">启动 Bot</button>
     </form>
     {% endif %}

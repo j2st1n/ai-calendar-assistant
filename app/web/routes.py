@@ -148,6 +148,7 @@ async def dashboard(request: Request, session: Session = Depends(get_db), _: Non
     ctx = status_context(session, request)
     ctx["stats"] = stats
     ctx["request"] = request
+    ctx["message"] = request.query_params.get("message")
     return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
@@ -457,6 +458,7 @@ async def telegram_settings(
 async def update_telegram_settings(
     bot_token: str = Form(""),
     bot_username: str = Form(""),
+    redirect_path: str = Form("", alias="redirect"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -467,7 +469,8 @@ async def update_telegram_settings(
         service = TelegramService()
         service.save_token(session, token, username)
         service.reload_bot(token)
-        return redirect_with_query("/console/telegram", message="Telegram Bot 已保存并重载。")
+        target = redirect_path or "/console/telegram"
+        return redirect_with_query(target, message="Telegram Bot 已保存并重载。")
     return redirect_with_query("/console/telegram", message="请填写 Bot Token。")
 
 
