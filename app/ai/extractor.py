@@ -52,13 +52,14 @@ MODIFY_PROMPT = """You are modifying a calendar event. Below is the existing eve
 Existing event: {existing_event}
 User request: {instruction}
 
-Determine what to do:
-- If user wants to DELETE this event, return intent=delete_event.
-- If user wants to CHANGE something (time, location, title, etc), return intent=update_event with the modified fields in "event". Only include fields that changed - leave unchanged fields as null.
-- If you can't determine what to change, still return intent=update_event and copy the existing event.
+CRITICAL RULES:
+1. If user says "改到10点" and existing start_time is "21:00" (9 PM), the new time is 22:00 (10 PM). Use the existing event's AM/PM context to resolve ambiguity.
+2. Only return fields that CHANGED. Unchanged fields leave as null.
+3. To DELETE the event, return intent=delete_event.
+4. To MODIFY, return intent=update_event with changed fields only.
 
 Return JSON format:
-{{"intent": "update_event", "event": {{"start_time": "2026-05-15T15:55:00+08:00"}}}}"""
+{{"intent": "update_event", "event": {{"start_time": "2026-05-14T22:00:00+08:00"}}}}"""
 
 MISSING_FIELDS_PROMPT = """You are merging a partial event draft with new user input.
 

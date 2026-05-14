@@ -144,18 +144,28 @@ def _format_modify_result(event) -> str:
 
 def _merge_event(existing: dict, ai_event) -> dict:
     new = _to_dict(ai_event)
-    for key in ["title", "start_time", "end_time", "timezone", "location", "description"]:
-        if not new.get(key):
-            new[key] = existing.get(key)
-    if new.get("start_time") != existing.get("start_time") and not new.get("end_time"):
-        st = _parse_time(new["start_time"])
-        if st:
-            new["end_time"] = (st + timedelta(hours=1)).isoformat()
+    for key in ["title", "timezone", "location", "description"]:
+        existing_val = existing.get(key)
+        if not new.get(key) and existing_val and existing_val != "(无标题)":
+            new[key] = existing_val
+    new.setdefault("title", existing.get("title") or "日程")
+    if new.get("start_time") and new.get("start_time") != existing.get("start_time"):
+        new.setdefault("end_time", _shift_end(new["start_time"]))
+    else:
+        new.setdefault("start_time", existing.get("start_time", ""))
+        new.setdefault("end_time", existing.get("end_time", ""))
     if not new.get("reminders"):
         new["reminders"] = existing.get("reminders", [{"minutes_before": 30}])
     if not new.get("recurrence"):
         new["recurrence"] = existing.get("recurrence")
     return new
+
+
+def _shift_end(start_iso: str) -> str:
+    st = _parse_time(start_iso)
+    if st:
+        return (st + timedelta(hours=1)).isoformat()
+    return ""
 
 
 def _to_dict(obj):
