@@ -79,17 +79,15 @@ class CalDAVService:
                                    ssl_verify_cert=False, timeout=120)
         calendars = client.get_calendars()
         target_cal = None
+        calendar_url_str = calendar_url.strip() if calendar_url else ""
         for cal in calendars:
-            print(f"[caldav] cal url: {cal.url}", flush=True)
-            if str(cal.url) == calendar_url.strip():
+            if calendar_url_str and str(cal.url) == calendar_url_str:
                 target_cal = cal
                 break
+        if target_cal is None and calendars:
+            target_cal = calendars[0]
         if target_cal is None:
-            print(f"[caldav] no match, fallback calendar_url={calendar_url.strip()}", flush=True)
-            target_cal = client.calendar(url=calendar_url.strip())
-        if target_cal is None:
-            raise CalDAVServiceError("找不到目标日历。")
-        print(f"[caldav] target url: {target_cal.url}", flush=True)
+            raise CalDAVServiceError("找不到目标日历。请先在 Console 中拉取并保存日历。")
 
         uid = str(uuid.uuid4())
         cal = Calendar()
