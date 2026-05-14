@@ -121,9 +121,12 @@ async def _do_modify_with(session, user_id, text, target, new_event, caldav):
 
 
 def _format_modify_result(event) -> str:
+    title = event.get("title") if isinstance(event, dict) else getattr(event, 'title', '日程')
+    st = event.get("start_time", "?") if isinstance(event, dict) else getattr(event, 'start_time', '?')
+    et = event.get("end_time") if isinstance(event, dict) else getattr(event, 'end_time', None)
     lines = ["✅ 日程已更新！", ""]
-    lines.append(f"📌 标题：{event.title}")
-    lines.append(f"🕒 时间：{event.start_time[:16].replace('T', ' ')} - {(event.end_time or '?')[:16].replace('T', ' ')}")
+    lines.append(f"📌 标题：{title}")
+    lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {(et or '?')[:16].replace('T', ' ')}")
     return "\n".join(lines)
 
 
