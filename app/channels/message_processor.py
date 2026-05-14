@@ -187,6 +187,9 @@ def _try_quick_modify(text: str, existing: dict) -> dict | None:
     old_st = existing.get("start_time", "")
     if not old_st or "T" not in old_st:
         return None
+    old_h = int(old_st.split("T")[1].split(":")[0])
+    if old_h >= 12 and h < 12:
+        h += 12
     date_part = old_st.split("T")[0]
     new_st = f"{date_part}T{h:02d}:{mi:02d}:00+08:00"
     existing["start_time"] = new_st
