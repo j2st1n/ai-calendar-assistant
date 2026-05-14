@@ -60,7 +60,7 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
         return "🤔 仍缺少信息，请重新描述。", None
 
     target = await _find_target(session, user_id, reply_to)
-    if target and target.event_json:
+    if reply_to and target and target.event_json:
         existing = json.loads(target.event_json)
         quick = _try_quick_modify(text, existing)
         if quick:
@@ -79,9 +79,11 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
     if result.intent == Intent.delete_event:
         return await _do_delete(session, user_id, reply_to, caldav), None
     if result.intent == Intent.update_event and target and result.event:
-        await _do_modify_with(session, user_id, text, target, result.event, caldav)
+        existing = json.loads(target.event_json) if target.event_json else {}
+        merged = _merge_event(existing, result.event)
+        await _do_modify_with(session, user_id, text, target, merged, caldav)
         session.commit()
-        return _format_modify_result(result.event), None
+        return _format_modify_result(merged), None
     return await _handle_new(session, user_id, text, result, caldav, svc)
 
 
