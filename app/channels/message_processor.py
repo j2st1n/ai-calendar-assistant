@@ -182,6 +182,7 @@ def _try_quick_modify(text: str, existing: dict) -> dict | None:
     date_part = old_st.split("T")[0]
     new_st = f"{date_part}T{h:02d}:{mi:02d}:00+08:00"
     existing["start_time"] = new_st
+    existing["end_time"] = f"{date_part}T{h+1:02d}:{mi:02d}:00+08:00"
     return existing
 
 
