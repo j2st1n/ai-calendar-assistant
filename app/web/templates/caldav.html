@@ -8,6 +8,7 @@ function selectCalendar() {
   const urlInput = document.querySelector('input[name="caldav_calendar_url"]');
   if (urlInput && opt.dataset.url) urlInput.value = opt.dataset.url;
 }
+window.addEventListener('DOMContentLoaded', selectCalendar);
 </script>
 
 <section class="card">
@@ -48,7 +49,7 @@ function selectCalendar() {
 
     <label>
       Calendar URL
-      <input name="caldav_calendar_url" value="{{ caldav_calendar_url }}" placeholder="拉取日历列表后自动填充" readonly>
+      <input name="caldav_calendar_url" value="{{ caldav_calendar_url }}" placeholder="选择日历后自动填充">
     </label>
     <label>
       Default Timezone
