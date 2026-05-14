@@ -28,23 +28,23 @@ Rules:
 - If title or start_time missing → set missing_fields accordingly.
 
 Return JSON:
-{
+{{
   "intent": "create_event|update_event|delete_event|provide_missing_fields|no_event",
-  "event": {
+  "event": {{
     "title": "...",
     "start_time": "2026-05-15T15:00:00+08:00",
     "end_time": "2026-05-15T16:00:00+08:00",
     "timezone": "Asia/Shanghai",
     "location": "...",
     "description": "...",
-    "reminders": [{"minutes_before": 30}],
+    "reminders": [{{"minutes_before": 30}}],
     "recurrence": null,
     "is_all_day": false
-  },
+  }},
   "missing_fields": [],
   "unsupported_reason": null,
   "confidence": 0.9
-}
+}}
 """
 
 MODIFY_PROMPT = """You are a calendar event modifier. Update the existing event based on the user's instruction.
@@ -98,26 +98,43 @@ class EventExtractor:
     async def _call(self, system_prompt: str, user_message: str) -> ExtractionResult:
         try:
             raw = await self._service.chat_completion(self._config, system_prompt, user_message)
-            print(f"[ai] raw response: {raw[:500]}", flush=True)
             if not raw:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
             data = _parse_json(raw)
-            print(f"[ai] parsed keys: {list(data.keys())}", flush=True)
             return ExtractionResult.model_validate(data)
         except AIProviderError as exc:
-            logger.exception("AI provider error in extraction")
             return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
         except Exception as exc:
-            logger.exception("Failed to parse AI extraction result")
             return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
 
 
 def _parse_json(raw: str) -> dict:
     text = raw.strip()
+
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if m:
         text = m.group(1).strip()
+
     m = re.search(r"\{[\s\S]*\}", text)
     if m:
         text = m.group(0)
-    return json.loads(text)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    m = re.search(r"\{[^{}]*\{[^{}]*\}[^{}]*\}", text)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    if text.startswith('"') and not text.startswith('{'):
+        text = "{" + text
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON parse failed. Raw (first 300 chars): {raw[:300]}") from exc
