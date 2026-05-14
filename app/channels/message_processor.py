@@ -59,14 +59,24 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
             return await _write(session, user_id, text, result.event, caldav, svc), None
         return "🤔 仍缺少信息，请重新描述。", None
 
-    result = await extractor.extract(text)
+    target = await _find_target(session, user_id, reply_to)
+    if target and target.event_json:
+        existing = json.loads(target.event_json)
+        mod_result = await extractor.modify(existing, text)
+        if mod_result.intent == Intent.delete_event:
+            return await _do_delete_with(session, user_id, target, caldav), None
+        if mod_result.intent == Intent.update_event and mod_result.event:
+            await _do_modify_with(session, user_id, text, target, mod_result.event, caldav)
+            session.commit()
+            return _format_modify_result(mod_result.event), None
 
+    result = await extractor.extract(text)
     if result.intent == Intent.delete_event:
         return await _do_delete(session, user_id, reply_to, caldav), None
-
-    if result.intent == Intent.update_event:
-        return await _do_modify(session, user_id, text, reply_to, extractor, caldav, svc), None
-
+    if result.intent == Intent.update_event and target and result.event:
+        await _do_modify_with(session, user_id, text, target, result.event, caldav)
+        session.commit()
+        return _format_modify_result(result.event), None
     return await _handle_new(session, user_id, text, result, caldav, svc)
 
 
@@ -85,6 +95,36 @@ async def _find_target(session, user_id, reply_to) -> EventRecord | None:
     ).scalar()
 
 
+async def _do_delete_with(session, user_id, target, caldav) -> str:
+    title = target.title or "日程"
+    deleted = False
+    if caldav["url"]:
+        cal = CalDAVService()
+        deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
+                                          target.caldav_uid, target.caldav_href)
+    _record(session, user_id, "delete", title, "", "success" if deleted else "failed",
+            target.event_json or "")
+    session.commit()
+    status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
+    return f"🗑️ 已删除日程：{title}{status}"
+
+
+async def _do_modify_with(session, user_id, text, target, new_event, caldav):
+    if target.caldav_uid and caldav["url"]:
+        cal = CalDAVService()
+        await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
+                               target.caldav_uid, target.caldav_href)
+        await _write_caldav(new_event, caldav)
+    _record(session, user_id, "update", new_event.title, text, "success", new_event.model_dump_json())
+
+
+def _format_modify_result(event) -> str:
+    lines = ["✅ 日程已更新！", ""]
+    lines.append(f"📌 标题：{event.title}")
+    lines.append(f"🕒 时间：{event.start_time[:16].replace('T', ' ')} - {(event.end_time or '?')[:16].replace('T', ' ')}")
+    return "\n".join(lines)
+
+
 async def _do_delete(session, user_id, reply_to, caldav) -> str:
     target = await _find_target(session, user_id, reply_to)
     if target is None:
@@ -100,29 +140,6 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
-
-
-async def _do_modify(session, user_id, text, reply_to, extractor, caldav, svc) -> tuple[str, int | None]:
-    target = await _find_target(session, user_id, reply_to)
-    if target is None:
-        return "🤔 没有找到要修改的日程。请回复某条日程消息，或最近 24 小时内创建过日程。", None
-    existing = json.loads(target.event_json) if target.event_json else {}
-    result = await extractor.modify(existing, text)
-    if result.event is None or result.intent == Intent.no_event:
-        return "🤔 无法理解修改内容，请更具体地描述要改什么。", None
-
-    if target.caldav_uid and caldav["url"]:
-        cal = CalDAVService()
-        await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], target.caldav_uid)
-        await _write_caldav(result.event, caldav)
-
-    _record(session, user_id, "update", result.event.title, text, "success", result.event.model_dump_json())
-    session.commit()
-
-    lines = ["✅ 日程已更新！", ""]
-    lines.append(f"📌 标题：{result.event.title}")
-    lines.append(f"🕒 时间：{result.event.start_time[:16].replace('T', ' ')} - {(result.event.end_time or '?')[:16].replace('T', ' ')}")
-    return "\n".join(lines), None
 
 
 async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str, int | None]:
