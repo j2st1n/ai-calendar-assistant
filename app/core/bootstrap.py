@@ -96,7 +96,18 @@ def ensure_default_settings(settings_service: SettingsService) -> None:
     settings_service.commit()
 
 
-def generate_password() -> str:
+def read_version() -> str:
+    try:
+        return Path("VERSION").read_text().strip()
+    except Exception:
+        return "dev"
+
+
+def read_changes() -> list[str]:
+    try:
+        return [line.strip() for line in Path("CHANGES").read_text().strip().splitlines() if line.strip()]
+    except Exception:
+        return []
     token = secrets.token_urlsafe(18).replace("_", "-")
     return "-".join([token[i : i + 6] for i in range(0, min(len(token), 24), 6)])
 

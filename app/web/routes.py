@@ -1,4 +1,6 @@
 from collections.abc import Generator
+from datetime import date, datetime as dt, timedelta
+import json
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -7,7 +9,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.core.bootstrap import read_changes, read_version
 from app.core.security import hash_password, verify_password
+from app.services.telegram_service import get_telegram_bot_runtime
 from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
 from app.db.models import EventRecord
 from app.db.session import SessionLocal
@@ -43,10 +47,73 @@ def redirect_with_query(path: str, **params: str) -> RedirectResponse:
 
 
 def dashboard_stats(session: Session) -> dict[str, int]:
-    total = session.scalar(select(func.count()).select_from(EventRecord)) or 0
-    failed = session.scalar(select(func.count()).select_from(EventRecord).where(EventRecord.status == "failed")) or 0
-    pending = session.scalar(select(func.count()).select_from(EventRecord).where(EventRecord.status == "pending")) or 0
-    return {"total_events": total, "failed_events": failed, "pending_events": pending}
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+
+    def count_since(since_date):
+        return session.scalar(
+            select(func.count()).select_from(EventRecord).where(
+                EventRecord.operation == "create",
+                EventRecord.status == "success",
+                EventRecord.created_at >= since_date,
+            )
+        ) or 0
+
+    return {
+        "today_created": count_since(today),
+        "week_created": count_since(week_start),
+        "month_created": count_since(month_start),
+    }
+
+
+def status_context(session: Session, request) -> dict:
+    settings_service = SettingsService(session)
+    ai_name = settings_service.get("ai_provider_name") or ""
+    ai_model = settings_service.get("ai_model") or ""
+    ai_ok = bool(ai_name and ai_model)
+    caldav_url = settings_service.get("caldav_url") or ""
+    caldav_cal = settings_service.get("caldav_calendar_name") or ""
+    caldav_ok = bool(caldav_url and caldav_cal)
+
+    recent = session.execute(
+        select(EventRecord).order_by(EventRecord.created_at.desc()).limit(5)
+    ).scalars().all()
+
+    events = []
+    for rec in recent:
+        events.append({
+            "time": rec.created_at.strftime("%m-%d %H:%M") if rec.created_at else "",
+            "operation": rec.operation or "",
+            "title": rec.title or "",
+            "status": rec.status or "",
+            "start": rec.start_time or "",
+            "end": "",
+            "location": "",
+            "description": "",
+            "recurrence": "",
+        })
+        if rec.event_json:
+            try:
+                data = json.loads(rec.event_json)
+                events[-1]["start"] = data.get("start_time", "")[:16].replace("T", " ") if data.get("start_time") else ""
+                events[-1]["end"] = data.get("end_time", "")[:16].replace("T", " ") if data.get("end_time") else ""
+                events[-1]["location"] = data.get("location") or ""
+                events[-1]["description"] = data.get("description") or ""
+                events[-1]["recurrence"] = str(data.get("recurrence", {}).get("frequency", "")) if data.get("recurrence") else ""
+            except Exception:
+                pass
+
+    return {
+        "ai_ok": ai_ok,
+        "ai_name": f"{ai_name} / {ai_model}" if ai_ok else "",
+        "caldav_ok": caldav_ok,
+        "caldav_name": caldav_cal if caldav_ok else "",
+        "tg_running": get_telegram_bot_runtime() is not None and get_telegram_bot_runtime().running,
+        "recent_events": events,
+        "version": read_version(),
+        "changes": read_changes(),
+    }
 
 
 def ai_settings_payload(settings_service: SettingsService) -> dict[str, str | list[dict[str, str]]]:
@@ -77,7 +144,11 @@ def ai_settings_payload(settings_service: SettingsService) -> dict[str, str | li
 
 @router.get("", response_class=HTMLResponse)
 async def dashboard(request: Request, session: Session = Depends(get_db), _: None = Depends(require_admin)) -> HTMLResponse:
-    return templates.TemplateResponse(request, "dashboard.html", {"stats": dashboard_stats(session)})
+    stats = dashboard_stats(session)
+    ctx = status_context(session, request)
+    ctx["stats"] = stats
+    ctx["request"] = request
+    return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
 @router.get("/login", response_class=HTMLResponse)

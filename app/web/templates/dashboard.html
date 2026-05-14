@@ -1,20 +1,110 @@
 {% extends "base.html" %}
 {% block content %}
 <h2 class="section-title">概览</h2>
-<p class="section-sub">当前配置状态和系统运行概览</p>
 
-<div class="grid" style="grid-template-columns: repeat(3, 1fr);">
+
+<div class="grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:24px;">
   <div class="metric">
-    <span>事件记录</span>
-    <strong>{{ stats.total_events }}</strong>
+    <span>今日日程</span>
+    <strong>{{ stats.today_created }}</strong>
   </div>
   <div class="metric">
-    <span>失败</span>
-    <strong>{{ stats.failed_events }}</strong>
+    <span>本周日程</span>
+    <strong>{{ stats.week_created }}</strong>
   </div>
   <div class="metric">
-    <span>待处理</span>
-    <strong>{{ stats.pending_events }}</strong>
+    <span>本月日程</span>
+    <strong>{{ stats.month_created }}</strong>
   </div>
 </div>
+
+
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom:24px;">
+  <div class="card" style="margin-bottom:0;">
+    <h3 style="margin-bottom:8px;">AI</h3>
+    {% if ai_ok %}
+    <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
+    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">{{ ai_name }}</span>
+    {% else %}
+    <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
+    <a href="/console/ai" class="button-link secondary" style="margin-top:8px;font-size:12px;padding:4px 10px;">去配置</a>
+    {% endif %}
+  </div>
+
+  <div class="card" style="margin-bottom:0;">
+    <h3 style="margin-bottom:8px;">日历</h3>
+    {% if caldav_ok %}
+    <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
+    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">{{ caldav_name }}</span>
+    {% else %}
+    <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
+    <a href="/console/caldav" class="button-link secondary" style="margin-top:8px;font-size:12px;padding:4px 10px;">去配置</a>
+    {% endif %}
+  </div>
+
+  <div class="card" style="margin-bottom:0;">
+    <h3 style="margin-bottom:8px;">Telegram Bot</h3>
+    {% if tg_running %}
+    <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
+    {% else %}
+    <span class="status-badge"><span class="dot dot-error"></span>未启动</span>
+    <form method="post" action="/console/telegram" style="margin-top:8px;">
+      <input type="hidden" name="bot_token" value="">
+      <input type="hidden" name="bot_username" value="">
+      <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">启动 Bot</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+
+<h3 class="muted" style="font-size:14px;font-weight:510;margin-bottom:12px;">最近日程</h3>
+{% if recent_events %}
+<div class="card" style="padding:0;">
+  {% for ev in recent_events %}
+  <details style="border-bottom:1px solid rgba(255,255,255,0.04);">
+    <summary style="cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:8px;font-size:13px;list-style:none;">
+      <span class="muted-secondary" style="font-size:12px;min-width:90px;">{{ ev.time }}</span>
+      <span style="min-width:40px;">
+        {% if ev.operation == 'create' %}➕
+        {% elif ev.operation == 'update' %}✏️
+        {% elif ev.operation == 'delete' %}🗑️
+        {% else %}📋{% endif %}
+      </span>
+      <span style="flex:1;">{{ ev.title or '(无标题)' }}</span>
+      {% if ev.status == 'success' %}
+      <span class="status-badge"><span class="dot dot-success"></span>成功</span>
+      {% elif ev.status == 'failed' %}
+      <span class="status-badge"><span class="dot dot-error"></span>失败</span>
+      {% else %}
+      <span class="status-badge"><span class="dot dot-warning"></span>待处理</span>
+      {% endif %}
+    </summary>
+    <div style="padding:0 16px 12px 48px;font-size:13px;color:#d0d6e0;">
+      {% if ev.title %}<div style="margin-bottom:4px;">📌 {{ ev.title }}</div>{% endif %}
+      {% if ev.start %}<div style="margin-bottom:4px;color:#8a8f98;">🕒 {{ ev.start }}{% if ev.end %} - {{ ev.end }}{% endif %}</div>{% endif %}
+      {% if ev.location %}<div style="margin-bottom:4px;color:#8a8f98;">📍 {{ ev.location }}</div>{% endif %}
+      {% if ev.description %}<div style="margin-bottom:4px;color:#8a8f98;">📝 {{ ev.description }}</div>{% endif %}
+      {% if ev.recurrence %}<div style="color:#8a8f98;">🔁 {{ ev.recurrence }}</div>{% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+{% else %}
+<p class="muted" style="margin-bottom:24px;">暂无日程记录。</p>
+{% endif %}
+
+
+{% if changes %}
+<details style="margin-top:24px;">
+  <summary style="cursor:pointer;color:#8a8f98;font-size:14px;font-weight:500;margin-bottom:8px;">
+    更新说明 ({{ version or 'dev' }})
+  </summary>
+  <div style="color:#62666d;font-size:12px;line-height:1.8;padding:8px 0;">
+    {% for line in changes %}
+    <div>{{ line }}</div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
 {% endblock %}
