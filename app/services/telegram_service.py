@@ -48,9 +48,9 @@ class TelegramService:
         bot_running = _runtime is not None and _runtime.running
         bot_error = _runtime._last_error if _runtime else ""
 
-        identities = session.execute(
+        identities = session.scalars(
             select(TelegramIdentity).where(TelegramIdentity.enabled.is_(True))
-        ).scalars().all()
+        ).all()
 
         allowed = [
             {"id": ident.id, "user_id": ident.telegram_user_id, "username": ident.username or ""}
@@ -88,9 +88,9 @@ class TelegramService:
             _runtime.stop()
 
     def add_user(self, session: Session, user_id: str, username: str, display_name: str) -> None:
-        ident = session.get(TelegramIdentity, user_id) or session.execute(
+        ident = session.scalar(
             select(TelegramIdentity).where(TelegramIdentity.telegram_user_id == user_id)
-        ).scalar()
+        )
         if ident is None:
             ident = TelegramIdentity(telegram_user_id=user_id, username=username, display_name=display_name)
             session.add(ident)
@@ -102,13 +102,17 @@ class TelegramService:
         _rejected_users[:] = [r for r in _rejected_users if r[0] != user_id]
 
     def disable_user(self, session: Session, user_id: str) -> None:
-        ident = session.get(TelegramIdentity, user_id)
+        ident = session.scalar(
+            select(TelegramIdentity).where(TelegramIdentity.telegram_user_id == user_id)
+        )
         if ident:
             ident.enabled = False
             session.commit()
 
     def is_user_allowed(self, session: Session, user_id: str) -> bool:
-        ident = session.get(TelegramIdentity, f"{user_id}")
+        ident = session.scalar(
+            select(TelegramIdentity).where(TelegramIdentity.telegram_user_id == user_id)
+        )
         return ident is not None and ident.enabled
 
     def generate_bind_link(self, bot_username: str) -> str:
