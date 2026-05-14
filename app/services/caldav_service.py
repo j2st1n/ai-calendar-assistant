@@ -163,7 +163,7 @@ class CalDAVService:
                                     component['location'] = event_data['location']
                                 if event_data.get('description'):
                                     component['description'] = event_data['description']
-                        obj.data = ical.to_ical()
+                        obj.data = ical.to_ical().decode('utf-8')
                         print(f"[caldav update] saving obj at {getattr(obj, 'url', '?')}", flush=True)
                         obj.save()
                         print(f"[caldav update] save done", flush=True)
