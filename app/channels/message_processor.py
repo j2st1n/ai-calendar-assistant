@@ -143,22 +143,15 @@ def _format_modify_result(event) -> str:
 
 
 def _merge_event(existing: dict, ai_event) -> dict:
-    new = _to_dict(ai_event)
-    for key in ["title", "timezone", "location", "description"]:
-        existing_val = existing.get(key)
-        if not new.get(key) and existing_val and existing_val != "(无标题)":
-            new[key] = existing_val
-    new.setdefault("title", existing.get("title") or "日程")
-    if new.get("start_time") and new.get("start_time") != existing.get("start_time"):
-        new.setdefault("end_time", _shift_end(new["start_time"]))
-    else:
-        new.setdefault("start_time", existing.get("start_time", ""))
-        new.setdefault("end_time", existing.get("end_time", ""))
-    if not new.get("reminders"):
-        new["reminders"] = existing.get("reminders", [{"minutes_before": 30}])
-    if not new.get("recurrence"):
-        new["recurrence"] = existing.get("recurrence")
-    return new
+    changes = _to_dict(ai_event)
+    start_changed = changes.get("start_time") and changes["start_time"] != existing.get("start_time")
+    merged = dict(existing)
+    for key, val in changes.items():
+        if val is not None and val != "":
+            merged[key] = val
+    if start_changed and not changes.get("end_time"):
+        merged["end_time"] = _shift_end(merged["start_time"])
+    return merged
 
 
 def _shift_end(start_iso: str) -> str:
