@@ -87,7 +87,11 @@ class EventExtractor:
             existing_event=json.dumps(existing_event, ensure_ascii=False),
             instruction=instruction,
         )
-        return await self._call(prompt, instruction)
+        print(f"[ai modify] existing: {json.dumps(existing_event, ensure_ascii=False)[:200]}", flush=True)
+        print(f"[ai modify] instruction: {instruction}", flush=True)
+        result = await self._call(prompt, instruction)
+        print(f"[ai modify] intent: {result.intent}, event: {result.event}", flush=True)
+        return result
 
     async def merge_draft(self, draft: dict, new_input: str) -> ExtractionResult:
         prompt = MISSING_FIELDS_PROMPT.format(
@@ -100,6 +104,7 @@ class EventExtractor:
     async def _call(self, system_prompt: str, user_message: str) -> ExtractionResult:
         try:
             raw = await self._service.chat_completion(self._config, system_prompt, user_message)
+            print(f"[ai call] raw: {raw[:300]}", flush=True)
             if not raw:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
             data = _parse_json(raw)
