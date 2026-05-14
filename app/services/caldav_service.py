@@ -134,9 +134,9 @@ class CalDAVService:
         for cal in calendars:
             try:
                 for obj in cal.objects():
-                    obj_uid = getattr(obj, 'id', '')
                     obj_url = getattr(obj, 'url', '')
-                    if (uid and obj_uid == uid) or (href and obj_url == href):
+                    obj_uid = getattr(obj, 'id', '')
+                    if (href and obj_url == href) or (uid and obj_uid == uid):
                         obj.delete()
                         return True
             except Exception:
