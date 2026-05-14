@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <h2 class="section-title">概览</h2>
-{% if message %}<p class="alert success">{{ message }}</p>{% endif %}
+{% if message %}<p class="alert success" id="dash-msg">{{ message }}</p>
+<script>setTimeout(function(){var e=document.getElementById('dash-msg');if(e)e.remove();},3000);</script>
+{% endif %}
 
 
 <div class="grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:24px;">
