@@ -153,12 +153,10 @@ class CalDAVService:
                                 if event_data.get('title'):
                                     component['summary'] = event_data['title']
                                 if event_data.get('start_time'):
-                                    old_start = component['dtstart'].dt
                                     new_start = parse_date(event_data['start_time'])
                                     component['dtstart'].dt = new_start
-                                    if 'dtend' in component:
-                                        old_dur = component['dtend'].dt - old_start if hasattr(component['dtend'].dt, '__sub__') else timedelta(hours=1)
-                                        component['dtend'].dt = new_start + old_dur
+                                    if not event_data.get('end_time') and 'dtend' in component:
+                                        component['dtend'].dt = new_start + timedelta(hours=1)
                                 if event_data.get('end_time'):
                                     component['dtend'].dt = parse_date(event_data['end_time'])
                                 if event_data.get('location'):
