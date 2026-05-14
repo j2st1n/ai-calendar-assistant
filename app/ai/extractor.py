@@ -104,7 +104,7 @@ class EventExtractor:
     async def _call(self, system_prompt: str, user_message: str) -> ExtractionResult:
         try:
             raw = await self._service.chat_completion(self._config, system_prompt, user_message)
-            print(f"[ai call] raw: {raw[:300]}", flush=True)
+            print(f"[ai call] raw: {raw[:2000]}", flush=True)
             if not raw:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
             data = _parse_json(raw)
