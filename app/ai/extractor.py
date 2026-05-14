@@ -108,24 +108,38 @@ class EventExtractor:
             if not raw:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
             data = _parse_json(raw)
-            event = data.get("event")
-            if isinstance(event, dict):
-                if not event.get("title"):
-                    event["title"] = "(无标题)"
-                if not event.get("start_time"):
-                    event["start_time"] = datetime.now(timezone.utc).isoformat()
-            return ExtractionResult.model_validate(data)
+            return _build_result(data)
         except Exception as exc:
-            try:
-                intent = data.get("intent", "no_event")
-                event = data.get("event") or {}
-                return ExtractionResult(
-                    intent=Intent(intent) if intent in [e.value for e in Intent] else Intent.no_event,
-                    event={"title": event.get("title") or "(无标题)", "start_time": event.get("start_time") or datetime.now(timezone.utc).isoformat(), **(event if isinstance(event, dict) else {})} if event else None,
-                    missing_fields=[str(exc)],
-                )
-            except Exception:
-                return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
+            return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
+
+
+def _build_result(data: dict) -> ExtractionResult:
+    intent_str = data.get("intent", "no_event")
+    try:
+        intent = Intent(intent_str)
+    except ValueError:
+        intent = Intent.no_event
+
+    event_data = data.get("event")
+    if not isinstance(event_data, dict):
+        event_data = {}
+
+    event_data.setdefault("title", "(无标题)")
+    event_data.setdefault("start_time", datetime.now(timezone.utc).isoformat())
+
+    try:
+        return ExtractionResult.model_validate(data)
+    except Exception as exc:
+        event = _build_event(event_data)
+        return ExtractionResult(intent=intent, event=event, missing_fields=[str(exc)])
+
+
+def _build_event(data: dict):
+    from app.ai.schemas import CalendarEvent
+    try:
+        return CalendarEvent.model_validate(data)
+    except Exception:
+        return None
 
 
 def _parse_json(raw: str) -> dict:
