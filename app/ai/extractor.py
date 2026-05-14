@@ -47,16 +47,18 @@ Return JSON:
 }}
 """
 
-MODIFY_PROMPT = """You are a calendar event modifier. Update the existing event based on the user's instruction.
+MODIFY_PROMPT = """You are modifying a calendar event. Below is the existing event and the user's change request.
 
-Current time: {current_time}
 Existing event: {existing_event}
-User instruction: {instruction}
+User request: {instruction}
 
-CRITICAL: Return the COMPLETE updated event. Copy ALL fields from the existing event and ONLY change what the user asks. Do NOT set any field to null that had a value before. Do NOT return a diff. The "title" field MUST always have a non-null value - copy it from the existing event if the user didn't ask to change it.
+Determine what to do:
+- If user wants to DELETE this event, return intent=delete_event.
+- If user wants to CHANGE something (time, location, title, etc), return intent=update_event with the modified fields in "event". Only include fields that changed - leave unchanged fields as null.
+- If you can't determine what to change, still return intent=update_event and copy the existing event.
 
-Return intent=update_event with the full event JSON.
-"""
+Return JSON format:
+{{"intent": "update_event", "event": {{"start_time": "2026-05-15T15:55:00+08:00"}}}}"""
 
 MISSING_FIELDS_PROMPT = """You are merging a partial event draft with new user input.
 
@@ -83,15 +85,10 @@ class EventExtractor:
 
     async def modify(self, existing_event: dict, instruction: str) -> ExtractionResult:
         prompt = MODIFY_PROMPT.format(
-            current_time=datetime.now(timezone.utc).isoformat(),
             existing_event=json.dumps(existing_event, ensure_ascii=False),
             instruction=instruction,
         )
-        print(f"[ai modify] existing: {json.dumps(existing_event, ensure_ascii=False)[:200]}", flush=True)
-        print(f"[ai modify] instruction: {instruction}", flush=True)
-        result = await self._call(prompt, instruction)
-        print(f"[ai modify] intent: {result.intent}, event: {result.event}", flush=True)
-        return result
+        return await self._call(prompt, instruction)
 
     async def merge_draft(self, draft: dict, new_input: str) -> ExtractionResult:
         prompt = MISSING_FIELDS_PROMPT.format(
@@ -104,7 +101,6 @@ class EventExtractor:
     async def _call(self, system_prompt: str, user_message: str) -> ExtractionResult:
         try:
             raw = await self._service.chat_completion(self._config, system_prompt, user_message)
-            print(f"[ai call] raw: {raw[:2000]}", flush=True)
             if not raw:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
             data = _parse_json(raw)

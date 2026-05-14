@@ -138,12 +138,9 @@ class CalDAVService:
                     obj_url = getattr(obj, 'url', '')
                     if (uid and obj_uid == uid) or (href and obj_url == href):
                         obj.delete()
-                        print(f"[caldav delete] deleted by {'uid' if uid else 'href'}", flush=True)
                         return True
-            except Exception as exc:
-                print(f"[caldav delete] iter error: {exc}", flush=True)
+            except Exception:
                 continue
-        print(f"[caldav delete] not found uid={uid} href={href}", flush=True)
         return False
 
 

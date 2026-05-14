@@ -181,23 +181,18 @@ class TelegramBotRuntime:
 
         loop = asyncio.get_running_loop()
         self._task = loop.create_task(self._start_bot(app))
-        print(f"[bot] task created, token len={len(token)}", flush=True)
         return "started"
 
     async def _start_bot(self, app) -> None:
-        print("[bot] _start_bot running", flush=True)
         try:
             await app.initialize()
             await app.start()
             await app.updater.start_polling(drop_pending_updates=True)
-            print("[bot] polling started", flush=True)
             while True:
                 await asyncio.sleep(3600)
         except asyncio.CancelledError:
-            print("[bot] cancelled", flush=True)
             self.running = False
         except Exception as exc:
-            print(f"[bot] error: {exc}", flush=True)
             self.running = False
             self._last_error = str(exc)
 
@@ -236,7 +231,6 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print(f"[bot] msg from {update.effective_user.id if update.effective_user else '?'}", flush=True)
     if update.effective_message is None or update.effective_message.text is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
