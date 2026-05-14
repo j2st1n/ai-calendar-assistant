@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
@@ -99,7 +100,7 @@ class EventExtractor:
             raw = await self._service.chat_completion(self._config, system_prompt, user_message)
             if not raw:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
-            data = json.loads(raw)
+            data = _parse_json(raw)
             return ExtractionResult.model_validate(data)
         except AIProviderError as exc:
             logger.exception("AI provider error in extraction")
@@ -107,3 +108,14 @@ class EventExtractor:
         except Exception as exc:
             logger.exception("Failed to parse AI extraction result")
             return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
+
+
+def _parse_json(raw: str) -> dict:
+    text = raw.strip()
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if m:
+        text = m.group(1).strip()
+    m = re.search(r"\{[\s\S]*\}", text)
+    if m:
+        text = m.group(0)
+    return json.loads(text)

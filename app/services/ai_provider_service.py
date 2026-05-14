@@ -39,6 +39,7 @@ class AIProviderService:
     async def _anthropic_chat(self, config: AIProviderConfig, system: str, user: str) -> str:
         if not config.api_key:
             raise AIProviderError("Anthropic Provider 需要 API Key。")
+        system = system + "\n\nRespond with ONLY the JSON object, no markdown, no explanation."
         client = AsyncAnthropic(api_key=config.api_key)
         resp = await client.messages.create(
             model=config.model or "",
