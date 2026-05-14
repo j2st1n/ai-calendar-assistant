@@ -65,7 +65,7 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
         mod_result = await extractor.modify(existing, text)
         if mod_result.intent == Intent.delete_event:
             return await _do_delete_with(session, user_id, target, caldav), None
-        merged = _merge_event(existing, mod_result.event.model_dump() if mod_result.event else {})
+        merged = _merge_event(existing, mod_result.event)
         if mod_result.intent in (Intent.update_event, Intent.create_event):
             await _do_modify_with(session, user_id, text, target, merged, caldav)
             session.commit()
@@ -138,7 +138,7 @@ def _format_modify_result(event) -> str:
 
 
 def _merge_event(existing: dict, ai_event) -> dict:
-    new = ai_event.model_dump()
+    new = _to_dict(ai_event)
     for key in ["title", "start_time", "end_time", "timezone", "location", "description"]:
         if not new.get(key):
             new[key] = existing.get(key)
@@ -147,6 +147,18 @@ def _merge_event(existing: dict, ai_event) -> dict:
     if not new.get("recurrence"):
         new["recurrence"] = existing.get("recurrence")
     return new
+
+
+def _to_dict(obj):
+    if isinstance(obj, dict):
+        return obj
+    if obj is None:
+        return {}
+    if hasattr(obj, 'model_dump'):
+        return obj.model_dump()
+    if hasattr(obj, 'dict'):
+        return obj.dict()
+    return {}
 
 
 async def _do_delete(session, user_id, reply_to, caldav) -> str:
