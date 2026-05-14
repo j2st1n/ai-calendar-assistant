@@ -171,7 +171,7 @@ class TelegramBotRuntime:
         app.add_handler(CommandHandler("list", _handle_list))
         app.add_handler(CommandHandler("latest", _handle_latest))
         app.add_handler(CommandHandler("status", _handle_status))
-        app.add_handler(MessageHandler(ptb_filters.UpdateType.MESSAGE & ~ptb_filters.COMMAND, _handle_message))
+        app.add_handler(MessageHandler(~ptb_filters.COMMAND, _handle_message))
         self._application = app
         self.running = True
 
