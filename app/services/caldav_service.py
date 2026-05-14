@@ -127,6 +127,46 @@ class CalDAVService:
         except Exception:
             return False
 
+    async def update_event(self, caldav_url, username, password, event_data, uid=None, href=None):
+        try:
+            return await asyncio.to_thread(self._update_event_sync, caldav_url, username, password, event_data, uid, href)
+        except Exception:
+            return False
+
+    def _update_event_sync(self, caldav_url, username, password, event_data, uid, href):
+        from icalendar import Calendar as ICal, Event as ICalEvent
+        from datetime import timedelta
+        from dateutil.parser import parse as parse_date
+
+        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password,
+                                   ssl_verify_cert=False, timeout=120)
+        calendars = client.get_calendars()
+        for cal in calendars:
+            try:
+                for obj in cal.objects():
+                    obj_url = getattr(obj, 'url', '')
+                    obj_uid = getattr(obj, 'id', '')
+                    if (href and obj_url == href) or (uid and obj_uid == uid):
+                        ical = ICal.from_ical(obj.data)
+                        for component in ical.walk():
+                            if component.name == 'VEVENT':
+                                if event_data.get('title'):
+                                    component['summary'] = event_data['title']
+                                if event_data.get('start_time'):
+                                    component['dtstart'].dt = parse_date(event_data['start_time'])
+                                if event_data.get('end_time'):
+                                    component['dtend'].dt = parse_date(event_data['end_time'])
+                                if event_data.get('location'):
+                                    component['location'] = event_data['location']
+                                if event_data.get('description'):
+                                    component['description'] = event_data['description']
+                        obj.data = ical.to_ical()
+                        obj.save()
+                        return True
+            except Exception:
+                continue
+        return False
+
     def _delete_event_sync(self, caldav_url, username, password, uid, href):
         client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
