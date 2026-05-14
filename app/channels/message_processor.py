@@ -106,7 +106,7 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
     if target.caldav_uid and caldav["url"]:
         cal = CalDAVService()
         await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], target.caldav_uid)
-    _record(session, user_id, "delete", title, "", "success", target.event_json or "", error=target.error_message)
+    _record(session, user_id, "delete", title, "", "success", target.event_json or "")
     session.commit()
     return f"🗑️ 已删除日程：{title}"
 
