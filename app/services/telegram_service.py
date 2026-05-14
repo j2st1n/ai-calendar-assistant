@@ -164,32 +164,36 @@ class TelegramBotRuntime:
         from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
         app = Application.builder().token(token).build()
+        from telegram.ext import filters as ptb_filters
+
         app.add_handler(CommandHandler("start", _handle_start))
         app.add_handler(CommandHandler("help", _handle_help))
         app.add_handler(CommandHandler("list", _handle_list))
         app.add_handler(CommandHandler("latest", _handle_latest))
         app.add_handler(CommandHandler("status", _handle_status))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
+        app.add_handler(MessageHandler(ptb_filters.UpdateType.MESSAGE & ~ptb_filters.COMMAND, _handle_message))
         self._application = app
         self.running = True
 
         loop = asyncio.get_running_loop()
         self._task = loop.create_task(self._start_bot(app))
-        logger.info("Telegram bot reload triggered")
+        print(f"[bot] task created, token len={len(token)}", flush=True)
         return "started"
 
     async def _start_bot(self, app) -> None:
+        print("[bot] _start_bot running", flush=True)
         try:
-            async with app:
-                await app.updater.start_polling(drop_pending_updates=True)
-                logger.info("Telegram bot started successfully")
-                while True:
-                    await asyncio.sleep(3600)
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling(drop_pending_updates=True)
+            print("[bot] polling started", flush=True)
+            while True:
+                await asyncio.sleep(3600)
         except asyncio.CancelledError:
-            logger.info("Telegram bot task cancelled")
+            print("[bot] cancelled", flush=True)
             self.running = False
         except Exception as exc:
-            logger.exception("Telegram bot failed to start")
+            print(f"[bot] error: {exc}", flush=True)
             self.running = False
             self._last_error = str(exc)
 
@@ -228,6 +232,7 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f"[bot] msg from {update.effective_user.id if update.effective_user else '?'}", flush=True)
     if update.effective_message is None or update.effective_message.text is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
