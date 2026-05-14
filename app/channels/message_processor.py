@@ -111,19 +111,26 @@ async def _do_delete_with(session, user_id, target, caldav) -> str:
 
 
 async def _do_modify_with(session, user_id, text, target, new_event, caldav):
+    title = _g(new_event, "title") or "日程"
     if target.caldav_uid and caldav["url"]:
         cal = CalDAVService()
         await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                target.caldav_uid, target.caldav_href)
-        await _write_caldav_dict(new_event, caldav)
-    title = new_event.get("title", "日程")
-    _record(session, user_id, "update", title, text, "success", json.dumps(new_event, ensure_ascii=False))
+        await _write_caldav_dict(new_event if isinstance(new_event, dict) else new_event.model_dump(), caldav)
+    _record(session, user_id, "update", title, text, "success",
+             json.dumps(new_event if isinstance(new_event, dict) else new_event.model_dump(), ensure_ascii=False))
+
+
+def _g(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 
 def _format_modify_result(event) -> str:
-    title = event.get("title") if isinstance(event, dict) else getattr(event, 'title', '日程')
-    st = event.get("start_time", "?") if isinstance(event, dict) else getattr(event, 'start_time', '?')
-    et = event.get("end_time") if isinstance(event, dict) else getattr(event, 'end_time', None)
+    title = _g(event, "title", "日程")
+    st = _g(event, "start_time", "?")
+    et = _g(event, "end_time")
     lines = ["✅ 日程已更新！", ""]
     lines.append(f"📌 标题：{title}")
     lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {(et or '?')[:16].replace('T', ' ')}")
