@@ -66,9 +66,10 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
         if mod_result.intent == Intent.delete_event:
             return await _do_delete_with(session, user_id, target, caldav), None
         if mod_result.intent == Intent.update_event and mod_result.event:
-            await _do_modify_with(session, user_id, text, target, mod_result.event, caldav)
+            merged = _merge_event(existing, mod_result.event)
+            await _do_modify_with(session, user_id, text, target, merged, caldav)
             session.commit()
-            return _format_modify_result(mod_result.event), None
+            return _format_modify_result(merged), None
 
     result = await extractor.extract(text)
     if result.intent == Intent.delete_event:
@@ -114,8 +115,9 @@ async def _do_modify_with(session, user_id, text, target, new_event, caldav):
         cal = CalDAVService()
         await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                target.caldav_uid, target.caldav_href)
-        await _write_caldav(new_event, caldav)
-    _record(session, user_id, "update", new_event.title, text, "success", new_event.model_dump_json())
+        await _write_caldav_dict(new_event, caldav)
+    title = new_event.get("title", "日程")
+    _record(session, user_id, "update", title, text, "success", json.dumps(new_event, ensure_ascii=False))
 
 
 def _format_modify_result(event) -> str:
@@ -123,6 +125,18 @@ def _format_modify_result(event) -> str:
     lines.append(f"📌 标题：{event.title}")
     lines.append(f"🕒 时间：{event.start_time[:16].replace('T', ' ')} - {(event.end_time or '?')[:16].replace('T', ' ')}")
     return "\n".join(lines)
+
+
+def _merge_event(existing: dict, ai_event) -> dict:
+    new = ai_event.model_dump()
+    for key in ["title", "start_time", "end_time", "timezone", "location", "description"]:
+        if not new.get(key):
+            new[key] = existing.get(key)
+    if not new.get("reminders"):
+        new["reminders"] = existing.get("reminders", [{"minutes_before": 30}])
+    if not new.get("recurrence"):
+        new["recurrence"] = existing.get("recurrence")
+    return new
 
 
 async def _do_delete(session, user_id, reply_to, caldav) -> str:
@@ -217,6 +231,18 @@ async def _write(session, user_id, text, event, caldav, svc) -> tuple[str, int |
                      event.model_dump_json(), caldav_result, error_msg)
     session.commit()
     return "\n".join(lines), rec_id
+
+
+async def _write_caldav_dict(event_dict, caldav) -> dict | None:
+    svc = CalDAVService()
+    return await svc.create_event(
+        caldav["url"], caldav["user"], caldav["pw"], caldav["cal"],
+        event_dict["title"], event_dict.get("start_time"), event_dict.get("end_time"),
+        event_dict.get("timezone", "Asia/Shanghai"),
+        event_dict.get("location"), event_dict.get("description"),
+        event_dict.get("reminders"), event_dict.get("recurrence"),
+        event_dict.get("is_all_day", False),
+    )
 
 
 async def _write_caldav(event, caldav) -> dict | None:
