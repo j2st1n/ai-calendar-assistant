@@ -53,7 +53,9 @@ Current time: {current_time}
 Existing event: {existing_event}
 User instruction: {instruction}
 
-Return the COMPLETE updated event in the same JSON format as creation. Do NOT return a diff - return the entire updated event with intent=update_event.
+CRITICAL: Return the COMPLETE updated event. Copy ALL fields from the existing event and ONLY change what the user asks. Do NOT set any field to null that had a value before. Do NOT return a diff. The "title" field MUST always have a non-null value - copy it from the existing event if the user didn't ask to change it.
+
+Return intent=update_event with the full event JSON.
 """
 
 MISSING_FIELDS_PROMPT = """You are merging a partial event draft with new user input.
@@ -101,6 +103,9 @@ class EventExtractor:
             if not raw:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
             data = _parse_json(raw)
+            event = data.get("event")
+            if isinstance(event, dict) and not event.get("title"):
+                event["title"] = "(无标题)"
             return ExtractionResult.model_validate(data)
         except AIProviderError as exc:
             return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
