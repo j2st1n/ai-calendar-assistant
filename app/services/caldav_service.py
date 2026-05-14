@@ -80,13 +80,16 @@ class CalDAVService:
         calendars = client.get_calendars()
         target_cal = None
         for cal in calendars:
+            print(f"[caldav] cal url: {cal.url}", flush=True)
             if str(cal.url) == calendar_url.strip():
                 target_cal = cal
                 break
         if target_cal is None:
+            print(f"[caldav] no match, fallback calendar_url={calendar_url.strip()}", flush=True)
             target_cal = client.calendar(url=calendar_url.strip())
         if target_cal is None:
             raise CalDAVServiceError("找不到目标日历。")
+        print(f"[caldav] target url: {target_cal.url}", flush=True)
 
         uid = str(uuid.uuid4())
         cal = Calendar()
@@ -115,7 +118,8 @@ class CalDAVService:
             event.add("rrule", rrule)
         cal.add_component(event)
         ical_data = cal.to_ical()
-        target_cal.save_event(ical_data.decode() if isinstance(ical_data, bytes) else ical_data)
+        ical_str = ical_data.decode() if isinstance(ical_data, bytes) else str(ical_data)
+        target_cal.save_event(ical_str)
         return {"uid": uid, "href": str(target_cal.url)}
 
     async def delete_event(self, caldav_url, username, password, uid):
