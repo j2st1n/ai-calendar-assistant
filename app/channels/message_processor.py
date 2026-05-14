@@ -20,21 +20,6 @@ LAST_EVENT_WINDOW = 24 * 3600
 _pending_drafts: dict[str, dict] = {}
 
 
-def _is_modify_or_delete(text: str) -> str | None:
-    t = text.strip()
-    delete_words = ["删除这条", "删除", "删", "取消", "删掉", "撤销", "撤掉", "撤掉这个",
-                     "不要这个", "取消刚才", "去掉", "移除"]
-    for w in delete_words:
-        if w in t:
-            return "delete"
-
-    modify_patterns = ["改成", "修改", "改到", "时间改", "地点改", "标题改", "换到"]
-    for w in modify_patterns:
-        if w in t:
-            return "modify"
-    return None
-
-
 class MessageProcessor:
     async def process(
         self, session: Session, user_id: str, text: str, reply_to_message_id: str | None = None
@@ -74,13 +59,15 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
             return await _write(session, user_id, text, result.event, caldav, svc), None
         return "🤔 仍缺少信息，请重新描述。", None
 
-    action = _is_modify_or_delete(text)
-    if action and (action == "delete" or "删除" in text or "取消" in text):
+    result = await extractor.extract(text)
+
+    if result.intent == Intent.delete_event:
         return await _do_delete(session, user_id, reply_to, caldav), None
-    if action == "modify":
+
+    if result.intent == Intent.update_event:
         return await _do_modify(session, user_id, text, reply_to, extractor, caldav, svc), None
 
-    return await _new(session, user_id, text, extractor, caldav, svc)
+    return await _handle_new(session, user_id, text, result, caldav, svc)
 
 
 async def _find_target(session, user_id, reply_to) -> EventRecord | None:
@@ -138,9 +125,7 @@ async def _do_modify(session, user_id, text, reply_to, extractor, caldav, svc) -
     return "\n".join(lines), None
 
 
-async def _new(session, user_id, text, extractor, caldav, svc) -> tuple[str, int | None]:
-    result = await extractor.extract(text)
-
+async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str, int | None]:
     if result.intent == Intent.no_event:
         _record(session, user_id, "no_event", None, text, "pending", result.model_dump_json())
         session.commit()
