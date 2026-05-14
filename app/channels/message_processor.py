@@ -147,6 +147,10 @@ def _merge_event(existing: dict, ai_event) -> dict:
     for key in ["title", "start_time", "end_time", "timezone", "location", "description"]:
         if not new.get(key):
             new[key] = existing.get(key)
+    if new.get("start_time") != existing.get("start_time") and not new.get("end_time"):
+        st = _parse_time(new["start_time"])
+        if st:
+            new["end_time"] = (st + timedelta(hours=1)).isoformat()
     if not new.get("reminders"):
         new["reminders"] = existing.get("reminders", [{"minutes_before": 30}])
     if not new.get("recurrence"):
