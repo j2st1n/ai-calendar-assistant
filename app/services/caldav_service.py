@@ -117,30 +117,33 @@ class CalDAVService:
         cal.add_component(event)
         ical_data = cal.to_ical()
         ical_str = ical_data.decode() if isinstance(ical_data, bytes) else str(ical_data)
-        target_cal.save_event(ical_str)
-        return {"uid": uid, "href": str(target_cal.url)}
+        saved = target_cal.save_event(ical_str)
+        href = getattr(saved, 'url', str(target_cal.url))
+        return {"uid": uid, "href": str(href)}
 
-    async def delete_event(self, caldav_url, username, password, uid):
+    async def delete_event(self, caldav_url, username, password, uid, href=None):
         try:
-            return await asyncio.to_thread(self._delete_event_sync, caldav_url, username, password, uid)
+            return await asyncio.to_thread(self._delete_event_sync, caldav_url, username, password, uid, href)
         except Exception:
             return False
 
-    def _delete_event_sync(self, caldav_url, username, password, uid):
+    def _delete_event_sync(self, caldav_url, username, password, uid, href):
         client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
-        for cal in client.get_calendars():
+        calendars = client.get_calendars()
+        for cal in calendars:
             try:
-                events = cal.search(event_uid=uid)
-                if events:
-                    print(f"[caldav delete] found {len(events)} events for uid={uid}", flush=True)
-                    result = events[0].delete()
-                    print(f"[caldav delete] delete result: {result}", flush=True)
-                    return True
+                for obj in cal.objects():
+                    obj_uid = getattr(obj, 'id', '')
+                    obj_url = getattr(obj, 'url', '')
+                    if (uid and obj_uid == uid) or (href and obj_url == href):
+                        obj.delete()
+                        print(f"[caldav delete] deleted by {'uid' if uid else 'href'}", flush=True)
+                        return True
             except Exception as exc:
-                print(f"[caldav delete] error: {exc}", flush=True)
+                print(f"[caldav delete] iter error: {exc}", flush=True)
                 continue
-        print(f"[caldav delete] no events found for uid={uid}", flush=True)
+        print(f"[caldav delete] not found uid={uid} href={href}", flush=True)
         return False
 
 
