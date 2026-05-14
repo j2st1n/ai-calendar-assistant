@@ -65,8 +65,8 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
         mod_result = await extractor.modify(existing, text)
         if mod_result.intent == Intent.delete_event:
             return await _do_delete_with(session, user_id, target, caldav), None
-        if mod_result.intent == Intent.update_event and mod_result.event:
-            merged = _merge_event(existing, mod_result.event)
+        merged = _merge_event(existing, mod_result.event.model_dump() if mod_result.event else {})
+        if mod_result.intent in (Intent.update_event, Intent.create_event):
             await _do_modify_with(session, user_id, text, target, merged, caldav)
             session.commit()
             return _format_modify_result(merged), None

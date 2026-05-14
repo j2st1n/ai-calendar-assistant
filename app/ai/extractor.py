@@ -104,13 +104,23 @@ class EventExtractor:
                 return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
             data = _parse_json(raw)
             event = data.get("event")
-            if isinstance(event, dict) and not event.get("title"):
-                event["title"] = "(无标题)"
+            if isinstance(event, dict):
+                if not event.get("title"):
+                    event["title"] = "(无标题)"
+                if not event.get("start_time"):
+                    event["start_time"] = datetime.now(timezone.utc).isoformat()
             return ExtractionResult.model_validate(data)
-        except AIProviderError as exc:
-            return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
         except Exception as exc:
-            return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
+            try:
+                intent = data.get("intent", "no_event")
+                event = data.get("event") or {}
+                return ExtractionResult(
+                    intent=Intent(intent) if intent in [e.value for e in Intent] else Intent.no_event,
+                    event={"title": event.get("title") or "(无标题)", "start_time": event.get("start_time") or datetime.now(timezone.utc).isoformat(), **(event if isinstance(event, dict) else {})} if event else None,
+                    missing_fields=[str(exc)],
+                )
+            except Exception:
+                return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
 
 
 def _parse_json(raw: str) -> dict:
