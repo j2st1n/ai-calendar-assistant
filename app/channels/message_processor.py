@@ -24,8 +24,8 @@ def _is_modify_or_delete(text: str) -> str | None:
     t = text.strip()
     modify_words = ["改成", "修改", "时间改成", "地点改成", "标题改成", "改到", "时间改", "地点改",
                      "换到", "改为", "调整", "变更", "换成"]
-    delete_words = ["删除这条", "删除", "取消", "删掉", "撤销", "撤掉这个", "取消这个",
-                     "不要这个", "取消刚才"]
+    delete_words = ["删除这条", "删除", "删", "取消", "删掉", "撤销", "撤掉这个", "取消这个",
+                     "不要这个", "取消刚才", "去掉", "移除"]
     for w in modify_words:
         if w in t:
             return "modify"
