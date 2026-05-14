@@ -126,7 +126,9 @@ async def _do_modify_with(session, user_id, text, target, new_event, caldav):
         if result:
             target.caldav_href = result.get("href")
             target.caldav_uid = result.get("uid")
-            session.commit()
+            target.start_time = new_event.get("start_time", "")
+            target.event_json = json.dumps(new_event, ensure_ascii=False)
+        session.commit()
     _record(session, user_id, "update", title, text, "success",
              json.dumps(new_event, ensure_ascii=False))
 
@@ -180,6 +182,7 @@ def _to_dict(obj):
 
 def _try_quick_modify(text: str, existing: dict) -> dict | None:
     import re
+    from datetime import timedelta as td
     m = re.search(r"(\d{1,2}):(\d{2})", text)
     if not m:
         return None
@@ -192,8 +195,10 @@ def _try_quick_modify(text: str, existing: dict) -> dict | None:
         h += 12
     date_part = old_st.split("T")[0]
     new_st = f"{date_part}T{h:02d}:{mi:02d}:00+08:00"
+    et = _parse_time(new_st) + td(hours=1)
+    new_et = et.strftime("%Y-%m-%dT%H:%M:%S+08:00")
     existing["start_time"] = new_st
-    existing["end_time"] = f"{date_part}T{h+1:02d}:{mi:02d}:00+08:00"
+    existing["end_time"] = new_et
     return existing
 
 
