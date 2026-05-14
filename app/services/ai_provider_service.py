@@ -33,7 +33,12 @@ class AIProviderService:
         )
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
-        resp = await client.chat.completions.create(**kwargs)
+        try:
+            resp = await client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            raise AIProviderError(f"AI 调用失败：{exc}") from exc
+        if not resp or not resp.choices:
+            raise AIProviderError("AI 返回空结果")
         return resp.choices[0].message.content or ""
 
     async def _anthropic_chat(self, config: AIProviderConfig, system: str, user: str) -> str:
@@ -41,13 +46,16 @@ class AIProviderService:
             raise AIProviderError("Anthropic Provider 需要 API Key。")
         system = system + "\n\nRespond with ONLY the JSON object, no markdown, no explanation."
         client = AsyncAnthropic(api_key=config.api_key)
-        resp = await client.messages.create(
-            model=config.model or "",
-            max_tokens=4096,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            temperature=0.1,
-        )
+        try:
+            resp = await client.messages.create(
+                model=config.model or "",
+                max_tokens=4096,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                temperature=0.1,
+            )
+        except Exception as exc:
+            raise AIProviderError(f"Anthropic 调用失败：{exc}") from exc
         content = resp.content
         if isinstance(content, list) and len(content) > 0:
             return content[0].text if hasattr(content[0], "text") else str(content[0])
