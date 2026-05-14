@@ -11,7 +11,7 @@ function selectCalendar() {
 window.addEventListener('DOMContentLoaded', selectCalendar);
 </script>
 
-<h2 class="section-title">CalDAV Settings</h2>
+<h2 class="section-title">日历设置</h2>
 <p class="section-sub">配置 CalDAV 服务器，用于日程写入。支持 Apple iCloud、Nextcloud、Radicale 等标准 CalDAV 服务。</p>
 
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
@@ -20,21 +20,21 @@ window.addEventListener('DOMContentLoaded', selectCalendar);
 <div class="card">
   <form method="post" action="/console/caldav" class="stack">
     <label>
-      <span>CalDAV Server URL</span>
+      <span>日历服务器地址</span>
       <input name="caldav_url" value="{{ caldav_url }}" placeholder="https://caldav.icloud.com" required>
     </label>
     <label>
-      <span>Username</span>
+      <span>用户名</span>
       <input name="caldav_username" value="{{ caldav_username }}" placeholder="your-email@example.com" required>
     </label>
     <label>
-      <span>Password / App Password</span>
+      <span>密码 / 应用密码</span>
       <input name="caldav_password" type="password" value="" placeholder="{{ caldav_password_masked or '留空表示保持现有值' }}" autocomplete="off">
     </label>
 
     <div class="row" style="align-items:flex-end;">
       <label style="flex:1;">
-        <span>Calendar</span>
+        <span>日历</span>
         {% if calendars %}
         <select name="caldav_calendar_name" onchange="selectCalendar()">
           {% for cal in calendars %}
@@ -49,21 +49,21 @@ window.addEventListener('DOMContentLoaded', selectCalendar);
     </div>
 
     <label>
-      <span>Calendar URL</span>
+      <span>日历地址</span>
       <input name="caldav_calendar_url" value="{{ caldav_calendar_url }}" placeholder="选择日历后自动填充">
     </label>
 
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
-        <span>Default Timezone</span>
+        <span>默认时区</span>
         <input name="caldav_timezone" value="{{ caldav_timezone }}" placeholder="Asia/Shanghai">
       </label>
       <label style="max-width:160px;">
-        <span>Reminder (mins)</span>
+        <span>提醒（分钟）</span>
         <input name="caldav_reminder_minutes" type="number" value="{{ caldav_reminder_minutes }}" min="0">
       </label>
       <label style="max-width:160px;">
-        <span>Duration (mins)</span>
+        <span>时长（分钟）</span>
         <input name="caldav_default_duration" type="number" value="{{ caldav_default_duration }}" min="5">
       </label>
     </div>

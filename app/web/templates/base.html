@@ -20,12 +20,12 @@
     </div>
     {% if request.session.get('admin_authenticated') %}
     <nav>
-      <a href="/console" class="{% if request.url.path == '/console' %}active{% endif %}">Status</a>
+      <a href="/console" class="{% if request.url.path == '/console' %}active{% endif %}">概览</a>
       <a href="/console/ai" class="{% if request.url.path.startswith('/console/ai') %}active{% endif %}">AI</a>
-      <a href="/console/caldav" class="{% if request.url.path.startswith('/console/caldav') %}active{% endif %}">CalDAV</a>
+      <a href="/console/caldav" class="{% if request.url.path.startswith('/console/caldav') %}active{% endif %}">日历</a>
       <a href="/console/telegram" class="{% if request.url.path.startswith('/console/telegram') %}active{% endif %}">Telegram</a>
-      <a href="/console/events" class="{% if request.url.path.startswith('/console/events') %}active{% endif %}">Events</a>
-      <a href="/console/system" class="{% if request.url.path.startswith('/console/system') %}active{% endif %}">System</a>
+      <a href="/console/events" class="{% if request.url.path.startswith('/console/events') %}active{% endif %}">事件</a>
+      <a href="/console/system" class="{% if request.url.path.startswith('/console/system') %}active{% endif %}">系统</a>
       <form method="post" action="/console/logout">
         <button type="submit">退出</button>
       </form>
@@ -55,7 +55,7 @@
       </a>
       <a href="/console/caldav" class="sidebar-item {% if request.url.path.startswith('/console/caldav') %}active{% endif %}">
         <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M2 7h12" stroke="currentColor" stroke-width="1.2"/></svg>
-        CalDAV
+        日历
       </a>
       <a href="/console/telegram" class="sidebar-item {% if request.url.path.startswith('/console/telegram') %}active{% endif %}">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2 3l12 4.5-4.5 1.5L8 13l-1.5-4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>

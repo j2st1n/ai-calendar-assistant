@@ -7,18 +7,18 @@ function selectModel(sel) {
 }
 </script>
 
-<h2 class="section-title">AI Settings</h2>
-<p class="section-sub">配置 AI Provider、Base URL、API Key，拉取模型列表选择，测试连接通过后保存。</p>
+<h2 class="section-title">AI 设置</h2>
+<p class="section-sub">配置供应商、Base URL、API Key，拉取模型列表选择，测试连接通过后保存。</p>
 
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
 
 <div class="card">
-  <h2>Provider 配置</h2>
+  <h2>供应商配置</h2>
   <form method="post" action="/console/ai" class="stack">
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
-        <span>Provider</span>
+        <span>供应商</span>
         <select name="provider_name">
           {% for provider in providers %}
           <option value="{{ provider.name }}" {% if provider.name == provider_name %}selected{% endif %}>
@@ -28,7 +28,7 @@ function selectModel(sel) {
         </select>
       </label>
       <label style="max-width:180px;">
-        <span>Provider Type</span>
+        <span>类型</span>
         <select name="provider_type">
           <option value="openai_compatible" {% if provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
           <option value="anthropic" {% if provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
@@ -44,7 +44,7 @@ function selectModel(sel) {
       <input name="api_key" type="password" value="" placeholder="{{ api_key_masked or '留空表示保持现有值' }}" autocomplete="off">
     </label>
     <label>
-      <span>Model</span>
+        <span>模型</span>
       {% if available_models %}
       <select name="model" onchange="selectModel(this)">
         {% for m in available_models %}
