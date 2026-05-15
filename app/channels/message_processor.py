@@ -221,9 +221,7 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
 
 async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str, int | None]:
     if result.intent == Intent.no_event:
-        _record(session, user_id, "no_event", None, text, "pending", result.model_dump_json())
-        session.commit()
-        return "🤔 未识别到日程信息，请补充时间和事件内容。", None
+        _record(session, user_id, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息")
 
     if result.missing_fields:
         _pending_drafts[f"draft_{user_id}"] = {
@@ -231,12 +229,13 @@ async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str,
             "event": result.event.model_dump() if result.event else {},
             "missing": result.missing_fields,
         }
-        _record(session, user_id, "no_event", None, text, "pending", result.model_dump_json())
-        session.commit()
+        _record(session, user_id, "no_event", None, text, "failed", result.model_dump_json(),
+                err=f"缺少字段：{'、'.join(result.missing_fields)}")
         return f"🤔 未识别到{'、'.join(result.missing_fields)}，请补充。", None
 
     if result.unsupported_reason:
-        _record(session, user_id, "no_event", None, text, "pending", result.model_dump_json())
+        _record(session, user_id, "no_event", None, text, "failed", result.model_dump_json(),
+                err=f"不支持：{result.unsupported_reason}")
         session.commit()
         return f"🔁 {result.unsupported_reason}", None
 
@@ -290,7 +289,7 @@ async def _write(session, user_id, text, event, caldav, svc) -> tuple[str, int |
             lines.append(f"❌ 写入日历失败：{error_msg}")
 
     rec_id = _record(session, user_id, "create", event.title, text,
-                     "success" if caldav_result else ("failed" if error_msg else "pending"),
+                     "success" if caldav_result else "failed",
                      event.model_dump_json(), caldav_result, error_msg)
     session.commit()
     return "\n".join(lines), rec_id

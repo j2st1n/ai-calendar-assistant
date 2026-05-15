@@ -4,36 +4,34 @@
 <p class="section-sub">最近的事件创建、修改、删除记录。只查看，不做手动操作。</p>
 
 <form method="get" action="/console/events" class="row" style="margin-bottom:16px; gap:8px;">
-  <div class="cs-wrap" style="width:120px;">
-    <div class="cs-trigger">{{ status_filter or 'all' }}</div>
+  <div class="cs-wrap" style="width:100px;">
+    <div class="cs-trigger">{{ status_filter or '全部' }}</div>
     <div class="cs-drop">
       {% for s in statuses %}
-      <div class="cs-opt {% if status_filter == s %}sel{% endif %}" data-value="{{ s }}">{{ s }}</div>
+      <div class="cs-opt {% if status_filter == s[0] %}sel{% endif %}" data-value="{{ s[0] }}">{{ s[1] }}</div>
       {% endfor %}
     </div>
     <input type="hidden" name="status_filter" value="{{ status_filter or 'all' }}">
   </div>
   <input name="search" value="{{ search }}" placeholder="搜索原始输入或标题…" style="flex:1;">
   <button type="submit">过滤</button>
-  {% if status_filter or search %}
+  {% if status_filter and status_filter != 'all' %}
   <a href="/console/events" class="button-link secondary" style="padding:8px 14px;">清除</a>
   {% endif %}
-  <a href="/console/events" class="button-link secondary" style="padding:8px 14px;">刷新</a>
+  <button type="submit" class="secondary" style="padding:8px 14px;">刷新</button>
 </form>
 
 {% if events %}
 <div class="table-wrap">
-  <table>
+  <table style="table-layout:fixed;">
     <thead>
       <tr>
-        <th style="width:130px;">时间</th>
-        <th style="width:60px;">来源</th>
+        <th style="width:120px;">时间</th>
+        <th style="width:50px;">来源</th>
         <th style="width:80px;">用户</th>
-        <th style="width:60px;">操作</th>
+        <th style="width:50px;">操作</th>
         <th>标题</th>
-        <th style="width:130px;">开始时间</th>
-        <th style="width:50px;">重复</th>
-        <th style="width:70px;">状态</th>
+        <th style="width:60px;">状态</th>
       </tr>
     </thead>
     <tbody>
@@ -41,23 +39,21 @@
       <tr class="ev-row" style="cursor:pointer;" onclick="var d=this.nextElementSibling;if(d&&d.classList.contains('ev-detail')){d.classList.toggle('open');}">
         <td style="white-space:nowrap;">{{ event.time }}</td>
         <td>{{ event.source }}</td>
-        <td class="mono">{{ event.user }}</td>
+        <td class="mono" style="overflow:hidden;text-overflow:ellipsis;">{{ event.user }}</td>
         <td>{% if event.operation == 'create' %}创建{% elif event.operation == 'update' %}修改{% elif event.operation == 'delete' %}删除{% else %}{{ event.operation }}{% endif %}</td>
-        <td class="text-ellipsis" style="max-width:200px;">{{ event.title or '(无标题)' }}</td>
-        <td style="white-space:nowrap;">{{ event.start_time }}</td>
-        <td>{{ event.is_recurring }}</td>
+        <td class="text-ellipsis" style="max-width:320px;">{{ event.title or '(无标题)' }}</td>
         <td>
           {% if event.status == 'success' %}
           <span class="status-badge"><span class="dot dot-success"></span>成功</span>
           {% elif event.status == 'failed' %}
           <span class="status-badge"><span class="dot dot-error"></span>失败</span>
           {% else %}
-          <span class="status-badge"><span class="dot dot-warning"></span>待处理</span>
+          <span class="status-badge"><span class="dot dot-warning"></span>{{ event.status }}</span>
           {% endif %}
         </td>
       </tr>
       <tr class="ev-detail" style="display:none;">
-        <td colspan="8" style="padding:12px 16px;background:rgba(255,255,255,0.01);">
+        <td colspan="6" style="padding:12px 16px;background:rgba(255,255,255,0.01);">
           {% if event.original_text %}
           <div style="margin-bottom:8px;">
             <span class="muted-secondary">原始输入：</span>
@@ -73,7 +69,7 @@
           <div style="color:#62666d;font-size:12px;">
             {% if event.caldav_href %}<div>CalDAV href: <span class="mono">{{ event.caldav_href }}</span></div>{% endif %}
             {% if event.caldav_uid %}<div>CalDAV uid: <span class="mono">{{ event.caldav_uid }}</span></div>{% endif %}
-            {% if event.error %}<div class="alert error" style="margin-top:6px;">{{ event.error }}</div>{% endif %}
+            {% if event.error %}<div style="margin-top:6px;color:#fca5a5;">错误：{{ event.error }}</div>{% endif %}
           </div>
         </td>
       </tr>

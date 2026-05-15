@@ -646,7 +646,7 @@ async def event_records(
             "events": events,
             "status_filter": status_filter,
             "search": search,
-            "statuses": ["all", "success", "failed", "pending"],
+            "statuses": [("all", "全部"), ("success", "成功"), ("failed", "失败")],
             "message": get_flash(request) or request.query_params.get("message"),
         },
     )
