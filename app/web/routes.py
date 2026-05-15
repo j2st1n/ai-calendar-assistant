@@ -538,7 +538,7 @@ async def update_telegram_settings(
     if token:
         service = TelegramService()
         service.save_token(session, token, username)
-        service.reload_bot(token)
+        await service.reload_bot(token)
         target = redirect_path or "/console/telegram"
         set_flash(request, "Telegram Bot 已保存并重载。")
         return redirect(target)

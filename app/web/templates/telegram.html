@@ -8,7 +8,7 @@
 
 <div class="card">
   <h2>Bot 配置</h2>
-  <form method="post" action="/console/telegram" class="stack">
+  <form method="post" action="/console/telegram" class="stack" onsubmit="{% if bot_running %}return confirm('Bot 已在运行，是否重启？');{% endif %}">
     <label>
       <span>Bot Token</span>
       <input name="bot_token" type="password" value="" placeholder="{{ bot_token_masked or '输入 Telegram Bot Token' }}" autocomplete="off">

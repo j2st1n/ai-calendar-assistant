@@ -76,11 +76,11 @@ class TelegramService:
         settings_service.set("telegram_bot_username", username.strip().lstrip("@"))
         settings_service.commit()
 
-    def reload_bot(self, token: str) -> str:
+    async def reload_bot(self, token: str) -> str:
         global _runtime
         if _runtime is None:
             _runtime = TelegramBotRuntime()
-        return _runtime.reload(token)
+        return await _runtime.reload(token)
 
     def stop_bot(self) -> None:
         global _runtime
@@ -155,7 +155,7 @@ class TelegramBotRuntime:
         self.running = False
         self._last_error = ""
 
-    def reload(self, token: str) -> str:
+    async def reload(self, token: str) -> str:
         old_app = self._application
         old_task = self._task
 
@@ -166,6 +166,10 @@ class TelegramBotRuntime:
                 pass
         if old_task is not None and not old_task.done():
             old_task.cancel()
+            try:
+                await old_task
+            except asyncio.CancelledError:
+                pass
 
         self._task = None
         self._application = None
