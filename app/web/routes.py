@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from datetime import date, datetime as dt, timedelta
 import json
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -616,14 +617,30 @@ async def update_system_settings(
     return redirect("/console/system?message=系统设置已保存。")
 
 
-@router.post("/system/clear-events")
+@router.post("/events/clear")
 async def clear_event_records(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     session.execute(delete(EventRecord))
     session.commit()
-    return redirect("/console/system?message=事件记录已清空。")
+    return redirect_with_query("/console/events", message="事件记录已清空。")
+
+
+@router.get("/system/backup")
+async def download_backup(request: Request, _: None = Depends(require_admin)):
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for fn in ["app.db", "secrets.json"]:
+            path = Path("data") / fn
+            if path.exists():
+                zf.write(path, fn)
+    buf.seek(0)
+    from datetime import date
+    from starlette.responses import StreamingResponse
+    return StreamingResponse(buf, media_type="application/zip",
+                             headers={"Content-Disposition": f"attachment; filename=backup-{date.today()}.zip"})
 
 
 def prune_event_records(session: Session, limit: int) -> None:

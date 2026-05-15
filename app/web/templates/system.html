@@ -45,11 +45,9 @@
   </form>
 </div>
 
-<div class="card danger-zone">
-  <h2>清空 Event Records</h2>
-  <p class="muted" style="margin-bottom:12px;">只清空本地记录，不删除已经写入 CalDAV 的日程。</p>
-  <form method="post" action="/console/system/clear-events">
-    <button type="submit" class="danger">清空事件记录</button>
-  </form>
+<div class="card">
+  <h2>数据备份</h2>
+  <p class="muted" style="margin-bottom:12px;">备份包含数据库和密钥文件，恢复时需一起使用。</p>
+  <a href="/console/system/backup" class="button-link">下载备份</a>
 </div>
 {% endblock %}

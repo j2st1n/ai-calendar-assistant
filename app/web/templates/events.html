@@ -90,4 +90,14 @@
   <p class="muted">暂无事件记录。当 Telegram 或 Web 创建/修改/删除日程时，记录会显示在这里。</p>
 </div>
 {% endif %}
+
+{% if events %}
+<div class="card danger-zone" style="margin-top:24px;">
+  <h2>清空记录</h2>
+  <p class="muted" style="margin-bottom:12px;">只清空本地记录，不删除已经写入日历的日程。</p>
+  <form method="post" action="/console/events/clear">
+    <button type="submit" class="danger">清空事件记录</button>
+  </form>
+</div>
+{% endif %}
 {% endblock %}
