@@ -327,6 +327,14 @@ button.danger:hover { background: rgba(239,68,68,0.25); }
 .text-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; display: block; }
 .text-xs { font-size: 12px; }
 
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+.toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.08); border-radius: 22px; transition: 0.2s; border: 1px solid rgba(255,255,255,0.1); }
+.toggle-slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 2px; bottom: 2px; background: #d0d6e0; border-radius: 50%; transition: 0.2s; }
+.toggle-switch input:checked + .toggle-slider { background: #5e6ad2; border-color: #5e6ad2; }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); background: #fff; }
+
 /* ── Link style ── */
 a { color: #7170ff; text-decoration: none; transition: color 0.12s; }
 a:hover { color: #828fff; }

@@ -79,9 +79,15 @@ window.addEventListener('DOMContentLoaded', function(){
       </label>
       <button type="submit" formaction="/console/ai/models" class="secondary">拉取模型列表</button>
     </div>
-    <label style="margin-top:8px;">
-      <input type="checkbox" name="vision_use_main" value="1" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
-      <span style="display:inline;margin-left:6px;">同时用于图片识别</span>
+    <label class="toggle-row" style="margin-top:12px;">
+      <div>
+        <div style="font-size:13px;font-weight:510;margin-bottom:2px;">用于图片识别</div>
+        <div class="muted" style="font-size:12px;">收到图片时使用当前模型提取文字内容</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" name="vision_use_main" value="1" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
+        <span class="toggle-slider"></span>
+      </label>
     </label>
     <div class="row" style="margin-top:4px;">
       <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
