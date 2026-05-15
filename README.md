@@ -3,7 +3,7 @@
 自部署的私人 AI 日程管理助手。通过 Telegram 对话自然语言，AI 自动提取日程并写入你的日历。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/github/v/release/j2st1n/ai-calendar-assistant)](https://github.com/j2st1n/ai-calendar-assistant/releases)
+[![Version](https://img.shields.io/github/v/tag/j2st1n/ai-calendar-assistant)](https://github.com/j2st1n/ai-calendar-assistant/tags)
 
 ## 功能
 
