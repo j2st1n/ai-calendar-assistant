@@ -1,14 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <script>
-function selectCalendar() {
-  const sel = document.querySelector('select[name="caldav_calendar_name"]');
-  if (!sel) return;
-  const opt = sel.options[sel.selectedIndex];
+function selectCalendar(sel) {
+  const opt = document.querySelector('.cs-drop .sel') || document.querySelector('.cs-drop .cs-opt');
   const urlInput = document.querySelector('input[name="caldav_calendar_url"]');
-  if (urlInput && opt.dataset.url) urlInput.value = opt.dataset.url;
+  if (urlInput && opt) urlInput.value = opt.dataset.url;
 }
-window.addEventListener('DOMContentLoaded', selectCalendar);
+window.addEventListener('DOMContentLoaded', function(){ selectCalendar(); });
 </script>
 
 <h2 class="section-title">日历设置</h2>
@@ -36,11 +34,15 @@ window.addEventListener('DOMContentLoaded', selectCalendar);
       <label style="flex:1;">
         <span>日历</span>
         {% if calendars %}
-        <select name="caldav_calendar_name" onchange="selectCalendar()">
-          {% for cal in calendars %}
-          <option value="{{ cal.name }}" data-url="{{ cal.url }}" {% if caldav_calendar_name == cal.name %}selected{% endif %}>{{ cal.name }}</option>
-          {% endfor %}
-        </select>
+        <div class="cs-wrap" data-onchange="selectCalendar">
+          <div class="cs-trigger">{{ caldav_calendar_name or '选择日历' }}</div>
+          <div class="cs-drop">
+            {% for cal in calendars %}
+            <div class="cs-opt {% if caldav_calendar_name == cal.name %}sel{% endif %}" data-value="{{ cal.name }}" data-url="{{ cal.url }}">{{ cal.name }}</div>
+            {% endfor %}
+          </div>
+          <input type="hidden" name="caldav_calendar_name" value="{{ caldav_calendar_name }}">
+        </div>
         {% else %}
         <input name="caldav_calendar_name" value="{{ caldav_calendar_name }}" placeholder="先拉取日历列表后选择">
         {% endif %}

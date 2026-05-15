@@ -4,11 +4,15 @@
 <p class="section-sub">最近的事件创建、修改、删除记录。只查看，不做手动操作。</p>
 
 <form method="get" action="/console/events" class="row" style="margin-bottom:16px; gap:8px;">
-  <select name="status_filter">
-    {% for s in statuses %}
-    <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
-    {% endfor %}
-  </select>
+  <div class="cs-wrap" style="width:120px;">
+    <div class="cs-trigger">{{ status_filter or 'all' }}</div>
+    <div class="cs-drop">
+      {% for s in statuses %}
+      <div class="cs-opt {% if status_filter == s %}sel{% endif %}" data-value="{{ s }}">{{ s }}</div>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="status_filter" value="{{ status_filter or 'all' }}">
+  </div>
   <input name="search" value="{{ search }}" placeholder="搜索原始输入或标题…" style="flex:1;">
   <button type="submit">过滤</button>
   {% if status_filter or search %}

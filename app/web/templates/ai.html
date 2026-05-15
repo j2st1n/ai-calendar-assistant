@@ -18,21 +18,31 @@ function selectModel(sel) {
   if (input) input.value = sel.value;
 }
 function toggleVision() {
-  const cb = document.querySelector('input[name="vision_use_main"]');
-  const el = document.getElementById('vision-card');
+  var cb = document.querySelector('input[name="vision_use_main"]');
+  var el = document.getElementById('vision-card');
   if (el) el.style.display = cb && cb.checked ? 'none' : 'block';
 }
 window.addEventListener('DOMContentLoaded', function(){
   document.querySelectorAll('.cs-wrap').forEach(function(w){
-    var t = w.querySelector('.cs-trigger'), d = w.querySelector('.cs-drop');
+    var t = w.querySelector('.cs-trigger'), d = w.querySelector('.cs-drop'), h = w.querySelector('input[type="hidden"]');
     t.addEventListener('click', function(e){ e.stopPropagation(); d.classList.toggle('open'); });
     w.querySelectorAll('.cs-opt').forEach(function(o){
       o.addEventListener('click', function(){
-        var h = w.querySelector('input[type="hidden"]');
-        if (h) { h.value = o.dataset.value; h.dispatchEvent(new Event('change')); }
+        h.value = o.dataset.value;
+        h.dispatchEvent(new Event('change', {bubbles:true}));
         t.textContent = o.textContent;
         d.classList.remove('open');
+        var fn = w.dataset.onchange;
+        if (fn && window[fn]) window[fn](h, w.dataset.arg);
       });
+    });
+  });
+  document.addEventListener('click', function(){
+    document.querySelectorAll('.cs-drop').forEach(function(d){ d.classList.remove('open'); });
+  });
+  var cb = document.querySelector('input[name="vision_use_main"]');
+  if (cb) { toggleVision(); cb.addEventListener('change', toggleVision); }
+});
     });
   });
   document.addEventListener('click', function(){
@@ -67,10 +77,14 @@ window.addEventListener('DOMContentLoaded', function(){
       </label>
       <label style="max-width:180px;">
         <span>类型</span>
-        <select name="provider_type">
-          <option value="openai_compatible" {% if provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
-          <option value="anthropic" {% if provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
-        </select>
+        <div class="cs-wrap">
+          <div class="cs-trigger">{{ 'Anthropic' if provider_type == 'anthropic' else 'OpenAI Compatible' }}</div>
+          <div class="cs-drop">
+            <div class="cs-opt {% if provider_type == 'openai_compatible' %}sel{% endif %}" data-value="openai_compatible">OpenAI Compatible</div>
+            <div class="cs-opt {% if provider_type == 'anthropic' %}sel{% endif %}" data-value="anthropic">Anthropic</div>
+          </div>
+          <input type="hidden" name="provider_type" value="{{ provider_type }}">
+        </div>
       </label>
     </div>
     <label>
@@ -85,11 +99,15 @@ window.addEventListener('DOMContentLoaded', function(){
       <label style="flex:1;">
         <span>模型</span>
         {% if available_models %}
-        <select name="model" onchange="selectModel(this)">
-          {% for m in available_models %}
-          <option value="{{ m }}" {% if model == m %}selected{% endif %}>{{ m }}</option>
-          {% endfor %}
-        </select>
+        <div class="cs-wrap" data-onchange="selectModel">
+          <div class="cs-trigger">{{ model or '选择模型' }}</div>
+          <div class="cs-drop">
+            {% for m in available_models %}
+            <div class="cs-opt {% if model == m %}sel{% endif %}" data-value="{{ m }}">{{ m }}</div>
+            {% endfor %}
+          </div>
+          <input type="hidden" name="model" value="{{ model }}">
+        </div>
         {% else %}
         <input name="model" value="{{ model }}" placeholder="先拉取模型列表后选择">
         {% endif %}
@@ -120,20 +138,28 @@ window.addEventListener('DOMContentLoaded', function(){
     <input type="hidden" name="vision_use_main" value="0">
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
-        <span>供应商</span>
-        <select name="vision_provider_name" onchange="fillUrl(this,'vision_base_url')">
-          {% for provider in providers %}
-          <option value="{{ provider.name }}" {% if provider.name == vision_provider_name %}selected{% endif %}>{{ provider.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
+          <span>供应商</span>
+          <div class="cs-wrap" data-onchange="fillUrl" data-arg="vision_base_url">
+            <div class="cs-trigger">{{ vision_provider_name or providers[0].name }}</div>
+            <div class="cs-drop">
+              {% for provider in providers %}
+              <div class="cs-opt {% if provider.name == vision_provider_name %}sel{% endif %}" data-value="{{ provider.name }}">{{ provider.name }}</div>
+              {% endfor %}
+            </div>
+            <input type="hidden" name="vision_provider_name" value="{{ vision_provider_name }}">
+          </div>
+        </label>
       <label style="max-width:180px;">
-        <span>类型</span>
-        <select name="vision_provider_type">
-          <option value="openai_compatible" {% if vision_provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
-          <option value="anthropic" {% if vision_provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
-        </select>
-      </label>
+          <span>类型</span>
+          <div class="cs-wrap">
+            <div class="cs-trigger">{{ 'Anthropic' if vision_provider_type == 'anthropic' else 'OpenAI Compatible' }}</div>
+            <div class="cs-drop">
+              <div class="cs-opt {% if vision_provider_type == 'openai_compatible' %}sel{% endif %}" data-value="openai_compatible">OpenAI Compatible</div>
+              <div class="cs-opt {% if vision_provider_type == 'anthropic' %}sel{% endif %}" data-value="anthropic">Anthropic</div>
+            </div>
+            <input type="hidden" name="vision_provider_type" value="{{ vision_provider_type }}">
+          </div>
+        </label>
     </div>
     <label>
       <span>Base URL</span>
@@ -145,17 +171,21 @@ window.addEventListener('DOMContentLoaded', function(){
     </label>
     <div class="row" style="align-items:flex-end;">
       <label style="flex:1;">
-        <span>模型</span>
-        {% if vision_models %}
-        <select name="vision_model">
-          {% for m in vision_models %}
-          <option value="{{ m }}" {% if vision_model == m %}selected{% endif %}>{{ m }}</option>
-          {% endfor %}
-        </select>
-        {% else %}
-        <input name="vision_model" value="{{ vision_model }}" placeholder="先拉取模型列表后选择">
-        {% endif %}
-      </label>
+          <span>模型</span>
+          {% if vision_models %}
+          <div class="cs-wrap">
+            <div class="cs-trigger">{{ vision_model or '选择模型' }}</div>
+            <div class="cs-drop">
+              {% for m in vision_models %}
+              <div class="cs-opt {% if vision_model == m %}sel{% endif %}" data-value="{{ m }}">{{ m }}</div>
+              {% endfor %}
+            </div>
+            <input type="hidden" name="vision_model" value="{{ vision_model }}">
+          </div>
+          {% else %}
+          <input name="vision_model" value="{{ vision_model }}" placeholder="先拉取模型列表后选择">
+          {% endif %}
+        </label>
       <button type="submit" formaction="/console/ai/models" class="secondary">拉取模型列表</button>
     </div>
     <div class="row" style="margin-top:4px;">

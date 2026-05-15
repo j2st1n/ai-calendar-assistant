@@ -237,7 +237,7 @@ async def ai_settings(
     payload = ai_settings_payload(settings_service)
     payload.update({
         "request": request,
-        "message": request.query_params.get("message"),
+        "message": get_flash(request) or request.query_params.get("message"),
         "error": request.query_params.get("error"),
     })
     stored_models = request.session.get("ai_models", [])
