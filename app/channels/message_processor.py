@@ -223,6 +223,8 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
 async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str, int | None]:
     if result.intent == Intent.no_event:
         _record(session, user_id, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息")
+        session.commit()
+        return "🤔 未识别到日程信息，请补充时间和事件内容。", None
 
     if result.missing_fields:
         _pending_drafts[f"draft_{user_id}"] = {
@@ -262,7 +264,12 @@ def _format_events(events) -> list[str]:
         elif event.start_time:
             st = event.start_time[:16].replace("T", " ")
             et = (event.end_time or "")[:16].replace("T", " ")
-            lines.append(f"🕒 {st} - {et}" if et else f"🕒 {st}")
+            if et and st[:10] == et[:10]:
+                lines.append(f"🕒 {st} - {et[11:]}")
+            elif et:
+                lines.append(f"🕒 {st} - {et}")
+            else:
+                lines.append(f"🕒 {st}")
         if getattr(event, 'location', None):
             lines.append(f"📍 {event.location}")
         if getattr(event, 'description', None):
