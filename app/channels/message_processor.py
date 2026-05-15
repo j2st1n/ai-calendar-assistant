@@ -130,7 +130,8 @@ async def _do_modify_with(session, user_id, text, target, new_event, caldav):
             target.event_json = json.dumps(new_event, ensure_ascii=False)
         session.commit()
     _record(session, user_id, "update", title, text, "success",
-             json.dumps(new_event, ensure_ascii=False))
+             json.dumps(new_event, ensure_ascii=False),
+             cr={"href": target.caldav_href, "uid": target.caldav_uid})
 
 
 def _g(obj, key, default=None):
