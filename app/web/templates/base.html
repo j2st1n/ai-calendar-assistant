@@ -8,6 +8,24 @@
   <link rel="stylesheet" href="/static/styles.css?v=2">
   <script>
   window.addEventListener('DOMContentLoaded', function(){
+    document.querySelectorAll('.cs-wrap').forEach(function(w){
+      var t = w.querySelector('.cs-trigger'), d = w.querySelector('.cs-drop'), h = w.querySelector('input[type="hidden"]');
+      if (!t || !d || !h) return;
+      t.addEventListener('click', function(e){ e.stopPropagation(); document.querySelectorAll('.cs-drop.open').forEach(function(dd){ if (dd!==d) dd.classList.remove('open'); }); d.classList.toggle('open'); });
+      w.querySelectorAll('.cs-opt').forEach(function(o){
+        o.addEventListener('click', function(){
+          h.value = o.dataset.value;
+          h.dispatchEvent(new Event('change', {bubbles:true}));
+          t.textContent = o.textContent;
+          d.classList.remove('open');
+          var fn = w.dataset.onchange;
+          if (fn && window[fn]) window[fn](h, w.dataset.arg);
+        });
+      });
+    });
+    document.addEventListener('click', function(){
+      document.querySelectorAll('.cs-drop.open').forEach(function(d){ d.classList.remove('open'); });
+    });
     setTimeout(function(){
       var el = document.querySelector('.alert.success');
       if(el) el.remove();

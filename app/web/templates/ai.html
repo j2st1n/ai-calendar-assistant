@@ -23,23 +23,6 @@ function toggleVision() {
   if (el) el.style.display = cb && cb.checked ? 'none' : 'block';
 }
 window.addEventListener('DOMContentLoaded', function(){
-  document.querySelectorAll('.cs-wrap').forEach(function(w){
-    var t = w.querySelector('.cs-trigger'), d = w.querySelector('.cs-drop'), h = w.querySelector('input[type="hidden"]');
-    t.addEventListener('click', function(e){ e.stopPropagation(); d.classList.toggle('open'); });
-    w.querySelectorAll('.cs-opt').forEach(function(o){
-      o.addEventListener('click', function(){
-        h.value = o.dataset.value;
-        h.dispatchEvent(new Event('change', {bubbles:true}));
-        t.textContent = o.textContent;
-        d.classList.remove('open');
-        var fn = w.dataset.onchange;
-        if (fn && window[fn]) window[fn](h, w.dataset.arg);
-      });
-    });
-  });
-  document.addEventListener('click', function(){
-    document.querySelectorAll('.cs-drop').forEach(function(d){ d.classList.remove('open'); });
-  });
   var cb = document.querySelector('input[name="vision_use_main"]');
   if (cb) { toggleVision(); cb.addEventListener('change', toggleVision); }
 });
