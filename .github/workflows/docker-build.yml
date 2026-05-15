@@ -19,6 +19,37 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Auto version
+        run: |
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST=${LATEST#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
+
+          HAS_FEAT=$(git log v${LATEST}..HEAD --oneline 2>/dev/null | grep -cE "^[a-f0-9]+ feat:") || true
+          HAS_FIX=$(git log v${LATEST}..HEAD --oneline 2>/dev/null | grep -cE "^[a-f0-9]+ fix:") || true
+
+          if [ "$HAS_FEAT" -gt 0 ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif [ "$HAS_FIX" -gt 0 ]; then
+            PATCH=$((PATCH + 1))
+          else
+            echo "No feat/fix since v${LATEST}, skip bump."
+            echo "SKIP_BUMP=1" >> $GITHUB_ENV
+            echo "VER=v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          NEW="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Bumping $LATEST → $NEW"
+          echo "VER=$NEW" >> $GITHUB_ENV
+          echo "SKIP_BUMP=0" >> $GITHUB_ENV
+
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git tag -a "$NEW" -m "Release $NEW"
+          git push origin "$NEW"
+
       - name: Generate version files
         run: |
           git describe --tags --always > VERSION
