@@ -61,6 +61,23 @@ class AIProviderService:
             return content[0].text if hasattr(content[0], "text") else str(content[0])
         return str(content) if content else ""
 
+    async def vision_completion(self, config: AIProviderConfig, base64_image: str) -> str:
+        prompt = "Extract all text from this image. Return ONLY the text content, no extra commentary."
+        try:
+            client = AsyncOpenAI(api_key=config.api_key or "local", base_url=config.base_url)
+            resp = await client.chat.completions.create(
+                model=config.model or "",
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+                ]}],
+                max_tokens=2000,
+                temperature=0.1,
+            )
+            return resp.choices[0].message.content or ""
+        except Exception as exc:
+            raise AIProviderError(f"识图失败：{exc}") from exc
+
     async def list_models(self, config: AIProviderConfig) -> list[str]:
         if config.provider_type == "anthropic":
             return CLAUDE_MODELS

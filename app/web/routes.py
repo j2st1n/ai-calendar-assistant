@@ -241,6 +241,15 @@ async def ai_settings(
     stored_models = request.session.get("ai_models", [])
     if stored_models:
         payload["available_models"] = stored_models
+    vision_models = request.session.get("ai_vision_models", [])
+    if vision_models:
+        payload["vision_models"] = vision_models
+    payload["vision_use_main"] = settings_service.get("ai_vision_use_main") or "true"
+    payload["vision_provider_name"] = settings_service.get("ai_vision_provider_name") or ""
+    payload["vision_provider_type"] = settings_service.get("ai_vision_provider_type") or "openai_compatible"
+    payload["vision_base_url"] = settings_service.get("ai_vision_base_url") or ""
+    payload["vision_api_key_masked"] = settings_service.get_masked("ai_vision_api_key")
+    payload["vision_model"] = settings_service.get("ai_vision_model") or ""
     return templates.TemplateResponse(request, "ai.html", payload)
 
 
@@ -252,6 +261,13 @@ async def update_ai_settings(
     api_key: str = Form(""),
     model: str = Form(""),
     available_models_raw: str = Form(""),
+    vision_use_main: str = Form("1"),
+    vision_provider_name: str = Form(""),
+    vision_provider_type: str = Form(""),
+    vision_base_url: str = Form(""),
+    vision_api_key: str = Form(""),
+    vision_model: str = Form(""),
+    request: Request = None,
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -263,6 +279,15 @@ async def update_ai_settings(
         settings_service.set("ai_api_key", api_key, encrypted=True)
     settings_service.set("ai_model", model)
     settings_service.set("ai_available_models", available_models_raw)
+
+    settings_service.set("ai_vision_use_main", vision_use_main)
+    if vision_use_main != "1":
+        settings_service.set("ai_vision_provider_name", vision_provider_name)
+        settings_service.set("ai_vision_provider_type", vision_provider_type)
+        settings_service.set("ai_vision_base_url", _normalize_url(vision_base_url))
+        if vision_api_key:
+            settings_service.set("ai_vision_api_key", vision_api_key, encrypted=True)
+        settings_service.set("ai_vision_model", vision_model)
     settings_service.commit()
     return redirect("/console/ai?message=AI 设置已保存。")
 

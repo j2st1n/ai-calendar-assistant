@@ -176,6 +176,7 @@ class TelegramBotRuntime:
         app.add_handler(CommandHandler("latest", _handle_latest))
         app.add_handler(CommandHandler("status", _handle_status))
         app.add_handler(MessageHandler(~ptb_filters.COMMAND, _handle_message))
+        app.add_handler(MessageHandler(ptb_filters.PHOTO, _handle_photo))
         self._application = app
         self.running = True
 
@@ -274,8 +275,56 @@ async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/latest - 查看最近一条日程\n"
         "/status - 查看当前 AI / CalDAV / Bot 配置状态\n\n"
         "直接发送日程描述即可创建：\n"
-        "明天下午3点和张三开会，地点会议室A"
+        "明天下午3点和张三开会，地点会议室A\n"
+        "发送图片也可以，Bot 会先识别图片中的文字再提取日程。"
     )
+
+
+async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_message is None:
+        return
+    user_id = str(update.effective_user.id) if update.effective_user else ""
+
+    with SessionLocal() as session:
+        service = TelegramService()
+        if not service.is_user_allowed(session, user_id):
+            await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            return
+
+        photo = update.effective_message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        img_bytes = await file.download_as_bytearray()
+
+        settings_service = SettingsService(session)
+        use_main = settings_service.get("ai_vision_use_main") or "true"
+        if use_main != "false":
+            from app.services.ai_provider_service import AIProviderConfig, AIProviderService as AISvc
+            config = AIProviderConfig(
+                provider_type=settings_service.get("ai_provider_type") or "openai_compatible",
+                base_url=settings_service.get("ai_base_url") or "https://api.openai.com/v1",
+                api_key=settings_service.get("ai_api_key"),
+                model=settings_service.get("ai_model"),
+            )
+        else:
+            from app.services.ai_provider_service import AIProviderConfig, AIProviderService as AISvc
+            config = AIProviderConfig(
+                provider_type=settings_service.get("ai_vision_provider_type") or "openai_compatible",
+                base_url=settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1",
+                api_key=settings_service.get("ai_vision_api_key"),
+                model=settings_service.get("ai_vision_model"),
+            )
+
+        import base64
+        img_b64 = base64.b64encode(bytes(img_bytes)).decode()
+        try:
+            text = await AISvc().vision_completion(config, img_b64)
+        except Exception as exc:
+            await update.effective_message.reply_text(f"图片识别失败：{exc}")
+            return
+
+        processor = MessageProcessor()
+        response, _ = await processor.process(session, user_id, text)
+        await update.effective_message.reply_text(response)
 
 
 async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
