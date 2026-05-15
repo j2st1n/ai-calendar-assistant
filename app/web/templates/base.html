@@ -19,17 +19,9 @@
       <span>自部署日程助手</span>
     </div>
     {% if request.session.get('admin_authenticated') %}
-    <nav>
-      <a href="/console" class="{% if request.url.path == '/console' %}active{% endif %}">概览</a>
-      <a href="/console/ai" class="{% if request.url.path.startswith('/console/ai') %}active{% endif %}">AI</a>
-      <a href="/console/caldav" class="{% if request.url.path.startswith('/console/caldav') %}active{% endif %}">日历</a>
-      <a href="/console/telegram" class="{% if request.url.path.startswith('/console/telegram') %}active{% endif %}">Telegram</a>
-      <a href="/console/events" class="{% if request.url.path.startswith('/console/events') %}active{% endif %}">事件</a>
-      <a href="/console/system" class="{% if request.url.path.startswith('/console/system') %}active{% endif %}">系统</a>
-      <form method="post" action="/console/logout">
+      <form method="post" action="/console/logout" style="margin:0;">
         <button type="submit">退出</button>
       </form>
-    </nav>
     {% endif %}
   </header>
 
