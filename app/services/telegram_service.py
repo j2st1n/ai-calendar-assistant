@@ -101,12 +101,12 @@ class TelegramService:
         session.commit()
         _rejected_users[:] = [r for r in _rejected_users if r[0] != user_id]
 
-    def disable_user(self, session: Session, user_id: str) -> None:
+    def remove_user(self, session: Session, user_id: str) -> None:
         ident = session.scalar(
             select(TelegramIdentity).where(TelegramIdentity.telegram_user_id == user_id)
         )
         if ident:
-            ident.enabled = False
+            session.delete(ident)
             session.commit()
 
     def is_user_allowed(self, session: Session, user_id: str) -> bool:
@@ -115,16 +115,24 @@ class TelegramService:
         )
         return ident is not None and ident.enabled
 
-    def generate_bind_link(self, bot_username: str) -> str:
+    def generate_bind_link(self, bot_username: str) -> tuple[str, str]:
         token = secrets.token_urlsafe(12)
         _bind_tokens[token] = time.time() + BIND_TOKEN_LIFETIME
         _clean_bind_tokens()
-        return f"https://t.me/{bot_username}?start=bind_{token}"
+        return f"https://t.me/{bot_username}?start=bind_{token}", token
 
     def validate_bind_token(self, token: str) -> bool:
         _clean_bind_tokens()
         expiry = _bind_tokens.pop(token, None)
         return expiry is not None and expiry >= time.time()
+
+    def check_bind_status(self, token: str) -> str:
+        _clean_bind_tokens()
+        if token not in _bind_tokens:
+            return "used"
+        if _bind_tokens[token] < time.time():
+            return "expired"
+        return "pending"
 
     def set_bot_running_username(self, username: str) -> None:
         pass

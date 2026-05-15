@@ -519,6 +519,7 @@ async def telegram_settings(
     payload["message"] = get_flash(request) or request.query_params.get("message")
     payload["error"] = request.query_params.get("error")
     payload["bind_link"] = request.query_params.get("bind_link")
+    payload["bind_token"] = request.query_params.get("bind_token")
     return templates.TemplateResponse(request, "telegram.html", payload)
 
 
@@ -555,9 +556,17 @@ async def generate_bind_link(
     if not bot_username:
         return redirect_with_query("/console/telegram", error="请先配置 Bot Username。")
     service = TelegramService()
-    link = service.generate_bind_link(bot_username)
+    link, token = service.generate_bind_link(bot_username)
     set_flash(request, "绑定链接已生成。")
-    return redirect_with_query("/console/telegram", bind_link=link)
+    return redirect_with_query("/console/telegram", bind_link=link, bind_token=token)
+
+
+@router.get("/telegram/bind/status")
+async def check_bind_status(token: str = ""):
+    if not token:
+        return {"status": "expired"}
+    service = TelegramService()
+    return {"status": service.check_bind_status(token)}
 
 
 @router.post("/telegram/users/add")
@@ -575,16 +584,16 @@ async def add_telegram_user(
     return redirect("/console/telegram")
 
 
-@router.post("/telegram/users/disable")
-async def disable_telegram_user(
+@router.post("/telegram/users/remove")
+async def remove_telegram_user(
     request: Request,
     user_id: str = Form(...),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     service = TelegramService()
-    service.disable_user(session, user_id.strip())
-    set_flash(request, f"已禁用用户 {user_id}。")
+    service.remove_user(session, user_id.strip())
+    set_flash(request, f"已删除用户 {user_id}。")
     return redirect("/console/telegram")
 
 
