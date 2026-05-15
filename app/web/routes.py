@@ -258,7 +258,7 @@ async def update_ai_settings(
     settings_service = SettingsService(session)
     settings_service.set("ai_provider_name", provider_name)
     settings_service.set("ai_provider_type", provider_type)
-    settings_service.set("ai_base_url", base_url)
+    settings_service.set("ai_base_url", _normalize_url(base_url))
     if api_key:
         settings_service.set("ai_api_key", api_key, encrypted=True)
     settings_service.set("ai_model", model)
@@ -278,7 +278,7 @@ async def pull_ai_models(
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
     provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
-    base_url = base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1"
+    base_url = _normalize_url(base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1")
     api_key = api_key or settings_service.get("ai_api_key") or ""
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key)
     try:
@@ -305,7 +305,7 @@ async def test_ai_connection(
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
     provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
-    base_url = base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1"
+    base_url = _normalize_url(base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1")
     api_key = api_key or settings_service.get("ai_api_key") or ""
     model = model or settings_service.get("ai_model") or ""
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
@@ -319,10 +319,17 @@ async def test_ai_connection(
 def current_ai_provider_config(settings_service: SettingsService) -> AIProviderConfig:
     return AIProviderConfig(
         provider_type=settings_service.get("ai_provider_type") or "openai_compatible",
-        base_url=settings_service.get("ai_base_url") or "https://api.openai.com/v1",
+        base_url=_normalize_url(settings_service.get("ai_base_url") or "https://api.openai.com/v1"),
         api_key=settings_service.get("ai_api_key"),
         model=settings_service.get("ai_model"),
     )
+
+
+def _normalize_url(url: str) -> str:
+    url = url.strip().rstrip("/")
+    if url and not url.startswith("http"):
+        url = "https://" + url
+    return url
 
 
 def caldav_payload(settings_service: SettingsService) -> dict:
