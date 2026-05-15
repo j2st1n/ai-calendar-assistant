@@ -46,6 +46,17 @@ def redirect_with_query(path: str, **params: str) -> RedirectResponse:
     return redirect(f"{path}?{urlencode(params)}")
 
 
+def get_flash(request: Request) -> str | None:
+    msg = request.session.get("flash")
+    if msg:
+        del request.session["flash"]
+    return msg
+
+
+def set_flash(request: Request, msg: str) -> None:
+    request.session["flash"] = msg
+
+
 def dashboard_stats(session: Session) -> dict[str, int]:
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
@@ -151,7 +162,7 @@ async def dashboard(request: Request, session: Session = Depends(get_db), _: Non
     ctx = status_context(session, request)
     ctx["stats"] = stats
     ctx["request"] = request
-    ctx["message"] = request.query_params.get("message")
+    ctx["message"] = get_flash(request) or request.query_params.get("message")
     return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
@@ -459,6 +470,7 @@ async def telegram_settings(
 
 @router.post("/telegram")
 async def update_telegram_settings(
+    request: Request,
     bot_token: str = Form(""),
     bot_username: str = Form(""),
     redirect_path: str = Form("", alias="redirect"),
@@ -473,7 +485,8 @@ async def update_telegram_settings(
         service.save_token(session, token, username)
         service.reload_bot(token)
         target = redirect_path or "/console/telegram"
-        return redirect_with_query(target, message="Telegram Bot 已保存并重载。")
+        set_flash(request, "Telegram Bot 已保存并重载。")
+        return redirect(target)
     return redirect_with_query("/console/telegram", message="请填写 Bot Token。")
 
 
