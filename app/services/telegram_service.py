@@ -191,6 +191,14 @@ class TelegramBotRuntime:
         try:
             await app.initialize()
             await app.start()
+            from telegram import BotCommand
+            await app.bot.set_my_commands([
+                BotCommand("start", "查看简介"),
+                BotCommand("help", "查看帮助"),
+                BotCommand("list", "查看日程"),
+                BotCommand("latest", "最近日程"),
+                BotCommand("status", "配置状态"),
+            ])
             await app.updater.start_polling(drop_pending_updates=True)
             while True:
                 await asyncio.sleep(3600)
@@ -224,13 +232,27 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 service.add_user(session, user_id, username, display_name)
                 await update.effective_message.reply_text("✅ 绑定成功，你现在可以使用此 Bot。")
                 return
-            await update.effective_message.reply_text("❌ 绑定码无效或已过期，请在 Console 重新生成。")
+            await update.effective_message.reply_text("❌ 绑定码无效或已过期，请在控制台重新生成。")
+            return
+
+    with SessionLocal() as session:
+        service = TelegramService()
+        if not service.is_user_allowed(session, user_id):
+            await update.effective_message.reply_text(
+                f"👋 你还未授权使用此 Bot\n\n"
+                f"你的 user_id：{user_id}\n"
+                f"请在控制台 → Telegram → 绑定授权中授权。"
+            )
             return
 
     await update.effective_message.reply_text(
-        "你好！我是 AI Calendar Assistant。\n"
-        "发送一条包含日程的自然语言消息，我会自动提取并写入日历。\n\n"
-        "示例：明天下午3点和张三开会，地点会议室A"
+        "👋 我是 AI 日程助手\n\n"
+        "直接发消息给我，我会自动识别日程并写入日历：\n"
+        "• 明天下午 3 点和张三开会\n"
+        "• 下周三上午体检，记得带报告\n"
+        "• 每周一早上 9 点站会\n\n"
+        "回复日程消息可以修改或删除。\n"
+        "支持图片识别（需配置）。"
     )
 
 
@@ -271,15 +293,16 @@ async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if update.effective_message is None:
         return
     await update.effective_message.reply_text(
-        "命令：\n"
-        "/start - 查看简介或绑定链接\n"
-        "/help - 查看帮助\n"
-        "/list [days] - 查看未来 N 天日程（默认 7 天，最大 30 天）\n"
-        "/latest - 查看最近一条日程\n"
-        "/status - 查看当前 AI / CalDAV / Bot 配置状态\n\n"
-        "直接发送日程描述即可创建：\n"
-        "明天下午3点和张三开会，地点会议室A\n"
-        "发送图片也可以，Bot 会先识别图片中的文字再提取日程。"
+        "👋 使用方式\n\n"
+        "直接发消息即可创建日程：\n"
+        "明天下午 3 点和张三开会，地点会议室 A\n\n"
+        "回复日程消息可以修改或删除。\n"
+        "支持图片识别（需配置）。\n\n"
+        "/start  — 查看简介\n"
+        "/list   — 查看日程（/list 7 = 未来 7 天）\n"
+        "/latest — 查看最近一条日程\n"
+        "/status — 查看配置状态\n"
+        "/help   — 查看本帮助"
     )
 
 
@@ -362,14 +385,14 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ).scalars().all()
 
         if not records:
-            await update.effective_message.reply_text(f"未来 {days} 天暂无日程记录。")
+            await update.effective_message.reply_text(f"📅 最近 {days} 天暂无日程")
             return
 
-        lines = [f"最近 {days} 天的日程记录："]
+        lines = [f"📅 最近 {days} 天日程"]
         for rec in records[:days]:
             title = rec.title or "(无标题)"
             created = rec.created_at.strftime("%m-%d %H:%M") if rec.created_at else ""
-            lines.append(f"- {created} {title}")
+            lines.append(f"{created}  {title}")
         await update.effective_message.reply_text("\n".join(lines))
 
 
@@ -397,23 +420,20 @@ async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ).scalar()
 
         if rec is None:
-            await update.effective_message.reply_text("暂无日程记录。")
+            await update.effective_message.reply_text("📌 暂无日程记录")
             return
 
         event_json = rec.event_json or "{}"
         import json as _json
         data = _json.loads(event_json) if event_json else {}
-        lines = ["最近一条日程：", ""]
-        lines.append(f"📌 标题：{rec.title or '(无标题)'}")
+        lines = ["📌 最近日程", ""]
+        lines.append(f"{rec.title or '(无标题)'}")
         if data.get("start_time"):
-            lines.append(f"🕒 时间：{data['start_time'][:16].replace('T', ' ')}")
+            lines.append(f"🕒 {data['start_time'][:16].replace('T', ' ')}")
         if data.get("location"):
-            lines.append(f"📍 地点：{data['location']}")
-        lines.append(f"📅 创建于：{rec.created_at.strftime('%Y-%m-%d %H:%M') if rec.created_at else ''}")
+            lines.append(f"📍 {data['location']}")
         lines.append("")
-        lines.append("如需修改或删除，请直接回复这条消息。")
-        lines.append('"时间改成下午4点"')
-        lines.append('"删除这条"')
+        lines.append("回复这条消息可修改或删除。")
         msg = await update.effective_message.reply_text("\n".join(lines))
         rec.bot_message_id = str(msg.message_id)
         session.commit()
@@ -432,13 +452,11 @@ async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         from app.services.settings_service import SettingsService
         svc = SettingsService(session)
-        ai = f"{svc.get('ai_provider_name') or '未配置'} ({svc.get('ai_model') or '未选择'})"
-        caldav = "已配置" if svc.get("caldav_url") else "未配置"
-        tg = "已配置" if svc.get("telegram_bot_token") else "未配置"
+        ai_vendor = svc.get("ai_provider_name") or "未配置"
+        ai_model = svc.get("ai_model") or "未配置"
+        caldav_name = svc.get("caldav_calendar_name") or "未配置"
 
         await update.effective_message.reply_text(
-            f"状态：\n"
-            f"AI：{ai}\n"
-            f"CalDAV：{caldav}\n"
-            f"Telegram Bot：{tg}"
+            f"🤖 AI：{ai_vendor} / {ai_model}\n"
+            f"📆 日历：{caldav_name}"
         )
