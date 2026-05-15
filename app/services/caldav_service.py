@@ -114,6 +114,13 @@ class CalDAVService:
         rrule = to_rrule(recurrence) if recurrence else None
         if rrule:
             event.add("rrule", rrule)
+        from icalendar import Alarm
+        for r in (reminders or []):
+            alarm = Alarm()
+            alarm.add("action", "DISPLAY")
+            alarm.add("trigger", timedelta(minutes=-r.get("minutes_before", 30)))
+            alarm.add("description", "Reminder")
+            event.add_component(alarm)
         cal.add_component(event)
         ical_data = cal.to_ical()
         ical_str = ical_data.decode() if isinstance(ical_data, bytes) else str(ical_data)

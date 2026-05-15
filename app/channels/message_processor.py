@@ -185,23 +185,54 @@ def _to_dict(obj):
 def _try_quick_modify(text: str, existing: dict) -> dict | None:
     import re
     from datetime import timedelta as td
-    m = re.search(r"(\d{1,2}):(\d{2})", text)
-    if not m:
-        return None
-    h, mi = int(m.group(1)), int(m.group(2))
     old_st = existing.get("start_time", "")
     if not old_st or "T" not in old_st:
         return None
-    old_h = int(old_st.split("T")[1].split(":")[0])
-    if old_h >= 12 and h < 12:
-        h += 12
-    date_part = old_st.split("T")[0]
-    new_st = f"{date_part}T{h:02d}:{mi:02d}:00+08:00"
-    et = _parse_time(new_st) + td(hours=1)
+    st = _parse_time(old_st)
+    if not st:
+        return None
+    changed = False
+
+    # month+day (more specific, check first)
+    m = re.search(r"(\d{1,2})月(\d{1,2})[日号]", text)
+    if m:
+        month, day = int(m.group(1)), int(m.group(2))
+        try:
+            st = st.replace(month=month, day=day)
+        except ValueError:
+            return None
+        changed = True
+    else:
+        # day only
+        m = re.search(r"(\d{1,2})[日号]", text)
+        if m:
+            day = int(m.group(1))
+            try:
+                st = st.replace(day=day)
+            except ValueError:
+                return None
+            changed = True
+
+    # time (always checked, even if date changed)
+    m = re.search(r"(\d{1,2}):(\d{2})", text)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2))
+        old_h = st.hour
+        if old_h >= 12 and h < 12:
+            h += 12
+        st = st.replace(hour=h, minute=mi, second=0)
+        changed = True
+
+    if not changed:
+        return None
+
+    result = dict(existing)
+    new_st = st.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    et = st + td(hours=1)
     new_et = et.strftime("%Y-%m-%dT%H:%M:%S+08:00")
-    existing["start_time"] = new_st
-    existing["end_time"] = new_et
-    return existing
+    result["start_time"] = new_st
+    result["end_time"] = new_et
+    return result
 
 
 async def _do_delete(session, user_id, reply_to, caldav) -> str:
