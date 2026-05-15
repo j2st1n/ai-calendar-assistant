@@ -77,7 +77,10 @@ def status_context(session: Session, request) -> dict:
     caldav_ok = bool(caldav_url and caldav_cal)
 
     recent = session.execute(
-        select(EventRecord).order_by(EventRecord.created_at.desc()).limit(5)
+        select(EventRecord).where(
+            EventRecord.operation == "create",
+            EventRecord.status == "success",
+        ).order_by(EventRecord.updated_at.desc()).limit(5)
     ).scalars().all()
 
     events = []
