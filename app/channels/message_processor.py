@@ -23,7 +23,7 @@ _pending_drafts: dict[str, dict] = {}
 class MessageProcessor:
     async def process(
         self, session: Session, user_id: str, text: str, reply_to_message_id: str | None = None
-    ) -> tuple[str, int | None]:
+    ) -> list[tuple[str, int | None]]:
         svc = SettingsService(session)
         config = AIProviderConfig(
             provider_type=svc.get("ai_provider_type") or "openai_compatible",
@@ -49,15 +49,16 @@ def _caldav_config(svc: SettingsService) -> dict:
     }
 
 
-async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
+async def _route(session, user_id, text, reply_to, extractor, caldav, svc) -> list[tuple[str, int | None]]:
     draft_key = f"draft_{user_id}"
     draft = _pending_drafts.get(draft_key)
     if draft and (time.time() - draft.get("ts", 0)) < PENDING_DRAFT_TTL:
         _pending_drafts.pop(draft_key, None)
         result = await extractor.merge_draft(draft.get("event", {}), text)
         if result.event and not result.missing_fields:
-            return await _write(session, user_id, text, result.event, caldav, svc), None
-        return "🤔 仍缺少信息，请重新描述。", None
+            r = await _write(session, user_id, text, result.event, caldav, svc)
+            return [r]
+        return [("🤔 仍缺少信息，请重新描述。", None)]
 
     target = await _find_target(session, user_id, reply_to)
     if reply_to and target and target.event_json:
@@ -66,24 +67,24 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc):
         if quick:
             await _do_modify_with(session, user_id, text, target, quick, caldav)
             session.commit()
-            return _format_modify_result(quick), None
+            return [(_format_modify_result(quick), None)]
         mod_result = await extractor.modify(existing, text)
         if mod_result.intent == Intent.delete_event:
-            return await _do_delete_with(session, user_id, target, caldav), None
+            return [(await _do_delete_with(session, user_id, target, caldav), None)]
         merged = _merge_event(existing, mod_result.event)
         await _do_modify_with(session, user_id, text, target, merged, caldav)
         session.commit()
-        return _format_modify_result(merged), None
+        return [(_format_modify_result(merged), None)]
 
     result = await extractor.extract(text)
     if result.intent == Intent.delete_event:
-        return await _do_delete(session, user_id, reply_to, caldav), None
+        return [(await _do_delete(session, user_id, reply_to, caldav), None)]
     if result.intent == Intent.update_event and target and result.event:
         existing = json.loads(target.event_json) if target.event_json else {}
         merged = _merge_event(existing, result.event)
         await _do_modify_with(session, user_id, text, target, merged, caldav)
         session.commit()
-        return _format_modify_result(merged), None
+        return [(_format_modify_result(merged), None)]
     return await _handle_new(session, user_id, text, result, caldav, svc)
 
 
@@ -220,11 +221,11 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
     return f"🗑️ 已删除日程：{title}{status}"
 
 
-async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str, int | None]:
+async def _handle_new(session, user_id, text, result, caldav, svc) -> list[tuple[str, int | None]]:
     if result.intent == Intent.no_event:
         _record(session, user_id, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息")
         session.commit()
-        return "🤔 未识别到日程信息，请补充时间和事件内容。", None
+        return [("🤔 未识别到日程信息，请补充时间和事件内容。", None)]
 
     if result.missing_fields:
         _pending_drafts[f"draft_{user_id}"] = {
@@ -234,59 +235,57 @@ async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str,
         }
         _record(session, user_id, "no_event", None, text, "failed", result.model_dump_json(),
                 err=f"缺少字段：{'、'.join(result.missing_fields)}")
-        return f"🤔 未识别到{'、'.join(result.missing_fields)}，请补充。", None
+        return [(f"🤔 未识别到{'、'.join(result.missing_fields)}，请补充。", None)]
 
     if result.unsupported_reason:
         _record(session, user_id, "no_event", None, text, "failed", result.model_dump_json(),
                 err=f"不支持：{result.unsupported_reason}")
         session.commit()
-        return f"🔁 {result.unsupported_reason}", None
+        return [(f"🔁 {result.unsupported_reason}", None)]
 
     events = result.events or ([result.event] if result.event else [])
     if not events:
-        return "🤔 未识别到日程信息，请补充时间和事件内容。", None
+        return [("🤔 未识别到日程信息，请补充时间和事件内容。", None)]
 
-    lines = _format_events(events)
+    replies = []
     for event in events:
-        await _write_one(session, user_id, text, event, caldav)
+        rec_id = await _write_one(session, user_id, text, event, caldav)
+        line = _format_one(event)
+        replies.append((line, rec_id))
     session.commit()
-    return "\n".join(lines), None
+    return replies
 
 
-def _format_events(events) -> list[str]:
-    count = len(events)
-    head = f"✅ {'日程已安排好啦！' if count == 1 else f'{count} 条日程已安排好啦！'}"
-    lines = [head, ""]
-    for event in events:
-        lines.append(f"📌 {event.title}")
-        if getattr(event, 'is_all_day', False):
-            lines.append(f"📅 {event.start_time[:10]}")
-        elif event.start_time:
-            st = event.start_time[:16].replace("T", " ")
-            et = (event.end_time or "")[:16].replace("T", " ")
-            if et and st[:10] == et[:10]:
-                lines.append(f"🕒 {st} - {et[11:]}")
-            elif et:
-                lines.append(f"🕒 {st} - {et}")
-            else:
-                lines.append(f"🕒 {st}")
-        if getattr(event, 'location', None):
-            lines.append(f"📍 {event.location}")
-        if getattr(event, 'description', None):
-            lines.append(f"📝 {event.description}")
-        if getattr(event, 'recurrence', None):
-            rec = event.recurrence
-            freq = rec.get("frequency", "") if isinstance(rec, dict) else getattr(rec, 'frequency', '')
-            if freq:
-                lines.append(f"🔁 {freq}")
-        reminders = getattr(event, 'reminders', []) or []
-        if reminders and reminders[0].minutes_before:
-            lines.append(f"⏰ 提前 {reminders[0].minutes_before} 分钟")
-        lines.append("")
-    return lines
+def _format_one(event) -> str:
+    lines = ["✅ 日程已安排好啦！", ""]
+    lines.append(f"📌 {event.title}")
+    if getattr(event, 'is_all_day', False):
+        lines.append(f"📅 {event.start_time[:10]}")
+    elif getattr(event, 'start_time', None):
+        st = event.start_time[:16].replace("T", " ")
+        et = (getattr(event, 'end_time', None) or "")[:16].replace("T", " ")
+        if et and st[:10] == et[:10]:
+            lines.append(f"🕒 {st} - {et[11:]}")
+        elif et:
+            lines.append(f"🕒 {st} - {et}")
+        else:
+            lines.append(f"🕒 {st}")
+    if getattr(event, 'location', None):
+        lines.append(f"📍 {event.location}")
+    if getattr(event, 'description', None):
+        lines.append(f"📝 {event.description}")
+    if getattr(event, 'recurrence', None):
+        rec = event.recurrence
+        freq = rec.get("frequency", "") if isinstance(rec, dict) else getattr(rec, 'frequency', '')
+        if freq:
+            lines.append(f"🔁 {freq}")
+    reminders = getattr(event, 'reminders', []) or []
+    if reminders and reminders[0].minutes_before:
+        lines.append(f"⏰ 提前 {reminders[0].minutes_before} 分钟")
+    return "\n".join(lines)
 
 
-async def _write_one(session, user_id, text, event, caldav):
+async def _write_one(session, user_id, text, event, caldav) -> int:
     if not getattr(event, 'reminders', None):
         from app.ai.schemas import Reminder
         event.reminders = [Reminder(minutes_before=caldav["rem"])]
@@ -303,7 +302,7 @@ async def _write_one(session, user_id, text, event, caldav):
         except CalDAVServiceError as exc:
             error_msg = str(exc)
 
-    _record(session, user_id, "create", event.title, text,
+    return _record(session, user_id, "create", event.title, text,
             "success" if caldav_result else "failed",
             event.model_dump_json(), caldav_result, error_msg)
 
