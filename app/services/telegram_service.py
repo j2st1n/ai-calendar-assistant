@@ -261,6 +261,8 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
 
+    await update.effective_chat.send_chat_action(action="typing")
+
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
