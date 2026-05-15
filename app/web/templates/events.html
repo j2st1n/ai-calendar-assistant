@@ -18,6 +18,7 @@
   {% if status_filter or search %}
   <a href="/console/events" class="button-link secondary" style="padding:8px 14px;">清除</a>
   {% endif %}
+  <a href="/console/events" class="button-link secondary" style="padding:8px 14px;">刷新</a>
 </form>
 
 {% if events %}
@@ -25,24 +26,24 @@
   <table>
     <thead>
       <tr>
-        <th>时间</th>
-        <th>来源</th>
-        <th>用户</th>
-        <th>操作</th>
+        <th style="width:130px;">时间</th>
+        <th style="width:60px;">来源</th>
+        <th style="width:80px;">用户</th>
+        <th style="width:60px;">操作</th>
         <th>标题</th>
-        <th>开始时间</th>
-        <th>重复</th>
-        <th>状态</th>
+        <th style="width:130px;">开始时间</th>
+        <th style="width:50px;">重复</th>
+        <th style="width:70px;">状态</th>
       </tr>
     </thead>
     <tbody>
       {% for event in events %}
-      <tr>
+      <tr class="ev-row" style="cursor:pointer;" onclick="var d=this.nextElementSibling;if(d&&d.classList.contains('ev-detail')){d.classList.toggle('open');}">
         <td style="white-space:nowrap;">{{ event.time }}</td>
         <td>{{ event.source }}</td>
         <td class="mono">{{ event.user }}</td>
-        <td>{{ event.operation }}</td>
-        <td class="text-ellipsis" style="max-width:200px;">{{ event.title }}</td>
+        <td>{% if event.operation == 'create' %}创建{% elif event.operation == 'update' %}修改{% elif event.operation == 'delete' %}删除{% else %}{{ event.operation }}{% endif %}</td>
+        <td class="text-ellipsis" style="max-width:200px;">{{ event.title or '(无标题)' }}</td>
         <td style="white-space:nowrap;">{{ event.start_time }}</td>
         <td>{{ event.is_recurring }}</td>
         <td>
@@ -55,53 +56,34 @@
           {% endif %}
         </td>
       </tr>
+      <tr class="ev-detail" style="display:none;">
+        <td colspan="8" style="padding:12px 16px;background:rgba(255,255,255,0.01);">
+          {% if event.original_text %}
+          <div style="margin-bottom:8px;">
+            <span class="muted-secondary">原始输入：</span>
+            <pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-top:4px;white-space:pre-wrap;font:inherit;font-size:13px;color:#d0d6e0;">{{ event.original_text }}</pre>
+          </div>
+          {% endif %}
+          {% if event.event_json %}
+          <div style="margin-bottom:8px;">
+            <span class="muted-secondary">结构化结果：</span>
+            <pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-top:4px;white-space:pre-wrap;max-height:200px;overflow:auto;font:inherit;font-size:13px;color:#d0d6e0;">{{ event.event_json }}</pre>
+          </div>
+          {% endif %}
+          <div style="color:#62666d;font-size:12px;">
+            {% if event.caldav_href %}<div>CalDAV href: <span class="mono">{{ event.caldav_href }}</span></div>{% endif %}
+            {% if event.caldav_uid %}<div>CalDAV uid: <span class="mono">{{ event.caldav_uid }}</span></div>{% endif %}
+            {% if event.error %}<div class="alert error" style="margin-top:6px;">{{ event.error }}</div>{% endif %}
+          </div>
+        </td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-
-<details style="margin-top:16px;">
-  <summary style="cursor:pointer;color:#8a8f98;font-size:13px;font-weight:500;padding:8px 0;">
-    展开查看详情（原始输入 / 结构化结果 / CalDAV）
-  </summary>
-  {% for event in events %}
-  <div class="card" style="margin-top:12px;">
-    <strong style="color:#f7f8f8;">{{ event.title or '(无标题)' }}</strong>
-    <span class="muted"> — {{ event.time }}</span>
-    {% if event.original_text %}
-    <div style="margin-top:8px;">
-      <span class="muted-secondary">原始输入：</span>
-      <pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-top:4px;white-space:pre-wrap;font:inherit;font-size:13px;color:#d0d6e0;">{{ event.original_text }}</pre>
-    </div>
-    {% endif %}
-    {% if event.event_json %}
-    <div style="margin-top:8px;">
-      <span class="muted-secondary">结构化结果：</span>
-      <pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-top:4px;white-space:pre-wrap;max-height:200px;overflow:auto;font:inherit;font-size:13px;color:#d0d6e0;">{{ event.event_json }}</pre>
-    </div>
-    {% endif %}
-    <div style="margin-top:8px;color:#62666d;font-size:12px;">
-      {% if event.caldav_href %}<div>CalDAV href: <span class="mono">{{ event.caldav_href }}</span></div>{% endif %}
-      {% if event.caldav_uid %}<div>CalDAV uid: <span class="mono">{{ event.caldav_uid }}</span></div>{% endif %}
-      {% if event.error %}<div class="alert error" style="margin-top:6px;">{{ event.error }}</div>{% endif %}
-    </div>
-  </div>
-  {% endfor %}
-</details>
-
 {% else %}
 <div class="card">
   <p class="muted">暂无事件记录。当 Telegram 或 Web 创建/修改/删除日程时，记录会显示在这里。</p>
-</div>
-{% endif %}
-
-{% if events %}
-<div class="card danger-zone" style="margin-top:24px;">
-  <h2>清空记录</h2>
-  <p class="muted" style="margin-bottom:12px;">只清空本地记录，不删除已经写入日历的日程。</p>
-  <form method="post" action="/console/events/clear">
-    <button type="submit" class="danger">清空事件记录</button>
-  </form>
 </div>
 {% endif %}
 {% endblock %}
