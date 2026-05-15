@@ -248,7 +248,7 @@ async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str,
 
     lines = _format_events(events)
     for event in events:
-        _write_one(session, user_id, text, event, caldav)
+        await _write_one(session, user_id, text, event, caldav)
     session.commit()
     return "\n".join(lines), None
 
