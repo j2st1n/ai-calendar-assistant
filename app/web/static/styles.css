@@ -335,6 +335,14 @@ button.danger:hover { background: rgba(239,68,68,0.25); }
 .toggle-switch input:checked + .toggle-slider { background: #5e6ad2; border-color: #5e6ad2; }
 .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); background: #fff; }
 
+.cs-wrap { position: relative; }
+.cs-trigger { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 8px 28px 8px 12px; font-size: 13px; color: #d0d6e0; cursor: pointer; }
+.cs-trigger::after { content: ""; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); border: 5px solid transparent; border-top-color: #8a8f98; }
+.cs-drop { display: none; position: absolute; z-index: 10; top: 100%; left: 0; right: 0; background: #18191b; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; margin-top: 4px; overflow: hidden; }
+.cs-drop.open { display: block; }
+.cs-opt { padding: 8px 12px; font-size: 13px; color: #d0d6e0; cursor: pointer; }
+.cs-opt:hover, .cs-opt.sel { background: rgba(94,106,210,0.15); color: #f7f8f8; }
+
 /* ── Link style ── */
 a { color: #7170ff; text-decoration: none; transition: color 0.12s; }
 a:hover { color: #828fff; }

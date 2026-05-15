@@ -23,7 +23,22 @@ function toggleVision() {
   if (el) el.style.display = cb && cb.checked ? 'none' : 'block';
 }
 window.addEventListener('DOMContentLoaded', function(){
-  const cb = document.querySelector('input[name="vision_use_main"]');
+  document.querySelectorAll('.cs-wrap').forEach(function(w){
+    var t = w.querySelector('.cs-trigger'), d = w.querySelector('.cs-drop');
+    t.addEventListener('click', function(e){ e.stopPropagation(); d.classList.toggle('open'); });
+    w.querySelectorAll('.cs-opt').forEach(function(o){
+      o.addEventListener('click', function(){
+        var h = w.querySelector('input[type="hidden"]');
+        if (h) { h.value = o.dataset.value; h.dispatchEvent(new Event('change')); }
+        t.textContent = o.textContent;
+        d.classList.remove('open');
+      });
+    });
+  });
+  document.addEventListener('click', function(){
+    document.querySelectorAll('.cs-drop').forEach(function(d){ d.classList.remove('open'); });
+  });
+  var cb = document.querySelector('input[name="vision_use_main"]');
   if (cb) { toggleVision(); cb.addEventListener('change', toggleVision); }
 });
 </script>
@@ -40,13 +55,15 @@ window.addEventListener('DOMContentLoaded', function(){
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
         <span>供应商</span>
-        <select name="provider_name" onchange="fillUrl(this,'base_url')">
-          {% for provider in providers %}
-          <option value="{{ provider.name }}" {% if provider.name == provider_name %}selected{% endif %}>
-            {{ provider.name }}
-          </option>
-          {% endfor %}
-        </select>
+        <div class="cs-wrap">
+          <div class="cs-trigger">{{ provider_name }}</div>
+          <div class="cs-drop">
+            {% for provider in providers %}
+            <div class="cs-opt {% if provider.name == provider_name %}sel{% endif %}" data-value="{{ provider.name }}">{{ provider.name }}</div>
+            {% endfor %}
+          </div>
+          <input type="hidden" name="provider_name" value="{{ provider_name }}">
+        </div>
       </label>
       <label style="max-width:180px;">
         <span>类型</span>
