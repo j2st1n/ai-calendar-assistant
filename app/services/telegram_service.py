@@ -160,6 +160,7 @@ class TelegramBotRuntime:
 
         if old_task is not None and not old_task.done():
             old_task.cancel()
+            await asyncio.sleep(1.5)
 
         self._task = None
         self._application = None
