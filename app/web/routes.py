@@ -589,7 +589,7 @@ async def update_system_settings(
     current_password: str = Form(""),
     new_password: str = Form(""),
     confirm_password: str = Form(""),
-    session_days: int = Form(...),
+    session_days: int = Form(7),
     event_record_limit: int = Form(...),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),

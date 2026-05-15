@@ -5,49 +5,50 @@
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
 
-<div class="card">
-  <h2>管理员设置</h2>
-  <form method="post" action="/console/system" class="stack">
-    <label>
-      <span>管理员用户名</span>
-      <input name="username" value="{{ username }}" required>
-    </label>
+<div class="grid" style="grid-template-columns:1fr 1fr;">
 
-    <div class="row" style="gap:12px;flex-wrap:wrap;">
-      <label style="flex:1;min-width:160px;">
+  <div class="card" style="margin-bottom:0;">
+    <h2>管理员</h2>
+    <form method="post" action="/console/system" class="stack">
+      <label>
+        <span>用户名</span>
+        <input name="username" value="{{ username }}" required>
+      </label>
+      <label>
         <span>当前密码</span>
         <input name="current_password" type="password" autocomplete="current-password">
       </label>
-      <label style="flex:1;min-width:160px;">
+      <label>
         <span>新密码</span>
         <input name="new_password" type="password" autocomplete="new-password">
       </label>
-      <label style="flex:1;min-width:160px;">
+      <label>
         <span>确认新密码</span>
         <input name="confirm_password" type="password" autocomplete="new-password">
       </label>
-    </div>
+      <div>
+        <button type="submit">保存</button>
+      </div>
+    </form>
+  </div>
 
-    <div class="row" style="gap:16px;">
-      <label style="flex:1;max-width:200px;">
-        <span>Session 有效期（天）</span>
-        <input name="session_days" type="number" min="1" max="365" value="{{ session_days }}" required>
-      </label>
-      <label style="flex:1;max-width:200px;">
-        <span>Event Records 保留数量</span>
+  <div class="card" style="margin-bottom:0;">
+    <h2>数据管理</h2>
+    <form method="post" action="/console/system" class="stack">
+      <label>
+        <span>事件记录保留数量</span>
         <input name="event_record_limit" type="number" min="1" max="100000" value="{{ event_record_limit }}" required>
       </label>
-    </div>
+      <div>
+        <button type="submit">保存</button>
+      </div>
+    </form>
 
-    <div class="row" style="margin-top:4px;">
-      <button type="submit">保存设置</button>
-    </div>
-  </form>
-</div>
+    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.06);margin:16px 0;">
 
-<div class="card">
-  <h2>数据备份</h2>
-  <p class="muted" style="margin-bottom:12px;">备份包含数据库和密钥文件，恢复时需一起使用。</p>
-  <a href="/console/system/backup" class="button-link">下载备份</a>
+    <p class="muted" style="margin-bottom:8px;font-size:12px;">备份包含数据库和密钥文件，恢复时需一起使用。</p>
+    <a href="/console/system/backup" class="button-link secondary">下载备份</a>
+  </div>
+
 </div>
 {% endblock %}
