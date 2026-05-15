@@ -156,20 +156,10 @@ class TelegramBotRuntime:
         self._last_error = ""
 
     async def reload(self, token: str) -> str:
-        old_app = self._application
         old_task = self._task
 
-        if old_app is not None:
-            try:
-                old_app.stop_running()
-            except Exception:
-                pass
         if old_task is not None and not old_task.done():
             old_task.cancel()
-            try:
-                await old_task
-            except asyncio.CancelledError:
-                pass
 
         self._task = None
         self._application = None
