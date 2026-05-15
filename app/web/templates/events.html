@@ -23,25 +23,25 @@
 
 {% if events %}
 <div class="table-wrap">
-  <table style="table-layout:fixed;">
+  <table>
     <thead>
       <tr>
-        <th style="width:120px;">时间</th>
-        <th style="width:50px;">来源</th>
-        <th style="width:80px;">用户</th>
-        <th style="width:50px;">操作</th>
+        <th>时间</th>
+        <th>来源</th>
+        <th>用户</th>
+        <th>操作</th>
         <th>标题</th>
-        <th style="width:60px;">状态</th>
+        <th>状态</th>
       </tr>
     </thead>
     <tbody>
       {% for event in events %}
       <tr class="ev-row" style="cursor:pointer;" onclick="var d=this.nextElementSibling;if(d&&d.classList.contains('ev-detail')){d.classList.toggle('open');}">
         <td style="white-space:nowrap;">{{ event.time }}</td>
-        <td>{{ event.source }}</td>
-        <td class="mono" style="overflow:hidden;text-overflow:ellipsis;">{{ event.user }}</td>
-        <td>{% if event.operation == 'create' %}创建{% elif event.operation == 'update' %}修改{% elif event.operation == 'delete' %}删除{% else %}{{ event.operation }}{% endif %}</td>
-        <td class="text-ellipsis" style="max-width:320px;">{{ event.title or '(无标题)' }}</td>
+        <td style="white-space:nowrap;">{{ event.source }}</td>
+        <td class="mono" style="white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;">{{ event.user }}</td>
+        <td style="white-space:nowrap;">{% if event.operation == 'create' %}创建{% elif event.operation == 'update' %}修改{% elif event.operation == 'delete' %}删除{% else %}{{ event.operation }}{% endif %}</td>
+        <td class="text-ellipsis" style="max-width:450px;">{{ event.title or '(无标题)' }}</td>
         <td>
           {% if event.status == 'success' %}
           <span class="status-badge"><span class="dot dot-success"></span>成功</span>
