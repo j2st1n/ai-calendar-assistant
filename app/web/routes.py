@@ -494,6 +494,14 @@ async def list_caldav_calendars(
     except CalDAVServiceError as exc:
         return redirect_with_query("/console/caldav", error=str(exc))
 
+    if url:
+        settings_service.set("caldav_url", url)
+    if username:
+        settings_service.set("caldav_username", username)
+    if password:
+        settings_service.set("caldav_password", password, encrypted=True)
+    settings_service.commit()
+
     request.session["caldav_calendars"] = calendars
     cal_names = [cal["name"] for cal in calendars]
     msg = f"发现 {len(calendars)} 个日历：{'、'.join(cal_names)}"
