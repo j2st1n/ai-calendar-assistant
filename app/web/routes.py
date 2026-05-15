@@ -622,13 +622,13 @@ async def update_system_settings(
     new_password: str = Form(""),
     confirm_password: str = Form(""),
     session_days: int = Form(7),
-    event_record_limit: int = Form(...),
+    event_record_limit: int = Form(0),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     if session_days < 1 or session_days > 365:
         return redirect("/console/system?error=Session 有效期必须在 1 到 365 天之间。")
-    if event_record_limit < 1 or event_record_limit > 100000:
+    if event_record_limit > 100000:
         return redirect("/console/system?error=记录保留数量必须在 1 到 100000 之间。")
 
     settings_service = SettingsService(session)
@@ -643,9 +643,9 @@ async def update_system_settings(
 
     settings_service.set("admin_username", username.strip() or "admin")
     settings_service.set("session_days", str(session_days))
-    settings_service.set("event_record_limit", str(event_record_limit))
-    settings_service.commit()
-    prune_event_records(session, event_record_limit)
+    if event_record_limit > 0:
+        settings_service.set("event_record_limit", str(event_record_limit))
+        prune_event_records(session, event_record_limit)
     return redirect("/console/system?message=系统设置已保存。")
 
 
