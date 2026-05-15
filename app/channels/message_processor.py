@@ -240,60 +240,65 @@ async def _handle_new(session, user_id, text, result, caldav, svc) -> tuple[str,
         session.commit()
         return f"🔁 {result.unsupported_reason}", None
 
-    event = result.event
-    if event is None:
+    events = result.events or ([result.event] if result.event else [])
+    if not events:
         return "🤔 未识别到日程信息，请补充时间和事件内容。", None
 
-    if event.start_time and _parse_time(event.start_time) and _parse_time(event.start_time) < datetime.now(timezone.utc):
-        _pending_drafts[f"past_{user_id}"] = {"ts": time.time(), "event": event.model_dump()}
-        return '⏳ 识别到日程已开始，是否需要添加？\n回复"是"添加，回复"否"取消。', None
+    lines = _format_events(events)
+    for event in events:
+        _write_one(session, user_id, text, event, caldav)
+    session.commit()
+    return "\n".join(lines), None
 
-    return await _write(session, user_id, text, event, caldav, svc)
+
+def _format_events(events) -> list[str]:
+    count = len(events)
+    head = f"✅ {'日程已安排好啦！' if count == 1 else f'{count} 条日程已安排好啦！'}"
+    lines = [head, ""]
+    for event in events:
+        lines.append(f"📌 {event.title}")
+        if getattr(event, 'is_all_day', False):
+            lines.append(f"📅 {event.start_time[:10]}")
+        elif event.start_time:
+            st = event.start_time[:16].replace("T", " ")
+            et = (event.end_time or "")[:16].replace("T", " ")
+            lines.append(f"🕒 {st} - {et}" if et else f"🕒 {st}")
+        if getattr(event, 'location', None):
+            lines.append(f"📍 {event.location}")
+        if getattr(event, 'description', None):
+            lines.append(f"📝 {event.description}")
+        if getattr(event, 'recurrence', None):
+            rec = event.recurrence
+            freq = rec.get("frequency", "") if isinstance(rec, dict) else getattr(rec, 'frequency', '')
+            if freq:
+                lines.append(f"🔁 {freq}")
+        reminders = getattr(event, 'reminders', []) or []
+        if reminders and reminders[0].minutes_before:
+            lines.append(f"⏰ 提前 {reminders[0].minutes_before} 分钟")
+        lines.append("")
+    return lines
 
 
-async def _write(session, user_id, text, event, caldav, svc) -> tuple[str, int | None]:
-    if not event.reminders:
+def _write_one(session, user_id, text, event, caldav):
+    if not getattr(event, 'reminders', None):
+        from app.ai.schemas import Reminder
         event.reminders = [Reminder(minutes_before=caldav["rem"])]
-    if not event.end_time and event.start_time:
+    if not getattr(event, 'end_time', None) and getattr(event, 'start_time', None):
         from dateutil.parser import parse as parse_date
         dt = parse_date(event.start_time)
         event.end_time = (dt + timedelta(minutes=caldav["dur"])).isoformat()
-
-    lines = ["✅ 日程已安排好啦！", ""]
-    lines.append(f"📌 标题：{event.title}")
-    if event.is_all_day:
-        lines.append(f"📅 日期：{event.start_time[:10]}")
-    else:
-        st = event.start_time[:16].replace("T", " ")
-        et = event.end_time[:16].replace("T", " ") if event.end_time else "?"
-        lines.append(f"🕒 时间：{st} - {et}")
-    if event.location:
-        lines.append(f"📍 地点：{event.location}")
-    if event.recurrence:
-        freq = event.recurrence.get("frequency", "") if isinstance(event.recurrence, dict) else getattr(event.recurrence, 'frequency', '')
-        lines.append(f"🔁 重复：{freq}")
-    lines.append(f"⏰ 提醒：提前 {event.reminders[0].minutes_before} 分钟")
-    lines.append("")
-    lines.append("想改的话，直接回复这条消息：")
-    lines.append('"时间改成下午4点"')
-    lines.append('"删除这条"')
 
     caldav_result = None
     error_msg = None
     if caldav["url"] and caldav["user"]:
         try:
             caldav_result = await _write_caldav(event, caldav)
-            if caldav_result:
-                lines.append("✅ 已写入日历")
         except CalDAVServiceError as exc:
             error_msg = str(exc)
-            lines.append(f"❌ 写入日历失败：{error_msg}")
 
-    rec_id = _record(session, user_id, "create", event.title, text,
-                     "success" if caldav_result else "failed",
-                     event.model_dump_json(), caldav_result, error_msg)
-    session.commit()
-    return "\n".join(lines), rec_id
+    _record(session, user_id, "create", event.title, text,
+            "success" if caldav_result else "failed",
+            event.model_dump_json(), caldav_result, error_msg)
 
 
 async def _write_caldav_dict(event_dict, caldav) -> dict | None:

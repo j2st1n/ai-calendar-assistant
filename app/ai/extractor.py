@@ -30,7 +30,7 @@ Rules:
 Return JSON:
 {{
   "intent": "create_event|update_event|delete_event|provide_missing_fields|no_event",
-  "event": {{
+  "events": [{{
     "title": "...",
     "start_time": "2026-05-15T15:00:00+08:00",
     "end_time": "2026-05-15T16:00:00+08:00",
@@ -40,7 +40,7 @@ Return JSON:
     "reminders": [{{"minutes_before": 30}}],
     "recurrence": null,
     "is_all_day": false
-  }},
+  }}],
   "missing_fields": [],
   "unsupported_reason": null,
   "confidence": 0.9
@@ -117,18 +117,25 @@ def _build_result(data: dict) -> ExtractionResult:
     except ValueError:
         intent = Intent.no_event
 
-    event_data = data.get("event")
-    if not isinstance(event_data, dict):
-        event_data = {}
-
-    event_data.setdefault("title", "(无标题)")
-    event_data.setdefault("start_time", datetime.now(timezone.utc).isoformat())
-
     try:
         return ExtractionResult.model_validate(data)
     except Exception as exc:
-        event = _build_event(event_data)
-        return ExtractionResult(intent=intent, event=event, missing_fields=[str(exc)])
+        events = []
+        events_data = data.get("events", [])
+        if not isinstance(events_data, list):
+            events_data = []
+        if not events_data:
+            ev = data.get("event")
+            if isinstance(ev, dict):
+                events_data = [ev]
+
+        for ed in events_data:
+            if isinstance(ed, dict):
+                ev = _build_event(ed)
+                if ev:
+                    events.append(ev)
+
+        return ExtractionResult(intent=intent, events=events, missing_fields=[str(exc)])
 
 
 def _build_event(data: dict):

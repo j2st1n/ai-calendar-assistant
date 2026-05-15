@@ -40,6 +40,7 @@ class CalendarEvent(BaseModel):
 class ExtractionResult(BaseModel):
     intent: Intent
     event: CalendarEvent | None = None
+    events: list[CalendarEvent] = Field(default_factory=list)
     missing_fields: list[str] = Field(default_factory=list)
     unsupported_reason: str | None = None
     confidence: float = 0.0
