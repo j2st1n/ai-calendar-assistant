@@ -119,11 +119,13 @@ async def _do_delete_with(session, user_id, target, caldav) -> str:
 
 async def _do_modify_with(session, user_id, text, target, new_event, caldav):
     title = _g(new_event, "title") or "日程"
+    print(f"[modify] uid={target.caldav_uid} href={target.caldav_href} url={caldav['url']}", flush=True)
     if caldav["url"] and target.caldav_uid:
         cal = CalDAVService()
         await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                target.caldav_uid, target.caldav_href)
         result = await _write_caldav_dict(new_event, caldav)
+        print(f"[modify] create result={result}", flush=True)
         if result:
             target.caldav_href = result.get("href")
             target.caldav_uid = result.get("uid")
