@@ -279,7 +279,7 @@ def _format_events(events) -> list[str]:
     return lines
 
 
-def _write_one(session, user_id, text, event, caldav):
+async def _write_one(session, user_id, text, event, caldav):
     if not getattr(event, 'reminders', None):
         from app.ai.schemas import Reminder
         event.reminders = [Reminder(minutes_before=caldav["rem"])]
