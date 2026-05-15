@@ -2,10 +2,8 @@
 
 自部署的私人 AI 日程管理助手。通过 Telegram 对话自然语言，AI 自动提取日程并写入你的日历。
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.0-blue" alt="version">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
-</p>
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Version](https://img.shields.io/github/v/release/j2st1n/ai-calendar-assistant)](https://github.com/j2st1n/ai-calendar-assistant/releases)
 
 ## 功能
 
@@ -61,12 +59,12 @@ Please change this password in System Settings.
 
 填写 CalDAV 服务器地址、用户名、密码，测试连接后拉取日历列表，选择目标日历保存。
 
-| 服务 | 地址示例 |
-|---|---|
-| iCloud | `https://caldav.icloud.com` |
-| 群晖 | `https://nas.example.com:5001/caldav/用户名/` |
-| Nextcloud | `https://cloud.example.com/remote.php/dav/` |
-| Radicale | `http://localhost:5232` |
+| 服务 | 地址示例 | 状态 |
+|---|---|---|
+| 群晖 | `https://nas.example.com:5001/caldav/` | ✅ 已测试 |
+| iCloud | `https://caldav.icloud.com` | |
+| Nextcloud | `https://cloud.example.com/remote.php/dav/` | |
+| Radicale | `http://localhost:5232` | |
 
 ### 3. Telegram 设置
 
@@ -91,13 +89,6 @@ Bot：✅ 日程已更新！
 你：删
 Bot：🗑️ 已删除日程：和张三开会
 ```
-
-### 命令
-
-| 命令 | 说明 |
-|---|---|
-| `/start` | 开始（含绑定链接处理） |
-| `/help` | 查看帮助 |
 
 ## 安全
 
