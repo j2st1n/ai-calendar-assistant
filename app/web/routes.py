@@ -298,6 +298,7 @@ async def update_ai_settings(
 @router.post("/ai/models")
 async def pull_ai_models(
     request: Request,
+    provider_name: str = Form(""),
     provider_type: str = Form(""),
     base_url: str = Form(""),
     api_key: str = Form(""),
@@ -305,6 +306,16 @@ async def pull_ai_models(
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
+    if provider_name:
+        settings_service.set("ai_provider_name", provider_name)
+    if provider_type:
+        settings_service.set("ai_provider_type", provider_type)
+    if base_url:
+        settings_service.set("ai_base_url", _normalize_url(base_url))
+    if api_key:
+        settings_service.set("ai_api_key", api_key, encrypted=True)
+    settings_service.commit()
+
     provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
     base_url = _normalize_url(base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1")
     api_key = api_key or settings_service.get("ai_api_key") or ""
@@ -325,6 +336,7 @@ async def pull_ai_models(
 
 @router.post("/ai/test")
 async def test_ai_connection(
+    request: Request,
     provider_type: str = Form(""),
     base_url: str = Form(""),
     api_key: str = Form(""),

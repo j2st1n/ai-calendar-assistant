@@ -5,7 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Calendar Assistant</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=1"> 
+  <link rel="stylesheet" href="/static/styles.css?v=2">
+  <script>
+  window.addEventListener('DOMContentLoaded', function(){
+    setTimeout(function(){
+      var el = document.querySelector('.alert.success');
+      if(el) el.remove();
+    }, 3000);
+  });
+  </script>
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="icon" href="/static/calendar-icon-alt.png" type="image/png">
   {% block head %}{% endblock %}
 </head>
 <body>
