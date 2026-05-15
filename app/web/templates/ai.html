@@ -6,17 +6,10 @@ const providerUrls = {
   "{{ provider.name }}": "{{ provider.base_url }}",
   {% endfor %}
 };
-function onProviderChange(sel) {
+function fillUrl(sel, inputName) {
   const url = providerUrls[sel.value];
   if (url) {
-    const input = document.querySelector('input[name="base_url"]');
-    if (input) input.value = url;
-  }
-}
-function onVisionProviderChange(sel) {
-  const url = providerUrls[sel.value];
-  if (url) {
-    const input = document.querySelector('input[name="vision_base_url"]');
+    const input = document.querySelector('input[name="' + inputName + '"]');
     if (input) input.value = url;
   }
 }
@@ -26,7 +19,7 @@ function selectModel(sel) {
 }
 function toggleVision() {
   const cb = document.querySelector('input[name="vision_use_main"]');
-  const el = document.getElementById('vision-extra');
+  const el = document.getElementById('vision-card');
   if (el) el.style.display = cb && cb.checked ? 'none' : 'block';
 }
 window.addEventListener('DOMContentLoaded', function(){
@@ -36,17 +29,18 @@ window.addEventListener('DOMContentLoaded', function(){
 </script>
 
 <h2 class="section-title">AI 设置</h2>
-<p class="section-sub">配置供应商、Base URL、API Key，拉取模型列表选择，测试连接通过后保存。</p>
 
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
 
 <div class="card">
+  <h2>主模型</h2>
+  <p class="muted" style="margin-bottom:12px;">用于日程提取的 AI 模型。</p>
   <form method="post" action="/console/ai" class="stack">
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
         <span>供应商</span>
-        <select name="provider_name" onchange="onProviderChange(this)">
+        <select name="provider_name" onchange="fillUrl(this,'base_url')">
           {% for provider in providers %}
           <option value="{{ provider.name }}" {% if provider.name == provider_name %}selected{% endif %}>
             {{ provider.name }}
@@ -85,6 +79,10 @@ window.addEventListener('DOMContentLoaded', function(){
       </label>
       <button type="submit" formaction="/console/ai/models" class="secondary">拉取模型列表</button>
     </div>
+    <label style="margin-top:8px;">
+      <input type="checkbox" name="vision_use_main" value="1" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
+      <span style="display:inline;margin-left:6px;">同时用于图片识别</span>
+    </label>
     <div class="row" style="margin-top:4px;">
       <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
       <button type="submit">保存</button>
@@ -92,63 +90,55 @@ window.addEventListener('DOMContentLoaded', function(){
   </form>
 </div>
 
-<div class="card">
-  <h2>识图设置</h2>
-  <p class="muted" style="margin-bottom:12px;">当 Telegram 收到图片时，用识图模型提取文字后再做日程识别。</p>
-  <label style="margin-bottom:16px;">
-    <input type="checkbox" name="vision_use_main" value="1" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
-    <span style="display:inline;margin-left:6px;">使用当前模型识别图片</span>
-  </label>
-
-  <div id="vision-extra" style="display:none;">
-    <form method="post" action="/console/ai" class="stack">
-      <input type="hidden" name="vision_use_main" value="0">
-      <div class="row" style="gap:16px;">
-        <label style="flex:1;">
-          <span>供应商</span>
-          <select name="vision_provider_name" onchange="onVisionProviderChange(this)">
-            {% for provider in providers %}
-            <option value="{{ provider.name }}" {% if provider.name == vision_provider_name %}selected{% endif %}>{{ provider.name }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label style="max-width:180px;">
-          <span>类型</span>
-          <select name="vision_provider_type">
-            <option value="openai_compatible" {% if vision_provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
-            <option value="anthropic" {% if vision_provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
-          </select>
-        </label>
-      </div>
-      <label>
-        <span>Base URL</span>
-        <input name="vision_base_url" value="{{ vision_base_url }}">
+<div class="card" id="vision-card" style="display:none;">
+  <h2>识图模型</h2>
+  <p class="muted" style="margin-bottom:12px;">当收到图片时，调用该识图模型识别文字。</p>
+  <form method="post" action="/console/ai" class="stack">
+    <input type="hidden" name="vision_use_main" value="0">
+    <div class="row" style="gap:16px;">
+      <label style="flex:1;">
+        <span>供应商</span>
+        <select name="vision_provider_name" onchange="fillUrl(this,'vision_base_url')">
+          {% for provider in providers %}
+          <option value="{{ provider.name }}" {% if provider.name == vision_provider_name %}selected{% endif %}>{{ provider.name }}</option>
+          {% endfor %}
+        </select>
       </label>
-      <label>
-        <span>API Key</span>
-        <input name="vision_api_key" type="password" value="" placeholder="{{ vision_api_key_masked or '留空表示保持现有值' }}" autocomplete="off">
+      <label style="max-width:180px;">
+        <span>类型</span>
+        <select name="vision_provider_type">
+          <option value="openai_compatible" {% if vision_provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
+          <option value="anthropic" {% if vision_provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
+        </select>
       </label>
-      <div class="row" style="align-items:flex-end;">
-        <label style="flex:1;">
-          <span>模型</span>
-          {% if vision_models %}
-          <select name="vision_model">
-            {% for m in vision_models %}
-            <option value="{{ m }}" {% if vision_model == m %}selected{% endif %}>{{ m }}</option>
-            {% endfor %}
-          </select>
-          {% else %}
-          <input name="vision_model" value="{{ vision_model }}" placeholder="先拉取模型列表后选择">
-          {% endif %}
-        </label>
-        <button type="submit" formaction="/console/ai/models" class="secondary">拉取模型列表</button>
-      </div>
-      <div class="row" style="margin-top:4px;">
-        <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
-        <button type="submit">保存</button>
-      </div>
-    </form>
-  </div>
+    </div>
+    <label>
+      <span>Base URL</span>
+      <input name="vision_base_url" value="{{ vision_base_url }}">
+    </label>
+    <label>
+      <span>API Key</span>
+      <input name="vision_api_key" type="password" value="" placeholder="{{ vision_api_key_masked or '留空表示保持现有值' }}" autocomplete="off">
+    </label>
+    <div class="row" style="align-items:flex-end;">
+      <label style="flex:1;">
+        <span>模型</span>
+        {% if vision_models %}
+        <select name="vision_model">
+          {% for m in vision_models %}
+          <option value="{{ m }}" {% if vision_model == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <input name="vision_model" value="{{ vision_model }}" placeholder="先拉取模型列表后选择">
+        {% endif %}
+      </label>
+      <button type="submit" formaction="/console/ai/models" class="secondary">拉取模型列表</button>
+    </div>
+    <div class="row" style="margin-top:4px;">
+      <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
+      <button type="submit">保存</button>
+    </div>
+  </form>
 </div>
 {% endblock %}
-

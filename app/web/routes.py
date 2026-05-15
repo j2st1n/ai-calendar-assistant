@@ -617,7 +617,7 @@ async def event_records(
 
 @router.post("/system")
 async def update_system_settings(
-    username: str = Form(...),
+    username: str = Form(""),
     current_password: str = Form(""),
     new_password: str = Form(""),
     confirm_password: str = Form(""),
