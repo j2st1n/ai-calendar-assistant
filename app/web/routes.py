@@ -221,7 +221,7 @@ async def system_settings(
             "username": settings_service.get("admin_username") or "admin",
             "session_days": settings_service.get("session_days") or "7",
             "event_record_limit": settings_service.get("event_record_limit") or "500",
-            "message": request.query_params.get("message"),
+            "message": get_flash(request) or request.query_params.get("message"),
             "error": request.query_params.get("error"),
         },
     )
@@ -291,7 +291,8 @@ async def update_ai_settings(
             settings_service.set("ai_vision_api_key", vision_api_key, encrypted=True)
         settings_service.set("ai_vision_model", vision_model)
     settings_service.commit()
-    return redirect("/console/ai?message=AI 设置已保存。")
+    set_flash(request, "AI 设置已保存。")
+    return redirect("/console/ai")
 
 
 @router.post("/ai/models")
@@ -318,7 +319,8 @@ async def pull_ai_models(
         settings_service.set("ai_model", models[0])
     settings_service.commit()
     request.session["ai_models"] = models
-    return redirect_with_query("/console/ai", message=f"模型列表已更新，共 {len(models)} 个。")
+    set_flash(request, f"模型列表已更新，共 {len(models)} 个。")
+    return redirect("/console/ai")
 
 
 @router.post("/ai/test")
@@ -340,7 +342,8 @@ async def test_ai_connection(
         await AIProviderService().test_connection(config)
     except AIProviderError as exc:
         return redirect_with_query("/console/ai", error=str(exc))
-    return redirect_with_query("/console/ai", message="AI 连接测试成功。")
+    set_flash(request, "AI 连接测试成功。")
+    return redirect("/console/ai")
 
 
 def current_ai_provider_config(settings_service: SettingsService) -> AIProviderConfig:
@@ -381,7 +384,7 @@ async def caldav_settings(
     settings_service = SettingsService(session)
     payload = caldav_payload(settings_service)
     payload["request"] = request
-    payload["message"] = request.query_params.get("message")
+    payload["message"] = get_flash(request) or request.query_params.get("message")
     payload["error"] = request.query_params.get("error")
     cal_url = request.query_params.get("cal_url")
     cal_name = request.query_params.get("cal_name")
@@ -401,6 +404,7 @@ async def caldav_settings(
 
 @router.post("/caldav")
 async def update_caldav_settings(
+    request: Request,
     caldav_url: str = Form(""),
     caldav_username: str = Form(""),
     caldav_password: str = Form(""),
@@ -423,11 +427,13 @@ async def update_caldav_settings(
     settings_service.set("caldav_reminder_minutes", caldav_reminder_minutes.strip())
     settings_service.set("caldav_default_duration", caldav_default_duration.strip())
     settings_service.commit()
-    return redirect_with_query("/console/caldav", message="CalDAV 设置已保存。")
+    set_flash(request, "CalDAV 设置已保存。")
+    return redirect("/console/caldav")
 
 
 @router.post("/caldav/test")
 async def test_caldav_connection(
+    request: Request,
     caldav_url: str = Form(""),
     caldav_username: str = Form(""),
     caldav_password: str = Form(""),
@@ -453,7 +459,8 @@ async def test_caldav_connection(
         return redirect_with_query("/console/caldav", error=error_msg)
     except CalDAVServiceError as exc:
         return redirect_with_query("/console/caldav", error=str(exc))
-    return redirect_with_query("/console/caldav", message="连接测试成功。")
+    set_flash(request, "连接测试成功。")
+    return redirect("/console/caldav")
 
 
 @router.post("/caldav/calendars")
@@ -478,14 +485,14 @@ async def list_caldav_calendars(
     request.session["caldav_calendars"] = calendars
     cal_names = [cal["name"] for cal in calendars]
     msg = f"发现 {len(calendars)} 个日历：{'、'.join(cal_names)}"
+    set_flash(request, msg)
     if len(calendars) == 1:
         return redirect_with_query(
             "/console/caldav",
-            message=msg,
             cal_url=calendars[0]["url"],
             cal_name=calendars[0]["name"],
         )
-    return redirect_with_query("/console/caldav", message=msg)
+    return redirect("/console/caldav")
 
 
 @router.get("/telegram", response_class=HTMLResponse)
@@ -497,7 +504,7 @@ async def telegram_settings(
     service = TelegramService()
     payload = service.config_summary(session)
     payload["request"] = request
-    payload["message"] = request.query_params.get("message")
+    payload["message"] = get_flash(request) or request.query_params.get("message")
     payload["error"] = request.query_params.get("error")
     payload["bind_link"] = request.query_params.get("bind_link")
     return templates.TemplateResponse(request, "telegram.html", payload)
@@ -527,6 +534,7 @@ async def update_telegram_settings(
 
 @router.post("/telegram/bind")
 async def generate_bind_link(
+    request: Request,
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -536,11 +544,13 @@ async def generate_bind_link(
         return redirect_with_query("/console/telegram", error="请先配置 Bot Username。")
     service = TelegramService()
     link = service.generate_bind_link(bot_username)
-    return redirect_with_query("/console/telegram", bind_link=link, message="绑定链接已生成。")
+    set_flash(request, "绑定链接已生成。")
+    return redirect_with_query("/console/telegram", bind_link=link)
 
 
 @router.post("/telegram/users/add")
 async def add_telegram_user(
+    request: Request,
     user_id: str = Form(...),
     username: str = Form(""),
     display_name: str = Form(""),
@@ -549,18 +559,21 @@ async def add_telegram_user(
 ) -> RedirectResponse:
     service = TelegramService()
     service.add_user(session, user_id.strip(), username.strip(), display_name.strip())
-    return redirect_with_query("/console/telegram", message=f"已添加用户 {user_id}。")
+    set_flash(request, f"已添加用户 {user_id}。")
+    return redirect("/console/telegram")
 
 
 @router.post("/telegram/users/disable")
 async def disable_telegram_user(
+    request: Request,
     user_id: str = Form(...),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     service = TelegramService()
     service.disable_user(session, user_id.strip())
-    return redirect_with_query("/console/telegram", message=f"已禁用用户 {user_id}。")
+    set_flash(request, f"已禁用用户 {user_id}。")
+    return redirect("/console/telegram")
 
 
 @router.get("/events", response_class=HTMLResponse)
@@ -613,12 +626,14 @@ async def event_records(
             "status_filter": status_filter,
             "search": search,
             "statuses": ["all", "success", "failed", "pending"],
+            "message": get_flash(request) or request.query_params.get("message"),
         },
     )
 
 
 @router.post("/system")
 async def update_system_settings(
+    request: Request,
     username: str = Form(""),
     current_password: str = Form(""),
     new_password: str = Form(""),
@@ -648,17 +663,20 @@ async def update_system_settings(
     if event_record_limit > 0:
         settings_service.set("event_record_limit", str(event_record_limit))
         prune_event_records(session, event_record_limit)
-    return redirect("/console/system?message=系统设置已保存。")
+    set_flash(request, "系统设置已保存。")
+    return redirect("/console/system")
 
 
 @router.post("/events/clear")
 async def clear_event_records(
+    request: Request,
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     session.execute(delete(EventRecord))
     session.commit()
-    return redirect_with_query("/console/events", message="事件记录已清空。")
+    set_flash(request, "事件记录已清空。")
+    return redirect("/console/events")
 
 
 @router.get("/system/backup")
