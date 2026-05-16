@@ -66,7 +66,7 @@ def dashboard_stats(session: Session) -> dict[str, int]:
     month_start = today.replace(day=1)
     today_str = today.isoformat()
     week_str = week_start.isoformat()
-    month_str = month_start.isoformat()
+    month_str = month_start.strftime("%Y-%m")
 
     def count_since(since_date):
         deleted_uids = select(EventRecord.caldav_uid).where(
