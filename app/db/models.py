@@ -27,6 +27,16 @@ class TelegramIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class DiscordIdentity(Base):
+    __tablename__ = "discord_identities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    discord_user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class EventRecord(Base):
     __tablename__ = "event_records"
 

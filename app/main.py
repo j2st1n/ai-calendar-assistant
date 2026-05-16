@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 from app.services.telegram_service import TelegramService
+from app.services.discord_service import DiscordService
 from app.web.routes import router as web_router
 
 
@@ -25,11 +26,15 @@ def create_app() -> FastAPI:
     app.include_router(web_router)
 
     @app.on_event("startup")
-    async def auto_start_bot():
+    async def auto_start_bots():
         with SessionLocal() as session:
-            token = SettingsService(session).get("telegram_bot_token")
-        if token:
-            await TelegramService().reload_bot(token)
+            s = SettingsService(session)
+            tg_token = s.get("telegram_bot_token")
+            dc_token = s.get("discord_bot_token")
+        if tg_token:
+            await TelegramService().reload_bot(tg_token)
+        if dc_token:
+            await DiscordService().reload_bot(dc_token)
 
     return app
 

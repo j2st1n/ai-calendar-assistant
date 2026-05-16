@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.bootstrap import read_changes, read_version
 from app.core.security import hash_password, verify_password
 from app.services.telegram_service import get_telegram_bot_runtime
+from app.services.discord_service import get_discord_bot_runtime, DiscordService
 from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
 from app.db.models import EventRecord
 from app.db.session import SessionLocal
@@ -197,6 +198,7 @@ def status_context(session: Session, request) -> dict:
         "caldav_ok": caldav_ok,
         "caldav_name": caldav_cal if caldav_ok else "",
         "tg_running": get_telegram_bot_runtime() is not None and get_telegram_bot_runtime().running,
+        "dc_running": get_discord_bot_runtime() is not None and get_discord_bot_runtime().running,
         "recent_events": events,
         "version": read_version(),
         "changes": read_changes(),
@@ -771,6 +773,79 @@ async def remove_telegram_user(
     service.remove_user(session, user_id.strip())
     set_flash(request, f"已删除用户 {user_id}。")
     return redirect("/console/telegram")
+
+
+@router.get("/discord", response_class=HTMLResponse)
+async def discord_settings(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    service = DiscordService()
+    payload = service.config_summary(session)
+    payload["request"] = request
+    payload["message"] = get_flash(request) or request.query_params.get("message")
+    payload["error"] = get_error_flash(request)
+    return templates.TemplateResponse(request, "discord.html", payload)
+
+
+@router.post("/discord")
+async def update_discord_settings(
+    request: Request,
+    bot_token: str = Form(""),
+    application_id: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    token = bot_token.strip() or settings_service.get("discord_bot_token") or ""
+    if not token:
+        set_error_flash(request, "请填写 Bot Token。")
+        return redirect("/console/discord")
+    service = DiscordService()
+    service.save_token(session, token, application_id.strip())
+    await service.reload_bot(token)
+    set_flash(request, "Discord Bot 已保存并重载。")
+    return redirect("/console/discord")
+
+
+@router.post("/discord/users/add")
+async def add_discord_user(
+    request: Request,
+    user_id: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    from app.db.models import DiscordIdentity
+    uid = user_id.strip()
+    existing = session.scalar(
+        select(DiscordIdentity).where(DiscordIdentity.discord_user_id == uid)
+    )
+    if existing:
+        existing.enabled = True
+    else:
+        session.add(DiscordIdentity(discord_user_id=uid, enabled=True))
+    session.commit()
+    set_flash(request, f"已授权用户 {uid}。")
+    return redirect("/console/discord")
+
+
+@router.post("/discord/users/remove")
+async def remove_discord_user(
+    request: Request,
+    user_id: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    from app.db.models import DiscordIdentity
+    ident = session.scalar(
+        select(DiscordIdentity).where(DiscordIdentity.discord_user_id == user_id.strip())
+    )
+    if ident:
+        ident.enabled = False
+        session.commit()
+    set_flash(request, f"已移除用户 {user_id}。")
+    return redirect("/console/discord")
 
 
 @router.get("/events", response_class=HTMLResponse)

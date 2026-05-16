@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="section-title">Discord 设置</h2>
+<p class="section-sub">配置 Discord Bot Token，管理 Bot 状态。</p>
+
+{% if message %}<p class="alert success">{{ message }}</p>{% endif %}
+{% if error %}<p class="alert error">{{ error }}</p>{% endif %}
+
+<div class="card">
+  <h2>Bot 配置</h2>
+  <form method="post" action="/console/discord" class="stack">
+    <label>
+      <span>Bot Token</span>
+      <input name="bot_token" type="password" value="" placeholder="{{ discord_token_masked or '输入 Discord Bot Token' }}" autocomplete="off">
+    </label>
+    <label>
+      <span>Application ID</span>
+      <input name="application_id" value="{{ discord_application_id }}" placeholder="Discord Application ID（用于邀请链接）">
+    </label>
+    <div class="row" style="margin-top:4px;">
+      <button type="submit">保存并重载 Bot</button>
+      {% if discord_application_id %}
+      <a href="https://discord.com/oauth2/authorize?client_id={{ discord_application_id }}&permissions=274877991936&scope=bot" target="_blank" class="button secondary">邀请 Bot 到服务器</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <div class="row" style="margin-top:16px;gap:8px;">
+    <span class="muted">Bot 状态：</span>
+    {% if discord_bot_running %}
+    <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
+    {% else %}
+    <span class="status-badge"><span class="dot dot-error"></span>未启动</span>
+    {% endif %}
+    {% if discord_bot_error %}
+    <span class="status-badge"><span class="dot dot-error"></span>{{ discord_bot_error[:80] }}</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>授权用户</h2>
+  {% if discord_allowed_users %}
+  <div class="card" style="padding:0;margin-bottom:12px;">
+    {% for u in discord_allowed_users %}
+    <div style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <span style="font-size:13px;">{{ u.user_id }}</span>
+        {% if u.username %}<span class="muted" style="font-size:12px;margin-left:8px;">@{{ u.username }}</span>{% endif %}
+      </div>
+      <form method="post" action="/console/discord/users/remove" style="margin:0;">
+        <input type="hidden" name="user_id" value="{{ u.user_id }}">
+        <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">移除</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted" style="margin-bottom:12px;">暂无授权用户。第一个 @Bot 的用户将自动授权。</p>
+  {% endif %}
+  <form method="post" action="/console/discord/users/add" class="stack">
+    <div class="row" style="align-items:flex-end;">
+      <label style="flex:1;">
+        <span>Discord User ID</span>
+        <input name="user_id" placeholder="例如：123456789012345678" required>
+      </label>
+      <button type="submit" class="secondary">添加</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
