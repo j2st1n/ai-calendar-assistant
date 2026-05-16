@@ -49,9 +49,17 @@ def register_handlers(client) -> None:
                         return
 
                     processor = MessageProcessor()
-                    replies = await processor.process(session, user_id, text)
-                    for response, _ in replies:
-                        await message.reply(response)
+                    reply_to = str(message.reference.message_id) if message.reference else None
+                    replies = await processor.process(session, user_id, text, reply_to)
+                    from app.db.models import EventRecord
+                    from sqlalchemy import select as sa_select
+                    for response, record_id in replies:
+                        sent = await message.reply(response)
+                        if record_id:
+                            rec = session.get(EventRecord, record_id)
+                            if rec:
+                                rec.bot_message_id = str(sent.id)
+                                session.commit()
             except Exception as exc:
                 logger.exception("Discord message processing failed")
                 await message.reply(f"处理消息时出错：{exc}")
