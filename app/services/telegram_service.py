@@ -383,22 +383,42 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             select(EventRecord)
             .where(
                 EventRecord.telegram_user_id == user_id,
-                EventRecord.operation.in_(["create", "update"]),
+                EventRecord.operation.in_(["create", "update", "delete"]),
                 EventRecord.status == "success",
             )
             .order_by(EventRecord.created_at.desc())
-            .limit(30)
         ).scalars().all()
 
         if not records:
             await update.effective_message.reply_text(f"📅 最近 {days} 天暂无日程")
             return
 
+        import json as _json
+        seen = set()
+        active = []
+        for rec in records:
+            uid = rec.caldav_uid or f"_{rec.id}"
+            if uid in seen:
+                continue
+            seen.add(uid)
+            if rec.operation == "delete":
+                continue
+            active.append(rec)
+
+        if not active:
+            await update.effective_message.reply_text(f"📅 最近 {days} 天暂无生效日程")
+            return
+
+        active.sort(key=lambda r: (
+            _json.loads(r.event_json or "{}").get("start_time", "9") if r.event_json else "9"
+        ), reverse=True)
+
         lines = [f"📅 最近 {days} 天日程"]
-        for rec in records[:days]:
+        for rec in active[:days]:
             title = rec.title or "(无标题)"
-            created = rec.created_at.strftime("%m-%d %H:%M") if rec.created_at else ""
-            lines.append(f"{created}  {title}")
+            data = _json.loads(rec.event_json or "{}") if rec.event_json else {}
+            st = data.get("start_time", "")[:16].replace("T", " ") if data.get("start_time") else ""
+            lines.append(f"{st}  {title}" if st else f"🕒  {title}")
         await update.effective_message.reply_text("\n".join(lines))
 
 
@@ -415,15 +435,26 @@ async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         from sqlalchemy import select
 
-        rec = session.execute(
+        records = session.execute(
             select(EventRecord)
             .where(
                 EventRecord.telegram_user_id == user_id,
-                EventRecord.operation.in_(["create", "update"]),
+                EventRecord.operation.in_(["create", "update", "delete"]),
                 EventRecord.status == "success",
             )
             .order_by(EventRecord.created_at.desc())
-        ).scalar()
+        ).scalars().all()
+
+        rec = None
+        seen = set()
+        for r in records:
+            uid = r.caldav_uid or f"_{r.id}"
+            if uid in seen:
+                continue
+            seen.add(uid)
+            if r.operation != "delete":
+                rec = r
+                break
 
         if rec is None:
             await update.effective_message.reply_text("📌 暂无日程记录")
