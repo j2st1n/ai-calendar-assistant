@@ -50,7 +50,7 @@ def register_handlers(client) -> None:
 
                     processor = MessageProcessor()
                     reply_to = str(message.reference.message_id) if message.reference else None
-                    replies = await processor.process(session, user_id, text, reply_to)
+                    replies = await processor.process(session, user_id, text, reply_to, source="discord")
                     from app.db.models import EventRecord
                     from sqlalchemy import select as sa_select
                     for response, record_id in replies:
