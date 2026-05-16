@@ -57,10 +57,10 @@ CRITICAL RULES:
 2. Only return fields that CHANGED. Unchanged fields leave as null.
 3. To DELETE the event, return intent=delete_event.
 4. To MODIFY, return intent=update_event with changed fields only.
+5. For reminder changes like "提前20分钟提醒", return {{"reminders":[{{"minutes_before":20}}]}}. Always extract the exact number from the user's text.
 
 Return JSON examples:
-- Time change: {{"intent":"update_event","event":{{"start_time":"2026-05-14T22:00:00+08:00"}}}}
-- Reminder: extract the number from user input (e.g. "提前10分钟") → {{"intent":"update_event","event":{{"reminders":[{{"minutes_before":<X>}}]}}}}
+- Time: {{"intent":"update_event","event":{{"start_time":"2026-05-14T22:00:00+08:00"}}}}
 - Title: {{"intent":"update_event","event":{{"title":"新标题"}}}}
 - Location: {{"intent":"update_event","event":{{"location":"会议室B"}}}}
 - Description: {{"intent":"update_event","event":{{"description":"带资料"}}}}"""
