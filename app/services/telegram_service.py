@@ -4,6 +4,11 @@ import asyncio
 import logging
 import secrets
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from telegram import Update
+    from telegram.ext import ContextTypes
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
