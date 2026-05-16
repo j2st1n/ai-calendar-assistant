@@ -1,8 +1,8 @@
 services:
   app:
+    network_mode: host
     image: ghcr.io/j2st1n/ai-calendar-assistant:latest
     user: "1000:1000"
-    ports:
-      - "127.0.0.1:9527:9527"
     volumes:
       - ./data:/app/data
+    command: uvicorn app.main:app --host 127.0.0.1 --port 9527
