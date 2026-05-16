@@ -55,6 +55,8 @@ User request: {instruction}
 CRITICAL RULES:
 1. If user says "改到10点" and existing start_time is "21:00" (9 PM), the new time is 22:00 (10 PM). Use the existing event's AM/PM context to resolve ambiguity.
 2. Only return fields that CHANGED. Unchanged fields leave as null.
+   Modifiable fields: title, start_time, end_time, location, description, reminders, recurrence.
+   reminders format: [{{"minutes_before": 30}}]
 3. To DELETE the event, return intent=delete_event.
 4. To MODIFY, return intent=update_event with changed fields only.
 
