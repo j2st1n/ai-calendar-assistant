@@ -22,7 +22,9 @@ def register_handlers(client) -> None:
     async def on_message(message):
         if message.author.bot:
             return
-        if message.guild is not None and message.guild.me not in message.mentions:
+        import discord as _discord
+        is_private = isinstance(message.channel, (_discord.DMChannel, _discord.Thread))
+        if message.guild is not None and not is_private and message.guild.me not in message.mentions:
             return
         user_id = str(message.author.id)
 
