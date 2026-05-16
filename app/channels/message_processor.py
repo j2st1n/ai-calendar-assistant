@@ -212,7 +212,7 @@ def _to_dict(obj):
     if obj is None:
         return {}
     if hasattr(obj, 'model_dump'):
-        return obj.model_dump()
+        return obj.model_dump(exclude_unset=True)
     if hasattr(obj, 'dict'):
         return obj.dict()
     return {}

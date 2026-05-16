@@ -123,8 +123,18 @@ def _build_result(data: dict) -> ExtractionResult:
 
     try:
         if intent == Intent.update_event and isinstance(data.get("event"), dict):
-            data["event"].setdefault("title", "")
-            data["event"].setdefault("start_time", "")
+            from app.ai.schemas import CalendarEvent, Reminder, Recurrence
+            ev_data = data["event"]
+            kwargs: dict = {}
+            for k in ("title", "start_time", "end_time", "timezone", "location", "description", "is_all_day"):
+                if k in ev_data:
+                    kwargs[k] = ev_data[k]
+            if "reminders" in ev_data and isinstance(ev_data["reminders"], list):
+                kwargs["reminders"] = [Reminder(**r) for r in ev_data["reminders"]]
+            if "recurrence" in ev_data and isinstance(ev_data["recurrence"], dict):
+                kwargs["recurrence"] = Recurrence(**ev_data["recurrence"])
+            ev = CalendarEvent.model_construct(_fields_set=set(kwargs.keys()), **kwargs)
+            return ExtractionResult(intent=intent, event=ev)
         return ExtractionResult.model_validate(data)
     except Exception as exc:
         events = []
