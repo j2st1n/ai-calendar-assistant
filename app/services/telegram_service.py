@@ -175,7 +175,7 @@ class TelegramBotRuntime:
 
         app.add_handler(CommandHandler("start", _handle_start))
         app.add_handler(CommandHandler("help", _handle_help))
-        app.add_handler(CommandHandler("list", _handle_list))
+        app.add_handler(CommandHandler("upcoming", _handle_upcoming))
         app.add_handler(CommandHandler("latest", _handle_latest))
         app.add_handler(CommandHandler("status", _handle_status))
         app.add_handler(MessageHandler(ptb_filters.PHOTO, _handle_photo))
@@ -193,10 +193,10 @@ class TelegramBotRuntime:
             await app.start()
             from telegram import BotCommand
             await app.bot.set_my_commands([
-                BotCommand("start", "查看简介"),
-                BotCommand("help", "查看帮助"),
-                BotCommand("list", "查看日程"),
-                BotCommand("latest", "最近日程"),
+                BotCommand("start", "开始使用"),
+                BotCommand("help", "使用帮助"),
+                BotCommand("upcoming", "未来日程"),
+                BotCommand("latest", "最近一条"),
                 BotCommand("status", "配置状态"),
             ])
             await app.updater.start_polling(drop_pending_updates=True)
@@ -301,11 +301,11 @@ async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "明天下午 3 点和张三开会，地点会议室 A\n\n"
         "回复日程消息可以修改或删除。\n"
         "支持图片识别（需配置）。\n\n"
-        "/start  — 查看简介\n"
-        "/list   — 查看日程（/list 7 = 未来 7 天）\n"
-        "/latest — 查看最近一条日程\n"
-        "/status — 查看配置状态\n"
-        "/help   — 查看本帮助"
+        "/start    — 开始使用\n"
+        "/upcoming — 未来日程（/upcoming 7 = 未来 7 天，最多 14 天）\n"
+        "/latest   — 最近一条日程\n"
+        "/status   — 配置状态\n"
+        "/help     — 使用帮助"
     )
 
 
@@ -364,7 +364,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await update.effective_message.reply_text(response)
 
 
-async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
@@ -395,7 +395,7 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ).scalars().all()
 
         if not records:
-            await update.effective_message.reply_text(f"📅 最近 {days} 天暂无日程")
+            await update.effective_message.reply_text(f"📅 未来 {days} 天暂无日程")
             return
 
         import json as _json
@@ -412,14 +412,15 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         from datetime import date as dt_date, timedelta
 
-        cutoff = (dt_date.today() - timedelta(days=days)).isoformat()
-        active = [r for r in active if _get_start(r, _json) >= cutoff]
+        cutoff = dt_date.today().isoformat()
+        end = (dt_date.today() + timedelta(days=days)).isoformat()
+        active = [r for r in active if cutoff <= _get_start(r, _json) < end]
 
         if not active:
-            await update.effective_message.reply_text(f"📅 最近 {days} 天暂无生效日程")
+            await update.effective_message.reply_text(f"📅 未来 {days} 天暂无生效日程")
             return
 
-        active.sort(key=lambda r: _get_start(r, _json), reverse=True)
+        active.sort(key=lambda r: _get_start(r, _json))
 
         groups: dict[str, list] = {}
         for rec in active:
@@ -427,8 +428,8 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             key = st[:10]
             groups.setdefault(key, []).append(rec)
 
-        lines = [f"📅 最近 {days} 天日程", ""]
-        for d in sorted(groups, reverse=True):
+        lines = [f"📅 未来 {days} 天日程", ""]
+        for d in sorted(groups):
             lines.append(d)
             evts = groups[d]
             for rec in evts:
