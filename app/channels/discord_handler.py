@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json as _json
 import logging
+import re
 from datetime import date as dt_date, timedelta
 
 from app.channels.message_processor import MessageProcessor
@@ -39,7 +40,7 @@ def register_handlers(client) -> None:
 
             try:
                 async with message.channel.typing():
-                    text = message.content or ""
+                    text = re.sub(r'<@[!&]?\d+>', '', message.content or "").strip()
                     if message.attachments:
                         text = await _handle_attachments(message, text, session)
 
