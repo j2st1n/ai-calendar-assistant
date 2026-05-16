@@ -5,6 +5,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.core.bootstrap import bootstrap_application
 from app.core.config import settings
+from app.db.session import SessionLocal
+from app.services.settings_service import SettingsService
+from app.services.telegram_service import TelegramService
 from app.web.routes import router as web_router
 
 
@@ -20,6 +23,14 @@ def create_app() -> FastAPI:
     )
     app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
     app.include_router(web_router)
+
+    @app.on_event("startup")
+    async def auto_start_bot():
+        with SessionLocal() as session:
+            token = SettingsService(session).get("telegram_bot_token")
+        if token:
+            await TelegramService().reload_bot(token)
+
     return app
 
 
