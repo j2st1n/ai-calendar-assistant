@@ -234,9 +234,15 @@ def _try_quick_modify(text: str, existing: dict) -> dict | None:
             changed = True
 
     # time (always checked, even if date changed)
-    m = re.search(r"(\d{1,2}):(\d{2})", text)
-    if m:
-        h, mi = int(m.group(1)), int(m.group(2))
+    h = mi = 0
+    tm = re.search(r"(\d{1,2}):(\d{2})", text)
+    if tm:
+        h, mi = int(tm.group(1)), int(tm.group(2))
+    else:
+        tm = re.search(r"(\d{1,2})点", text)
+        if tm:
+            h = int(tm.group(1))
+    if tm:
         old_h = st.hour
         if old_h >= 12 and h < 12:
             h += 12
