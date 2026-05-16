@@ -384,6 +384,45 @@ async def pull_ai_models(
     return redirect("/console/ai")
 
 
+@router.post("/ai/vision-models")
+async def pull_vision_models(
+    request: Request,
+    vision_provider_name: str = Form(""),
+    vision_provider_type: str = Form(""),
+    vision_base_url: str = Form(""),
+    vision_api_key: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    if vision_provider_name:
+        settings_service.set("ai_vision_provider_name", vision_provider_name)
+    if vision_provider_type:
+        settings_service.set("ai_vision_provider_type", vision_provider_type)
+    if vision_base_url:
+        settings_service.set("ai_vision_base_url", _normalize_url(vision_base_url))
+    if vision_api_key:
+        settings_service.set("ai_vision_api_key", vision_api_key, encrypted=True)
+    settings_service.commit()
+
+    provider_type = vision_provider_type or settings_service.get("ai_vision_provider_type") or "openai_compatible"
+    base_url = _normalize_url(vision_base_url or settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1")
+    api_key = vision_api_key or settings_service.get("ai_vision_api_key") or ""
+    config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key)
+    try:
+        models = await AIProviderService().list_models(config)
+    except AIProviderError as exc:
+        return redirect_with_query("/console/ai", error=str(exc))
+
+    settings_service.set("ai_vision_available_models", ",".join(models))
+    if models and not settings_service.get("ai_vision_model"):
+        settings_service.set("ai_vision_model", models[0])
+    settings_service.commit()
+    request.session["ai_vision_models"] = models
+    set_flash(request, f"识图模型列表已更新，共 {len(models)} 个。")
+    return redirect("/console/ai")
+
+
 @router.post("/ai/test")
 async def test_ai_connection(
     request: Request,

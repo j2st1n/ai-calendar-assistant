@@ -158,15 +158,15 @@ window.addEventListener('DOMContentLoaded', function(){
             <input type="hidden" name="vision_model" value="{{ vision_model }}">
           </div>
           {% else %}
-          <input name="vision_model" value="{{ vision_model }}" placeholder="先拉取模型列表后选择">
-          {% endif %}
-        </label>
-      <button type="submit" formaction="/console/ai/models" class="secondary">拉取模型列表</button>
-    </div>
-    <div class="row" style="margin-top:4px;">
-      <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
-      <button type="submit">保存</button>
-    </div>
-  </form>
-</div>
-{% endblock %}
+           <input name="vision_model" value="{{ vision_model }}" placeholder="先拉取模型列表后选择">
+           {% endif %}
+         </label>
+       <button type="submit" formaction="/console/ai/vision-models" class="secondary">拉取模型列表</button>
+     </div>
+     <div class="row" style="margin-top:4px;">
+       <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
+       <button type="submit">保存</button>
+     </div>
+   </form>
+ </div>
+ {% endblock %}
