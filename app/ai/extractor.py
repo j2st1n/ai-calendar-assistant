@@ -122,6 +122,9 @@ def _build_result(data: dict) -> ExtractionResult:
         intent = Intent.no_event
 
     try:
+        if intent == Intent.update_event and isinstance(data.get("event"), dict):
+            data["event"].setdefault("title", "")
+            data["event"].setdefault("start_time", "")
         return ExtractionResult.model_validate(data)
     except Exception as exc:
         events = []
@@ -147,7 +150,15 @@ def _build_event(data: dict):
     try:
         return CalendarEvent.model_validate(data)
     except Exception:
-        return None
+        filled = dict(data)
+        if "title" not in filled:
+            filled["title"] = ""
+        if "start_time" not in filled:
+            filled["start_time"] = ""
+        try:
+            return CalendarEvent.model_validate(filled)
+        except Exception:
+            return None
 
 
 def _parse_json(raw: str) -> dict:
