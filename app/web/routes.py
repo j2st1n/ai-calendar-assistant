@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.bootstrap import read_changes, read_version
@@ -64,20 +64,60 @@ def dashboard_stats(session: Session) -> dict[str, int]:
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
+    today_str = today.isoformat()
+    week_str = week_start.isoformat()
+    month_str = month_start.isoformat()
 
     def count_since(since_date):
+        deleted_uids = select(EventRecord.caldav_uid).where(
+            EventRecord.operation == "delete",
+            EventRecord.caldav_uid.isnot(None),
+        )
         return session.scalar(
             select(func.count()).select_from(EventRecord).where(
                 EventRecord.operation == "create",
                 EventRecord.status == "success",
                 EventRecord.created_at >= since_date,
+                or_(
+                    EventRecord.caldav_uid.is_(None),
+                    ~EventRecord.caldav_uid.in_(deleted_uids),
+                ),
             )
         ) or 0
+
+    all_records = session.execute(
+        select(EventRecord).where(
+            EventRecord.operation.in_(["create", "update", "delete"]),
+            EventRecord.status == "success",
+            EventRecord.start_time != "",
+        ).order_by(EventRecord.created_at.desc())
+    ).scalars().all()
+
+    seen_uids = set()
+    today_events = week_events = month_events = 0
+    for rec in all_records:
+        if rec.caldav_uid in seen_uids:
+            continue
+        seen_uids.add(rec.caldav_uid)
+        if rec.operation == "delete":
+            continue
+        st = rec.start_time
+        if not st:
+            continue
+        if st.startswith(today_str):
+            today_events += 1
+        if st >= week_str:
+            week_events += 1
+        if st.startswith(month_str):
+            month_events += 1
 
     return {
         "today_created": count_since(today),
         "week_created": count_since(week_start),
         "month_created": count_since(month_start),
+        "today_events": today_events,
+        "week_events": week_events,
+        "month_events": month_events,
     }
 
 
@@ -92,13 +132,23 @@ def status_context(session: Session, request) -> dict:
 
     recent = session.execute(
         select(EventRecord).where(
-            EventRecord.operation == "create",
+            EventRecord.operation.in_(["create", "update"]),
             EventRecord.status == "success",
-        ).order_by(EventRecord.updated_at.desc()).limit(5)
+        ).order_by(EventRecord.created_at.desc())
     ).scalars().all()
 
-    events = []
+    seen = set()
+    deduped = []
     for rec in recent:
+        uid = rec.caldav_uid or f"_{rec.id}"
+        if uid not in seen:
+            seen.add(uid)
+            deduped.append(rec)
+            if len(deduped) >= 5:
+                break
+
+    events = []
+    for rec in deduped:
         events.append({
             "time": rec.created_at.strftime("%m-%d %H:%M") if rec.created_at else "",
             "operation": rec.operation or "",

@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.ai.extractor import EventExtractor
@@ -56,8 +56,9 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc) -> li
         _pending_drafts.pop(draft_key, None)
         result = await extractor.merge_draft(draft.get("event", {}), text)
         if result.event and not result.missing_fields:
-            r = await _write(session, user_id, text, result.event, caldav, svc)
-            return [r]
+            r = await _write_one(session, user_id, text, result.event, caldav)
+            session.commit()
+            return [(_format_one(result.event), r)]
         return [("🤔 仍缺少信息，请重新描述。", None)]
 
     target = await _find_target(session, user_id, reply_to)
@@ -71,7 +72,7 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc) -> li
         mod_result = await extractor.modify(existing, text)
         if mod_result.intent == Intent.delete_event:
             return [(await _do_delete_with(session, user_id, target, caldav), None)]
-        merged = _merge_event(existing, mod_result.event)
+        merged = _merge_event(existing, mod_result.event, caldav["dur"])
         await _do_modify_with(session, user_id, text, target, merged, caldav)
         session.commit()
         return [(_format_modify_result(merged), None)]
@@ -81,7 +82,7 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc) -> li
         return [(await _do_delete(session, user_id, reply_to, caldav), None)]
     if result.intent == Intent.update_event and target and result.event:
         existing = json.loads(target.event_json) if target.event_json else {}
-        merged = _merge_event(existing, result.event)
+        merged = _merge_event(existing, result.event, caldav["dur"])
         await _do_modify_with(session, user_id, text, target, merged, caldav)
         session.commit()
         return [(_format_modify_result(merged), None)]
@@ -89,16 +90,33 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc) -> li
 
 
 async def _find_target(session, user_id, reply_to) -> EventRecord | None:
+    deleted_uids = select(EventRecord.caldav_uid).where(
+        EventRecord.operation == "delete",
+        EventRecord.caldav_uid.isnot(None),
+    )
     if reply_to:
         rec = session.execute(
-            select(EventRecord).where(EventRecord.bot_message_id == reply_to).order_by(EventRecord.created_at.desc())
+            select(EventRecord).where(
+                EventRecord.bot_message_id == reply_to,
+                or_(
+                    EventRecord.caldav_uid.is_(None),
+                    ~EventRecord.caldav_uid.in_(deleted_uids),
+                ),
+            ).order_by(EventRecord.created_at.desc())
         ).scalar()
         if rec:
             return rec
     cutoff = int((time.time() - LAST_EVENT_WINDOW) * 1000)
     return session.execute(
         select(EventRecord)
-        .where(EventRecord.telegram_user_id == user_id, EventRecord.operation.in_(["create", "update"]))
+        .where(
+            EventRecord.telegram_user_id == user_id,
+            EventRecord.operation.in_(["create", "update"]),
+            or_(
+                EventRecord.caldav_uid.is_(None),
+                ~EventRecord.caldav_uid.in_(deleted_uids),
+            ),
+        )
         .order_by(EventRecord.created_at.desc())
     ).scalar()
 
@@ -111,7 +129,7 @@ async def _do_delete_with(session, user_id, target, caldav) -> str:
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                           target.caldav_uid, target.caldav_href)
     _record(session, user_id, "delete", title, "", "success" if deleted else "failed",
-            target.event_json or "")
+            target.event_json or "", cr={"uid": target.caldav_uid})
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
@@ -132,7 +150,8 @@ async def _do_modify_with(session, user_id, text, target, new_event, caldav):
         session.commit()
     _record(session, user_id, "update", title, text, "success",
              json.dumps(new_event, ensure_ascii=False),
-             cr={"href": target.caldav_href, "uid": target.caldav_uid})
+             cr={"href": target.caldav_href, "uid": target.caldav_uid},
+             start_time=new_event.get("start_time", ""))
 
 
 def _g(obj, key, default=None):
@@ -151,7 +170,7 @@ def _format_modify_result(event) -> str:
     return "\n".join(lines)
 
 
-def _merge_event(existing: dict, ai_event) -> dict:
+def _merge_event(existing: dict, ai_event, dur_minutes: int = 60) -> dict:
     changes = _to_dict(ai_event)
     start_changed = changes.get("start_time") and changes["start_time"] != existing.get("start_time")
     merged = dict(existing)
@@ -159,14 +178,14 @@ def _merge_event(existing: dict, ai_event) -> dict:
         if val is not None and val != "":
             merged[key] = val
     if start_changed and not changes.get("end_time"):
-        merged["end_time"] = _shift_end(merged["start_time"])
+        merged["end_time"] = _shift_end(merged["start_time"], dur_minutes)
     return merged
 
 
-def _shift_end(start_iso: str) -> str:
+def _shift_end(start_iso: str, dur_minutes: int = 60) -> str:
     st = _parse_time(start_iso)
     if st:
-        return (st + timedelta(hours=1)).isoformat()
+        return (st + timedelta(minutes=dur_minutes)).isoformat()
     return ""
 
 
@@ -246,7 +265,7 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                           target.caldav_uid, target.caldav_href)
     _record(session, user_id, "delete", title, "", "success" if deleted else "failed",
-            target.event_json or "")
+            target.event_json or "", cr={"uid": target.caldav_uid})
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
@@ -335,7 +354,8 @@ async def _write_one(session, user_id, text, event, caldav) -> int:
 
     return _record(session, user_id, "create", event.title, text,
             "success" if caldav_result else "failed",
-            event.model_dump_json(), caldav_result, error_msg)
+            event.model_dump_json(), caldav_result, error_msg,
+            start_time=getattr(event, "start_time", ""))
 
 
 async def _write_caldav_dict(event_dict, caldav) -> dict | None:
@@ -363,10 +383,10 @@ async def _write_caldav(event, caldav) -> dict | None:
     )
 
 
-def _record(session, user, op, title, text, status, js, cr=None, err=None) -> int:
+def _record(session, user, op, title, text, status, js, cr=None, err=None, start_time="") -> int:
     rec = EventRecord(
         source="telegram", telegram_user_id=user, operation=op,
-        title=title, start_time="", status=status,
+        title=title, start_time=start_time, status=status,
         original_text=(text or "")[:2000],
         event_json=(js or "")[:4000],
         caldav_uid=cr.get("uid") if cr else None,

@@ -5,22 +5,21 @@
 <script>setTimeout(function(){var e=document.getElementById('dash-msg');if(e)e.remove();},3000);</script>
 {% endif %}
 
-
+<h3 class="muted" style="font-size:13px;font-weight:510;margin-bottom:12px;">系统</h3>
 <div class="grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:24px;">
   <div class="metric">
-    <span>今日日程</span>
+    <span>今日创建</span>
     <strong>{{ stats.today_created }}</strong>
   </div>
   <div class="metric">
-    <span>本周日程</span>
+    <span>本周创建</span>
     <strong>{{ stats.week_created }}</strong>
   </div>
   <div class="metric">
-    <span>本月日程</span>
+    <span>本月创建</span>
     <strong>{{ stats.month_created }}</strong>
   </div>
 </div>
-
 
 <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom:24px;">
   <div class="card" style="margin-bottom:0;">
@@ -61,6 +60,21 @@
   </div>
 </div>
 
+<h3 class="muted" style="font-size:13px;font-weight:510;margin-bottom:12px;">日程</h3>
+<div class="grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:24px;">
+  <div class="metric">
+    <span>今日日程</span>
+    <strong>{{ stats.today_events }}</strong>
+  </div>
+  <div class="metric">
+    <span>本周日程</span>
+    <strong>{{ stats.week_events }}</strong>
+  </div>
+  <div class="metric">
+    <span>本月日程</span>
+    <strong>{{ stats.month_events }}</strong>
+  </div>
+</div>
 
 <h3 class="muted" style="font-size:14px;font-weight:510;margin-bottom:12px;">最近日程</h3>
 {% if recent_events %}
