@@ -178,8 +178,8 @@ class TelegramBotRuntime:
         app.add_handler(CommandHandler("list", _handle_list))
         app.add_handler(CommandHandler("latest", _handle_latest))
         app.add_handler(CommandHandler("status", _handle_status))
-        app.add_handler(MessageHandler(~ptb_filters.COMMAND, _handle_message))
         app.add_handler(MessageHandler(ptb_filters.PHOTO, _handle_photo))
+        app.add_handler(MessageHandler(~ptb_filters.COMMAND, _handle_message))
         self._application = app
         self.running = True
 
@@ -319,6 +319,8 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if not service.is_user_allowed(session, user_id):
             await update.effective_message.reply_text("你没有权限使用此 Bot。")
             return
+
+        await update.effective_chat.send_chat_action(action="typing")
 
         photo = update.effective_message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
