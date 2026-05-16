@@ -129,7 +129,8 @@ async def _do_delete_with(session, user_id, target, caldav) -> str:
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                           target.caldav_uid, target.caldav_href)
     _record(session, user_id, "delete", title, "", "success" if deleted else "failed",
-            target.event_json or "", cr={"uid": target.caldav_uid})
+            target.event_json or "", cr={"uid": target.caldav_uid},
+            start_time=target.start_time or "")
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
@@ -265,7 +266,8 @@ async def _do_delete(session, user_id, reply_to, caldav) -> str:
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                           target.caldav_uid, target.caldav_href)
     _record(session, user_id, "delete", title, "", "success" if deleted else "failed",
-            target.event_json or "", cr={"uid": target.caldav_uid})
+            target.event_json or "", cr={"uid": target.caldav_uid},
+            start_time=target.start_time or "")
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"

@@ -132,7 +132,7 @@ def status_context(session: Session, request) -> dict:
 
     recent = session.execute(
         select(EventRecord).where(
-            EventRecord.operation.in_(["create", "update"]),
+            EventRecord.operation.in_(["create", "update", "delete"]),
             EventRecord.status == "success",
         ).order_by(EventRecord.created_at.desc())
     ).scalars().all()
@@ -143,7 +143,8 @@ def status_context(session: Session, request) -> dict:
         uid = rec.caldav_uid or f"_{rec.id}"
         if uid not in seen:
             seen.add(uid)
-            deduped.append(rec)
+            if rec.operation != "delete":
+                deduped.append(rec)
             if len(deduped) >= 5:
                 break
 
