@@ -26,7 +26,8 @@
     <h3 style="margin-bottom:8px;">AI</h3>
     {% if ai_ok %}
     <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
-    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">{{ ai_name }}</span>
+    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">主模型：{{ ai_name }}</span>
+    <span class="muted" style="font-size:12px;display:block;">识图模型：{{ vision_label }}</span>
     {% else %}
     <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
     <a href="/console/ai" class="button-link secondary" style="margin-top:8px;font-size:12px;padding:4px 10px;">去配置</a>

@@ -126,6 +126,15 @@ def status_context(session: Session, request) -> dict:
     ai_name = settings_service.get("ai_provider_name") or ""
     ai_model = settings_service.get("ai_model") or ""
     ai_ok = bool(ai_name and ai_model)
+    vision_name = settings_service.get("ai_vision_provider_name") or ""
+    vision_model = settings_service.get("ai_vision_model") or ""
+    vision_use_main = settings_service.get("ai_vision_use_main") or "true"
+    if vision_use_main != "false" and ai_ok:
+        vision_label = "共用主模型"
+    elif vision_name and vision_model:
+        vision_label = f"{vision_name} / {vision_model}"
+    else:
+        vision_label = "未配置"
     caldav_url = settings_service.get("caldav_url") or ""
     caldav_cal = settings_service.get("caldav_calendar_name") or ""
     caldav_ok = bool(caldav_url and caldav_cal)
@@ -174,7 +183,8 @@ def status_context(session: Session, request) -> dict:
 
     return {
         "ai_ok": ai_ok,
-        "ai_name": f"{ai_name} / {ai_model}" if ai_ok else "",
+        "ai_name": f"{ai_name} / {ai_model}" if ai_ok else "未配置",
+        "vision_label": vision_label,
         "caldav_ok": caldav_ok,
         "caldav_name": caldav_cal if caldav_ok else "",
         "tg_running": get_telegram_bot_runtime() is not None and get_telegram_bot_runtime().running,
