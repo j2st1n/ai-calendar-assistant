@@ -345,6 +345,32 @@ async def update_ai_settings(
     return redirect("/console/ai")
 
 
+@router.post("/ai/vision")
+async def update_vision_settings(
+    request: Request,
+    vision_use_main: str = Form("1"),
+    vision_provider_name: str = Form(""),
+    vision_provider_type: str = Form(""),
+    vision_base_url: str = Form(""),
+    vision_api_key: str = Form(""),
+    vision_model: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    settings_service.set("ai_vision_use_main", vision_use_main)
+    if vision_use_main != "1":
+        settings_service.set("ai_vision_provider_name", vision_provider_name)
+        settings_service.set("ai_vision_provider_type", vision_provider_type)
+        settings_service.set("ai_vision_base_url", _normalize_url(vision_base_url))
+        if vision_api_key:
+            settings_service.set("ai_vision_api_key", vision_api_key, encrypted=True)
+        settings_service.set("ai_vision_model", vision_model)
+    settings_service.commit()
+    set_flash(request, "识图模型设置已保存。")
+    return redirect("/console/ai")
+
+
 @router.post("/ai/models")
 async def pull_ai_models(
     request: Request,
@@ -391,10 +417,12 @@ async def pull_vision_models(
     vision_provider_type: str = Form(""),
     vision_base_url: str = Form(""),
     vision_api_key: str = Form(""),
+    vision_use_main: str = Form("1"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
+    settings_service.set("ai_vision_use_main", vision_use_main)
     if vision_provider_name:
         settings_service.set("ai_vision_provider_name", vision_provider_name)
     if vision_provider_type:
