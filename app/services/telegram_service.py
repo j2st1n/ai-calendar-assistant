@@ -337,6 +337,11 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 model=settings_service.get("ai_model"),
             )
         else:
+            if not settings_service.get("ai_vision_model"):
+                await update.effective_message.reply_text(
+                    "📸 未配置识图模型，请先在控制台 AI 设置中配置。"
+                )
+                return
             from app.services.ai_provider_service import AIProviderConfig, AIProviderService as AISvc
             config = AIProviderConfig(
                 provider_type=settings_service.get("ai_vision_provider_type") or "openai_compatible",

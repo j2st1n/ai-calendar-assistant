@@ -131,10 +131,8 @@ def status_context(session: Session, request) -> dict:
     vision_use_main = settings_service.get("ai_vision_use_main") or "true"
     if vision_use_main != "false" and ai_ok:
         vision_label = "共用主模型"
-    elif vision_name and vision_model:
-        vision_label = f"{vision_name} / {vision_model}"
     else:
-        vision_label = "未配置"
+        vision_label = f"{vision_name} / {vision_model}" if (vision_name and vision_model) else "共用主模型"
     caldav_url = settings_service.get("caldav_url") or ""
     caldav_cal = settings_service.get("caldav_calendar_name") or ""
     caldav_ok = bool(caldav_url and caldav_cal)
