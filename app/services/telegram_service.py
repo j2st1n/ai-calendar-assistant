@@ -371,7 +371,7 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     days = 7
     if context.args:
         try:
-            days = min(int(context.args[0]), 30)
+            days = min(int(context.args[0]), 14)
         except ValueError:
             pass
 
@@ -410,21 +410,42 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 continue
             active.append(rec)
 
+        from datetime import date as dt_date, timedelta
+
+        cutoff = (dt_date.today() - timedelta(days=days)).isoformat()
+        active = [r for r in active if _get_start(r, _json) >= cutoff]
+
         if not active:
             await update.effective_message.reply_text(f"📅 最近 {days} 天暂无生效日程")
             return
 
-        active.sort(key=lambda r: (
-            _json.loads(r.event_json or "{}").get("start_time", "9") if r.event_json else "9"
-        ), reverse=True)
+        active.sort(key=lambda r: _get_start(r, _json), reverse=True)
 
-        lines = [f"📅 最近 {days} 天日程"]
-        for rec in active[:days]:
-            title = rec.title or "(无标题)"
-            data = _json.loads(rec.event_json or "{}") if rec.event_json else {}
-            st = data.get("start_time", "")[:16].replace("T", " ") if data.get("start_time") else ""
-            lines.append(f"{st}  {title}" if st else f"🕒  {title}")
-        await update.effective_message.reply_text("\n".join(lines))
+        groups: dict[str, list] = {}
+        for rec in active:
+            st = _get_start(rec, _json)
+            key = st[:10]
+            groups.setdefault(key, []).append(rec)
+
+        lines = [f"📅 最近 {days} 天日程", ""]
+        for d in sorted(groups, reverse=True):
+            lines.append(d)
+            evts = groups[d]
+            for rec in evts:
+                title = rec.title or "(无标题)"
+                time_part = _get_start(rec, _json)[11:16]
+                lines.append(f"🕒 {time_part}  {title}")
+            lines.append("")
+        await update.effective_message.reply_text("\n".join(lines).strip())
+
+
+def _get_start(rec, json_mod) -> str:
+    if rec.event_json:
+        try:
+            return json_mod.loads(rec.event_json).get("start_time", "") or "9"
+        except Exception:
+            return "9"
+    return "9"
 
 
 async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
