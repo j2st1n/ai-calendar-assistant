@@ -60,7 +60,7 @@ CRITICAL RULES:
 
 Return JSON examples:
 - Time change: {{"intent":"update_event","event":{{"start_time":"2026-05-14T22:00:00+08:00"}}}}
-- Reminder: {{"intent":"update_event","event":{{"reminders":[{{"minutes_before":15}}]}}}}
+- Reminder: extract the number from user input (e.g. "提前10分钟") → {{"intent":"update_event","event":{{"reminders":[{{"minutes_before":<X>}}]}}}}
 - Title: {{"intent":"update_event","event":{{"title":"新标题"}}}}
 - Location: {{"intent":"update_event","event":{{"location":"会议室B"}}}}
 - Description: {{"intent":"update_event","event":{{"description":"带资料"}}}}"""
