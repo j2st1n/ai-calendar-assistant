@@ -475,6 +475,33 @@ async def test_ai_connection(
     return redirect("/console/ai")
 
 
+@router.post("/ai/vision-test")
+async def test_vision_connection(
+    request: Request,
+    vision_use_main: str = Form("1"),
+    vision_provider_type: str = Form(""),
+    vision_base_url: str = Form(""),
+    vision_api_key: str = Form(""),
+    vision_model: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    settings_service.set("ai_vision_use_main", vision_use_main)
+    settings_service.commit()
+    provider_type = vision_provider_type or settings_service.get("ai_vision_provider_type") or "openai_compatible"
+    base_url = _normalize_url(vision_base_url or settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1")
+    api_key = vision_api_key or settings_service.get("ai_vision_api_key") or ""
+    model = vision_model or settings_service.get("ai_vision_model") or ""
+    config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
+    try:
+        await AIProviderService().test_connection(config)
+    except AIProviderError as exc:
+        return redirect_with_query("/console/ai", error=str(exc))
+    set_flash(request, "识图模型连接测试成功。")
+    return redirect("/console/ai")
+
+
 def current_ai_provider_config(settings_service: SettingsService) -> AIProviderConfig:
     return AIProviderConfig(
         provider_type=settings_service.get("ai_provider_type") or "openai_compatible",

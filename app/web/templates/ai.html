@@ -110,7 +110,7 @@ window.addEventListener('DOMContentLoaded', function(){
   <h2>识图模型</h2>
   <p class="muted" style="margin-bottom:12px;">当收到图片时，调用该识图模型识别文字。</p>
   <form method="post" action="/console/ai/vision" class="stack">
-    <input type="hidden" name="vision_use_main" value="0">
+    <input type="hidden" name="vision_use_main" value="false">
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
           <span>供应商</span>
@@ -164,7 +164,7 @@ window.addEventListener('DOMContentLoaded', function(){
        <button type="submit" formaction="/console/ai/vision-models" class="secondary">拉取模型列表</button>
      </div>
      <div class="row" style="margin-top:4px;">
-       <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
+       <button type="submit" formaction="/console/ai/vision-test" class="secondary">测试连接</button>
        <button type="submit">保存</button>
      </div>
    </form>
