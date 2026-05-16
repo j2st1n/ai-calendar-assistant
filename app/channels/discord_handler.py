@@ -22,7 +22,7 @@ def register_handlers(client) -> None:
     async def on_message(message):
         if message.author.bot:
             return
-        if client.user not in message.mentions:
+        if message.guild is not None and message.guild.me not in message.mentions:
             return
         user_id = str(message.author.id)
 
@@ -30,16 +30,8 @@ def register_handlers(client) -> None:
             from app.services.discord_service import DiscordService
             service = DiscordService()
             if not service.is_user_allowed(session, user_id):
-                if service.has_any_user(session):
-                    await message.channel.send(
-                        f"你没有权限使用此 Bot。你的 Discord user_id 是：{user_id}"
-                    )
-                    return
-                service.auto_register(session, user_id, message.author.name)
                 await message.channel.send(
-                    f"✅ 已自动授权，你现在可以使用此 Bot。\n\n"
-                    f"直接 @我 发消息即可创建日程：\n"
-                    f"明天下午 3 点和张三开会"
+                    f"你没有权限使用此 Bot。你的 Discord user_id 是：`{user_id}`\n请联系管理员在控制台中添加。"
                 )
                 return
 

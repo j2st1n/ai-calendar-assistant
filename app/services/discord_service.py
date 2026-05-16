@@ -48,6 +48,7 @@ class DiscordBotRuntime:
 
         loop = asyncio.get_running_loop()
         self._task = loop.create_task(self._start_client(client, token))
+        logger.info("Discord bot start task created")
         return "started"
 
     async def _start_client(self, client, token: str) -> None:
@@ -131,22 +132,3 @@ class DiscordService:
             )
         )
         return row is not None
-
-    def has_any_user(self, session: Session) -> bool:
-        from app.db.models import DiscordIdentity
-        from sqlalchemy import func, select
-        count = session.scalar(
-            select(func.count()).select_from(DiscordIdentity).where(
-                DiscordIdentity.enabled.is_(True),
-            )
-        )
-        return (count or 0) > 0
-
-    def auto_register(self, session: Session, user_id: str, username: str = "") -> None:
-        from app.db.models import DiscordIdentity
-        session.add(DiscordIdentity(
-            discord_user_id=user_id,
-            username=username or "",
-            enabled=True,
-        ))
-        session.commit()

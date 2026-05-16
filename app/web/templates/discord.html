@@ -56,8 +56,11 @@
     {% endfor %}
   </div>
   {% else %}
-  <p class="muted" style="margin-bottom:12px;">暂无授权用户。第一个 @Bot 的用户将自动授权。</p>
+  <p class="muted" style="margin-bottom:12px;">暂无授权用户。</p>
   {% endif %}
+  <p class="muted" style="margin-bottom:12px;font-size:12px;">
+    获取 Discord User ID：Discord 设置 → 高级 → 开启开发者模式，右键头像即可复制 ID。
+  </p>
   <form method="post" action="/console/discord/users/add" class="stack">
     <div class="row" style="align-items:flex-end;">
       <label style="flex:1;">
