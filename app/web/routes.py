@@ -60,6 +60,17 @@ def set_flash(request: Request, msg: str) -> None:
     request.session["flash"] = msg
 
 
+def set_error_flash(request: Request, msg: str) -> None:
+    request.session["error_flash"] = msg
+
+
+def get_error_flash(request: Request) -> str | None:
+    msg = request.session.get("error_flash")
+    if msg:
+        del request.session["error_flash"]
+    return msg
+
+
 def dashboard_stats(session: Session) -> dict[str, int]:
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
@@ -281,7 +292,7 @@ async def system_settings(
             "session_days": settings_service.get("session_days") or "7",
             "event_record_limit": settings_service.get("event_record_limit") or "500",
             "message": get_flash(request) or request.query_params.get("message"),
-            "error": request.query_params.get("error"),
+        "error": get_error_flash(request),
         },
     )
 
@@ -408,7 +419,8 @@ async def pull_ai_models(
     try:
         models = await AIProviderService().list_models(config)
     except AIProviderError as exc:
-        return redirect_with_query("/console/ai", error=str(exc))
+        set_error_flash(request, str(exc))
+        return redirect("/console/ai")
 
     settings_service.set("ai_available_models", ",".join(models))
     if models and not settings_service.get("ai_model"):
@@ -449,7 +461,8 @@ async def pull_vision_models(
     try:
         models = await AIProviderService().list_models(config)
     except AIProviderError as exc:
-        return redirect_with_query("/console/ai", error=str(exc))
+        set_error_flash(request, str(exc))
+        return redirect("/console/ai")
 
     settings_service.set("ai_vision_available_models", ",".join(models))
     if models and not settings_service.get("ai_vision_model"):
@@ -479,7 +492,8 @@ async def test_ai_connection(
     try:
         await AIProviderService().test_connection(config)
     except AIProviderError as exc:
-        return redirect_with_query("/console/ai", error=str(exc))
+        set_error_flash(request, str(exc))
+        return redirect("/console/ai")
     set_flash(request, "AI 连接测试成功。")
     return redirect("/console/ai")
 
@@ -506,7 +520,8 @@ async def test_vision_connection(
     try:
         await AIProviderService().test_connection(config)
     except AIProviderError as exc:
-        return redirect_with_query("/console/ai", error=str(exc))
+        set_error_flash(request, str(exc))
+        return redirect("/console/ai")
     set_flash(request, "识图模型连接测试成功。")
     return redirect("/console/ai")
 
