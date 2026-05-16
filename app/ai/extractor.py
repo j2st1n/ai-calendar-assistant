@@ -55,13 +55,15 @@ User request: {instruction}
 CRITICAL RULES:
 1. If user says "改到10点" and existing start_time is "21:00" (9 PM), the new time is 22:00 (10 PM). Use the existing event's AM/PM context to resolve ambiguity.
 2. Only return fields that CHANGED. Unchanged fields leave as null.
-   Modifiable fields: title, start_time, end_time, location, description, reminders, recurrence.
-   reminders format: [{{"minutes_before": 30}}]
 3. To DELETE the event, return intent=delete_event.
 4. To MODIFY, return intent=update_event with changed fields only.
 
-Return JSON format:
-{{"intent": "update_event", "event": {{"start_time": "2026-05-14T22:00:00+08:00"}}}}"""
+Return JSON examples:
+- Time change: {{"intent":"update_event","event":{{"start_time":"2026-05-14T22:00:00+08:00"}}}}
+- Reminder: {{"intent":"update_event","event":{{"reminders":[{{"minutes_before":15}}]}}}}
+- Title: {{"intent":"update_event","event":{{"title":"新标题"}}}}
+- Location: {{"intent":"update_event","event":{{"location":"会议室B"}}}}
+- Description: {{"intent":"update_event","event":{{"description":"带资料"}}}}"""
 
 MISSING_FIELDS_PROMPT = """You are merging a partial event draft with new user input.
 

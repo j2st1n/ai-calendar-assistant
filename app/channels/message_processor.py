@@ -165,9 +165,25 @@ def _format_modify_result(event) -> str:
     title = _g(event, "title", "日程")
     st = _g(event, "start_time", "?")
     et = _g(event, "end_time")
+    loc = _g(event, "location")
+    desc = _g(event, "description")
+    reminders = _g(event, "reminders") or []
     lines = ["✅ 日程已更新！", ""]
     lines.append(f"📌 标题：{title}")
-    lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {(et or '?')[:16].replace('T', ' ')}")
+    if st and st != "?":
+        if et and st[:10] == et[:10]:
+            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {et[11:16]}")
+        elif et:
+            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {et[:16].replace('T', ' ')}")
+        else:
+            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')}")
+    if loc:
+        lines.append(f"📍 地点：{loc}")
+    if desc:
+        lines.append(f"📝 描述：{desc}")
+    if reminders and reminders[0].get("minutes_before") if isinstance(reminders[0], dict) else getattr(reminders[0], 'minutes_before', None):
+        m = reminders[0].get("minutes_before") if isinstance(reminders[0], dict) else reminders[0].minutes_before
+        lines.append(f"⏰ 提醒：提前 {m} 分钟")
     return "\n".join(lines)
 
 
