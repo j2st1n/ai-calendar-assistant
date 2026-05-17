@@ -45,6 +45,8 @@ class EventRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source: Mapped[str] = mapped_column(String(50), default="telegram")
     telegram_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     source_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     bot_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     operation: Mapped[str] = mapped_column(String(50))

@@ -125,7 +125,7 @@ async def _find_target(session, ctx: ChannelContext) -> EventRecord | None:
         rec = session.execute(
             select(EventRecord).where(
                 EventRecord.source == ctx.source,
-                EventRecord.telegram_user_id == ctx.source_user_id,
+                EventRecord.conversation_id == ctx.conversation_id,
                 EventRecord.bot_message_id == ctx.reply_to_message_id,
                 EventRecord.operation.in_(["create", "update"]),
                 or_(
@@ -146,7 +146,7 @@ async def _find_target(session, ctx: ChannelContext) -> EventRecord | None:
         select(EventRecord)
         .where(
             EventRecord.source == ctx.source,
-            EventRecord.telegram_user_id == ctx.source_user_id,
+            EventRecord.conversation_id == ctx.conversation_id,
             EventRecord.operation.in_(["create", "update"]),
             or_(
                 EventRecord.caldav_uid.is_(None),
@@ -470,7 +470,8 @@ async def _write_caldav(event, caldav: dict[str, Any]) -> dict[str, Any] | None:
 
 def _record(session, ctx: ChannelContext, op, title, text, status, js, cr=None, err=None, start_time="") -> int:
     rec = EventRecord(
-        source=ctx.source, telegram_user_id=ctx.source_user_id, operation=op,
+        source=ctx.source, telegram_user_id=ctx.source_user_id, source_user_id=ctx.source_user_id,
+        conversation_id=ctx.conversation_id, operation=op,
         title=title, start_time=start_time, status=status,
         source_message_id=ctx.source_message_id,
         original_text=(text or "")[:2000],

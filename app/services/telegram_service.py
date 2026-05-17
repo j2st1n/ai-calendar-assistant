@@ -388,7 +388,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message is None:
+    if update.effective_message is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
     days = 7
@@ -411,6 +411,8 @@ async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             select(EventRecord)
             .where(
                 EventRecord.telegram_user_id == user_id,
+                EventRecord.source == "telegram",
+                EventRecord.conversation_id == str(update.effective_chat.id),
                 EventRecord.operation.in_(["create", "update", "delete"]),
                 EventRecord.status == "success",
             )
@@ -473,7 +475,7 @@ def _get_start(rec, json_mod) -> str:
 
 
 async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message is None:
+    if update.effective_message is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
 
@@ -489,6 +491,8 @@ async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             select(EventRecord)
             .where(
                 EventRecord.telegram_user_id == user_id,
+                EventRecord.source == "telegram",
+                EventRecord.conversation_id == str(update.effective_chat.id),
                 EventRecord.operation.in_(["create", "update", "delete"]),
                 EventRecord.status == "success",
             )

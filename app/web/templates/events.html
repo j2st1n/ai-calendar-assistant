@@ -66,6 +66,7 @@
             <pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-top:4px;white-space:pre-wrap;max-height:200px;overflow:auto;font:inherit;font-size:13px;color:#d0d6e0;">{{ event.event_json }}</pre>
           </div>
           {% endif %}
+          {% if event.conversation %}<div style="margin-bottom:8px;color:#62666d;font-size:12px;">会话：<span class="mono">{{ event.conversation }}</span></div>{% endif %}
           <div style="color:#62666d;font-size:12px;">
             {% if event.caldav_href %}<div>CalDAV href: <span class="mono">{{ event.caldav_href }}</span></div>{% endif %}
             {% if event.caldav_uid %}<div>CalDAV uid: <span class="mono">{{ event.caldav_uid }}</span></div>{% endif %}
