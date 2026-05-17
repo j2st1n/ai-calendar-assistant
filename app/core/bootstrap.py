@@ -108,6 +108,9 @@ def read_changes() -> list[str]:
         return [line.strip() for line in Path("CHANGES").read_text().strip().splitlines() if line.strip()]
     except Exception:
         return []
+
+
+def generate_password() -> str:
     token = secrets.token_urlsafe(18).replace("_", "-")
     return "-".join([token[i : i + 6] for i in range(0, min(len(token), 24), 6)])
 
