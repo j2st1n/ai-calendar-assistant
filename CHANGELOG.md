@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.1.0] - 2026-05-17
+
+
+### Bug Fixes
+
+- restore copy_global_to for Discord guild command sync — 恢复copy_global_to确保guild级命令同步
+
+- dead code in _send_telegram_replies and clear_commands wiping local command tree — 修复Telegram命令静默失败和Discord斜杠命令消失
+
+
+
+### Features
+
+- show vision model in /status and calendar source on dashboard — /status显示识图模型，概览页日历显示来源
+
+
+
+### Maintenance
+
+- auto-generate CHANGELOG.md and version in build — CI自动生成CHANGELOG和版本号
+
+
 ## [1.0.0] - 2026-05-17
 
 ### Features
