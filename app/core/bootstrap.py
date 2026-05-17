@@ -105,9 +105,22 @@ def read_version() -> str:
 
 def read_changes() -> list[str]:
     try:
-        return [line.strip() for line in Path("CHANGES").read_text().strip().splitlines() if line.strip()]
+        lines = Path("CHANGELOG.md").read_text().splitlines()
     except Exception:
         return []
+
+    latest: list[str] = []
+    in_latest = False
+    for line in lines:
+        if line.startswith("## "):
+            if in_latest:
+                break
+            in_latest = True
+            latest.append(line.lstrip("# ").strip())
+            continue
+        if in_latest and line.strip():
+            latest.append(line.strip())
+    return latest
 
 
 def generate_password() -> str:
