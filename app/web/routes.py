@@ -284,7 +284,8 @@ async def login(
         request.session["admin_authenticated"] = True
         request.session["admin_username"] = username
         if settings_service.get("admin_password_changed") == "false":
-            return redirect_with_query("/console/system", message="首次登录，请修改管理员密码。")
+            set_flash(request, "首次登录，请修改管理员密码。")
+            return redirect("/console/system")
         return redirect("/console")
     return templates.TemplateResponse(
         request,
@@ -315,7 +316,7 @@ async def system_settings(
             "session_days": settings_service.get("session_days") or "7",
             "event_record_limit": settings_service.get("event_record_limit") or "500",
             "message": get_flash(request) or request.query_params.get("message"),
-        "error": get_error_flash(request),
+            "error": get_error_flash(request) or request.query_params.get("error"),
         },
     )
 
@@ -331,7 +332,7 @@ async def ai_settings(
     payload.update({
         "request": request,
         "message": get_flash(request) or request.query_params.get("message"),
-        "error": request.query_params.get("error"),
+        "error": get_error_flash(request) or request.query_params.get("error"),
     })
     stored_models = request.session.get("ai_models", [])
     if stored_models:
@@ -588,7 +589,7 @@ async def caldav_settings(
     payload = caldav_payload(settings_service)
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
-    payload["error"] = request.query_params.get("error")
+    payload["error"] = get_error_flash(request) or request.query_params.get("error")
     cal_url = request.query_params.get("cal_url")
     cal_name = request.query_params.get("cal_name")
     if cal_url and not payload.get("caldav_calendar_url"):
@@ -652,14 +653,16 @@ async def test_caldav_connection(
     username = username or settings_service.get("caldav_username") or ""
     password = password or settings_service.get("caldav_password") or ""
     if not url:
-        return redirect_with_query("/console/caldav", error="请填写 CalDAV Server URL。")
+        set_error_flash(request, "请填写 CalDAV Server URL。")
+        return redirect("/console/caldav")
     try:
         await CalDAVService().test_connection(url, username, password)
     except CalDAVServiceError as exc:
         error_msg = str(exc)
         if "405" in error_msg or "Not Allowed" in error_msg or "nginx" in error_msg:
             error_msg = f"连接失败：URL 可能不是 CalDAV 端点。请确认填的是 CalDAV 地址，不是网站首页。\n常见：iCloud: https://caldav.icloud.com，Nextcloud: https://your.domain/remote.php/dav/"
-        return redirect_with_query("/console/caldav", error=error_msg)
+        set_error_flash(request, error_msg)
+        return redirect("/console/caldav")
     set_flash(request, "连接测试成功。")
     return redirect("/console/caldav")
 
@@ -677,11 +680,13 @@ async def list_caldav_calendars(
     username = caldav_username.strip() or settings_service.get("caldav_username") or ""
     password = caldav_password.strip() or settings_service.get("caldav_password") or ""
     if not url:
-        return redirect_with_query("/console/caldav", error="请填写 CalDAV Server URL。")
+        set_error_flash(request, "请填写 CalDAV Server URL。")
+        return redirect("/console/caldav")
     try:
         calendars = await CalDAVService().list_calendars(url, username, password)
     except CalDAVServiceError as exc:
-        return redirect_with_query("/console/caldav", error=str(exc))
+        set_error_flash(request, str(exc))
+        return redirect("/console/caldav")
 
     if url:
         settings_service.set("caldav_url", url)
@@ -714,7 +719,7 @@ async def telegram_settings(
     payload = service.config_summary(session)
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
-    payload["error"] = request.query_params.get("error")
+    payload["error"] = get_error_flash(request) or request.query_params.get("error")
     payload["bind_link"] = request.query_params.get("bind_link")
     payload["bind_token"] = request.query_params.get("bind_token")
     return templates.TemplateResponse(request, "telegram.html", payload)
@@ -739,7 +744,8 @@ async def update_telegram_settings(
         target = redirect_path or "/console/telegram"
         set_flash(request, "Telegram Bot 已保存并重载。")
         return redirect(target)
-    return redirect_with_query("/console/telegram", message="请填写 Bot Token。")
+    set_error_flash(request, "请填写 Bot Token。")
+    return redirect("/console/telegram")
 
 
 @router.post("/telegram/bind")
@@ -751,7 +757,8 @@ async def generate_bind_link(
     settings_service = SettingsService(session)
     bot_username = settings_service.get("telegram_bot_username") or ""
     if not bot_username:
-        return redirect_with_query("/console/telegram", error="请先配置 Bot Username。")
+        set_error_flash(request, "请先配置 Bot Username。")
+        return redirect("/console/telegram")
     service = TelegramService()
     link, token = service.generate_bind_link(bot_username)
     set_flash(request, "绑定链接已生成。")
@@ -804,7 +811,7 @@ async def discord_settings(
     payload = service.config_summary(session)
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
-    payload["error"] = get_error_flash(request)
+    payload["error"] = get_error_flash(request) or request.query_params.get("error")
     return templates.TemplateResponse(request, "discord.html", payload)
 
 
@@ -937,9 +944,11 @@ async def update_admin_settings(
     saved_password_hash = settings_service.get("admin_password_hash")
     if new_password or confirm_password:
         if new_password != confirm_password:
-            return redirect("/console/system?error=两次输入的新密码不一致。")
+            set_error_flash(request, "两次输入的新密码不一致。")
+            return redirect("/console/system")
         if not saved_password_hash or not verify_password(current_password, saved_password_hash):
-            return redirect("/console/system?error=当前密码不正确。")
+            set_error_flash(request, "当前密码不正确。")
+            return redirect("/console/system")
         settings_service.set("admin_password_hash", hash_password(new_password))
         settings_service.set("admin_password_changed", "true")
 
@@ -957,7 +966,8 @@ async def update_data_settings(
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     if event_record_limit < 1 or event_record_limit > 100000:
-        return redirect("/console/system?error=记录保留数量必须在 1 到 100000 之间。")
+        set_error_flash(request, "记录保留数量必须在 1 到 100000 之间。")
+        return redirect("/console/system")
 
     settings_service = SettingsService(session)
     settings_service.set("event_record_limit", str(event_record_limit))
