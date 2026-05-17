@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from typing import Any
 
 from anthropic import APIError as AnthropicAPIError
 from anthropic import AsyncAnthropic
 from openai import APIError as OpenAIAPIError
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from app.ai.providers import CLAUDE_MODELS
 
@@ -26,15 +28,24 @@ class AIProviderService:
 
     async def _openai_chat(self, config: AIProviderConfig, system: str, user: str, json_mode: bool) -> str:
         client = AsyncOpenAI(api_key=config.api_key or "local", base_url=config.base_url)
-        kwargs = dict(
-            model=config.model or "",
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0.1,
-        )
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
         try:
-            resp = await client.chat.completions.create(**kwargs)
+            messages: list[ChatCompletionMessageParam] = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
+            if json_mode:
+                resp = await client.chat.completions.create(
+                    model=config.model or "",
+                    messages=messages,
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
+            else:
+                resp = await client.chat.completions.create(
+                    model=config.model or "",
+                    messages=messages,
+                    temperature=0.1,
+                )
         except Exception as exc:
             raise AIProviderError(f"AI 调用失败：{exc}") from exc
         if not resp or not resp.choices:
@@ -58,7 +69,9 @@ class AIProviderService:
             raise AIProviderError(f"Anthropic 调用失败：{exc}") from exc
         content = resp.content
         if isinstance(content, list) and len(content) > 0:
-            return content[0].text if hasattr(content[0], "text") else str(content[0])
+            block: Any = content[0]
+            text = getattr(block, "text", None)
+            return text if isinstance(text, str) else str(block)
         return str(content) if content else ""
 
     async def vision_completion(self, config: AIProviderConfig, base64_image: str) -> str:

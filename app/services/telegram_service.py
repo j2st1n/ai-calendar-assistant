@@ -4,7 +4,7 @@ import asyncio
 import logging
 import secrets
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from telegram import Update
@@ -45,7 +45,7 @@ def recent_rejected_users() -> list[tuple[str, str, str]]:
 
 
 class TelegramService:
-    def config_summary(self, session: Session) -> dict:
+    def config_summary(self, session: Session) -> dict[str, Any]:
         settings_service = SettingsService(session)
         token = settings_service.get("telegram_bot_token")
         token_masked = settings_service.get_masked("telegram_bot_token")
@@ -222,10 +222,10 @@ class TelegramBotRuntime:
 
 
 async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message is None:
+    if update.effective_message is None or update.effective_user is None:
         return
     text = update.effective_message.text or ""
-    user_id = str(update.effective_user.id) if update.effective_user else ""
+    user_id = str(update.effective_user.id)
 
     if "bind_" in text:
         token = text.split("bind_", 1)[-1].split()[0].strip()
@@ -233,7 +233,7 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         with SessionLocal() as session:
             if service.validate_bind_token(token):
                 username = update.effective_user.username or ""
-                display_name = update.effective_user.full_name if update.effective_user else ""
+                display_name = update.effective_user.full_name
                 service.add_user(session, user_id, username, display_name)
                 await update.effective_message.reply_text("✅ 绑定成功，你现在可以使用此 Bot。")
                 return
@@ -262,7 +262,7 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message is None or update.effective_message.text is None:
+    if update.effective_message is None or update.effective_message.text is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
 
@@ -271,7 +271,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
-            username = update.effective_user.username or ""
+            username = update.effective_user.username or "" if update.effective_user else ""
             display_name = update.effective_user.full_name if update.effective_user else ""
             record_rejected_user(user_id, username, display_name)
             await update.effective_message.reply_text(
@@ -315,7 +315,7 @@ async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message is None:
+    if update.effective_message is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
 
@@ -427,7 +427,7 @@ async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         active.sort(key=lambda r: _get_start(r, _json))
 
-        groups: dict[str, list] = {}
+        groups: dict[str, list[EventRecord]] = {}
         for rec in active:
             st = _get_start(rec, _json)
             key = st[:10]

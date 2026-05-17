@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, cast
 
 import caldav
 from caldav.lib.error import AuthorizationError, DAVError
@@ -10,6 +11,8 @@ from icalendar import Calendar, Event
 from app.calendar.recurrence import to_rrule
 
 logger = logging.getLogger(__name__)
+
+_DAVClient = cast(Callable[..., Any], caldav.DAVClient)
 
 
 class CalDAVServiceError(Exception):
@@ -27,7 +30,7 @@ class CalDAVService:
 
     def _test_connection_sync(self, url: str, username: str, password: str) -> None:
         url = url.strip()
-        client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
+        client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
         try:
             principal = client.principal()
             if not principal:
@@ -47,7 +50,7 @@ class CalDAVService:
 
     def _list_calendars_sync(self, url: str, username: str, password: str) -> list[dict[str, str]]:
         url = url.strip()
-        client = caldav.DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
+        client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
         errors = []
         for method in [_try_get_calendars, _try_propfind, _try_principal_calendars]:
             try:
@@ -75,7 +78,7 @@ class CalDAVService:
     def _create_event_sync(self, caldav_url, username, password, calendar_url, title,
                            start_time, end_time, timezone_str, location, description,
                            reminders, recurrence, is_all_day):
-        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password,
+        client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
         calendars = client.get_calendars()
         target_cal = None
@@ -145,7 +148,7 @@ class CalDAVService:
         from datetime import timedelta
         from dateutil.parser import parse as parse_date
 
-        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password,
+        client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
         calendars = client.get_calendars()
         for cal in calendars:
@@ -182,7 +185,7 @@ class CalDAVService:
         return False
 
     def _delete_event_sync(self, caldav_url, username, password, uid, href):
-        client = caldav.DAVClient(url=caldav_url.strip(), username=username, password=password,
+        client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
         calendars = client.get_calendars()
         for cal in calendars:

@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
 from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
@@ -88,14 +89,14 @@ class EventExtractor:
         )
         return await self._call(prompt, text)
 
-    async def modify(self, existing_event: dict, instruction: str) -> ExtractionResult:
+    async def modify(self, existing_event: dict[str, Any], instruction: str) -> ExtractionResult:
         prompt = MODIFY_PROMPT.format(
             existing_event=json.dumps(existing_event, ensure_ascii=False),
             instruction=instruction,
         )
         return await self._call(prompt, instruction)
 
-    async def merge_draft(self, draft: dict, new_input: str) -> ExtractionResult:
+    async def merge_draft(self, draft: dict[str, Any], new_input: str) -> ExtractionResult:
         prompt = MISSING_FIELDS_PROMPT.format(
             current_time=datetime.now(timezone.utc).isoformat(),
             draft=json.dumps(draft, ensure_ascii=False),
@@ -114,7 +115,7 @@ class EventExtractor:
             return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
 
 
-def _build_result(data: dict) -> ExtractionResult:
+def _build_result(data: dict[str, Any]) -> ExtractionResult:
     intent_str = data.get("intent", "no_event")
     try:
         intent = Intent(intent_str)
@@ -125,7 +126,7 @@ def _build_result(data: dict) -> ExtractionResult:
         if intent == Intent.update_event and isinstance(data.get("event"), dict):
             from app.ai.schemas import CalendarEvent, Reminder, Recurrence
             ev_data = data["event"]
-            kwargs: dict = {}
+            kwargs: dict[str, Any] = {}
             for k in ("title", "start_time", "end_time", "timezone", "location", "description", "is_all_day"):
                 if k in ev_data:
                     kwargs[k] = ev_data[k]
@@ -155,7 +156,7 @@ def _build_result(data: dict) -> ExtractionResult:
         return ExtractionResult(intent=intent, events=events, missing_fields=[str(exc)])
 
 
-def _build_event(data: dict):
+def _build_event(data: dict[str, Any]):
     from app.ai.schemas import CalendarEvent
     try:
         return CalendarEvent.model_validate(data)
@@ -171,7 +172,7 @@ def _build_event(data: dict):
             return None
 
 
-def _parse_json(raw: str) -> dict:
+def _parse_json(raw: str) -> dict[str, Any]:
     text = raw.strip()
 
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)

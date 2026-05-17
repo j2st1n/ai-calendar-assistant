@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.channels.discord_handler import register_handlers
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 
@@ -21,13 +22,14 @@ def get_discord_bot_runtime():
 
 class DiscordBotRuntime:
     def __init__(self) -> None:
-        self._client = None
-        self._task = None
+        self._client: Any = None
+        self._task: asyncio.Task[None] | None = None
         self.running = False
         self._last_error = ""
 
     async def reload(self, token: str) -> str:
-        import discord
+        discord = importlib.import_module("discord")
+        from app.channels.discord_handler import register_handlers
 
         old_task = self._task
         if old_task is not None and not old_task.done():
@@ -51,8 +53,8 @@ class DiscordBotRuntime:
         logger.info("Discord bot start task created")
         return "started"
 
-    async def _start_client(self, client, token: str) -> None:
-        import discord
+    async def _start_client(self, client: Any, token: str) -> None:
+        discord = importlib.import_module("discord")
 
         try:
             await client.start(token)
@@ -76,7 +78,7 @@ class DiscordBotRuntime:
 
 
 class DiscordService:
-    def config_summary(self, session: Session) -> dict:
+    def config_summary(self, session: Session) -> dict[str, Any]:
         settings_service = SettingsService(session)
         token = settings_service.get("discord_bot_token")
         token_masked = settings_service.get_masked("discord_bot_token")

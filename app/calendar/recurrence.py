@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Sequence
 
 from app.ai.schemas import Recurrence
 
@@ -8,7 +8,7 @@ def to_rrule(recurrence: Recurrence | dict[str, Any] | None) -> str | None:
         return None
     freq = ""
     interval = 1
-    days_of_week: list[str] = []
+    days_of_week: Sequence[str] = []
     day_of_month: int | None = None
     until: str | None = None
     count: int | None = None
