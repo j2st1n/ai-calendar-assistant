@@ -59,12 +59,19 @@ CRITICAL RULES:
 3. To DELETE the event, return intent=delete_event.
 4. To MODIFY, return intent=update_event with changed fields only.
 5. For reminder changes like "提前20分钟提醒", return {{"reminders":[{{"minutes_before":20}}]}}. Always extract the exact number from the user's text.
+6. If the user request contains multiple changes, extract EVERY changed field into the same event object. Do not stop after the first change.
+7. Split requests by punctuation/conjunctions like "，", ",", "并且", "同时", "然后"; each clause may contain a separate field change.
+8. When changing only the date, preserve the existing time-of-day and duration. When changing only the start time, preserve the existing date and duration unless the user also changes date/duration.
 
 Return JSON examples:
 - Time: {{"intent":"update_event","event":{{"start_time":"2026-05-14T22:00:00+08:00"}}}}
 - Title: {{"intent":"update_event","event":{{"title":"新标题"}}}}
 - Location: {{"intent":"update_event","event":{{"location":"会议室B"}}}}
-- Description: {{"intent":"update_event","event":{{"description":"带资料"}}}}"""
+- Description: {{"intent":"update_event","event":{{"description":"带资料"}}}}
+- Date + reminder: {{"intent":"update_event","event":{{"start_time":"2026-05-19T09:30:00+08:00","end_time":"2026-05-19T10:30:00+08:00","reminders":[{{"minutes_before":15}}]}}}}
+- Time + location: {{"intent":"update_event","event":{{"start_time":"2026-05-14T15:00:00+08:00","end_time":"2026-05-14T16:00:00+08:00","location":"会议室B"}}}}
+- Reminder + location: {{"intent":"update_event","event":{{"reminders":[{{"minutes_before":10}}],"location":"线上"}}}}
+- Date + time + reminder: {{"intent":"update_event","event":{{"start_time":"2026-05-19T15:00:00+08:00","end_time":"2026-05-19T16:00:00+08:00","reminders":[{{"minutes_before":15}}]}}}}"""
 
 MISSING_FIELDS_PROMPT = """You are merging a partial event draft with new user input.
 

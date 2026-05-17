@@ -242,10 +242,12 @@ def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | N
     if not st:
         return None
     changed = False
+    consumed: list[tuple[int, int]] = []
 
     # month+day (more specific, check first)
     m = re.search(r"(\d{1,2})月(\d{1,2})[日号]", text)
     if m:
+        consumed.append(m.span())
         month, day = int(m.group(1)), int(m.group(2))
         try:
             st = st.replace(month=month, day=day)
@@ -256,6 +258,7 @@ def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | N
         # day only
         m = re.search(r"(\d{1,2})[日号]", text)
         if m:
+            consumed.append(m.span())
             day = int(m.group(1))
             try:
                 st = st.replace(day=day)
@@ -267,10 +270,12 @@ def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | N
     h = mi = 0
     tm = re.search(r"(\d{1,2}):(\d{2})", text)
     if tm:
+        consumed.append(tm.span())
         h, mi = int(tm.group(1)), int(tm.group(2))
     else:
         tm = re.search(r"(\d{1,2})点", text)
         if tm:
+            consumed.append(tm.span())
             h = int(tm.group(1))
     if tm:
         old_h = st.hour
@@ -281,6 +286,8 @@ def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | N
 
     if not changed:
         return None
+    if _quick_modify_leftover(text, consumed):
+        return None
 
     result = dict(existing)
     new_st = st.strftime("%Y-%m-%dT%H:%M:%S+08:00")
@@ -289,6 +296,19 @@ def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | N
     result["start_time"] = new_st
     result["end_time"] = new_et
     return result
+
+
+def _quick_modify_leftover(text: str, consumed: list[tuple[int, int]]) -> str:
+    import re
+    chars = list(text)
+    for start, end in consumed:
+        for idx in range(start, end):
+            chars[idx] = " "
+    leftover = "".join(chars)
+    leftover = re.sub(r"[\s,，。.!！?？、]+", "", leftover)
+    leftover = re.sub(r"^(把)?(日程|会议|时间|日期)?(改|改成|改到|调整到|调整为|调到|调为|换到|换成|设到|设为|到|成|为|在)+", "", leftover)
+    leftover = re.sub(r"(日程|会议|时间|日期)?$", "", leftover)
+    return leftover
 
 
 async def _do_delete(session, user_id, reply_to, caldav, source="telegram") -> str:
