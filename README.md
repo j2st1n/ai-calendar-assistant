@@ -1,18 +1,21 @@
 # AI Calendar Assistant
 
-自部署的私人 AI 日程管理助手。通过 Telegram 对话自然语言，AI 自动提取日程并写入你的日历。
+自部署的私人 AI 日程管理助手。通过 Telegram / Discord 对话自然语言，AI 自动提取、修改、删除日程并写入你的日历。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/github/v/tag/j2st1n/ai-calendar-assistant)](https://github.com/j2st1n/ai-calendar-assistant/tags)
 
 ## 功能
 
-- 📅 **自然语言提取** — Telegram 里说一句「明天下午 3 点和张三开会」，自动创建日程
+- 📅 **自然语言提取** — Telegram / Discord 里说一句「明天下午 3 点和张三开会」，自动创建日程
+- ✏️ **自然语言修改** — 回复日程消息即可修改时间、地点、提醒、描述等字段
+- 🧭 **精准回复定位** — 按渠道和会话定位被回复的日程，避免改错最近一条
+- 🧩 **多渠道基础** — 已支持 Telegram、Discord，并预留飞书、微信等渠道扩展模型
 - 🤖 **自定义 AI 供应商** — 支持 OpenAI、DeepSeek、Anthropic、OpenRouter、Ollama 等任意 OpenAI 兼容接口
 - 📆 **CalDAV 同步** — 群晖 / iCloud / Nextcloud / Radicale / Baikal 等标准 CalDAV 日历
 - 🔐 **自部署、单用户** — 数据全在本地，不上传第三方
 - 📸 **图片识别日程** — 发送照片自动识别文字后提取日程
-- 🎛️ **Web 控制台** — 概览状态、配置 AI/日历/Telegram、查看事件记录
+- 🎛️ **Web 控制台** — 概览状态、配置 AI/日历/Telegram/Discord、查看事件记录
 - 🐳 **零配置 Docker 部署** — 不强制 `.env`，首次启动自动生成管理员密码
 - 🔄 **一键升级** — `docker compose pull && docker compose up -d`
 
@@ -70,6 +73,10 @@ Please change this password in System Settings.
 
 填写 Bot Token 和 Bot Username（从 @BotFather 获取），保存重载后生成绑定链接，在 Telegram 中打开即可授权使用。
 
+### 4. Discord 设置
+
+填写 Discord Bot Token，保存启动后在控制台手动授权用户。频道中需要 @Bot，私聊和 Thread 可直接对话。
+
 ## 使用
 
 ### Telegram 对话
@@ -90,6 +97,10 @@ Bot：✅ 日程已更新！
 Bot：🗑️ 已删除日程：和张三开会
 ```
 
+### Discord 对话
+
+在已授权的 Discord 私聊、Thread 或频道中发送自然语言即可创建日程；频道中默认需要 @Bot。回复 Bot 发出的日程消息可以继续修改或删除该日程。
+
 ## 安全
 
 - 数据全在本地 SQLite，不上传第三方（配置文件除外）
@@ -107,16 +118,32 @@ docker compose pull && docker compose up -d
 
 数据在 `data/` 目录下持久化，升级不会丢失配置和记录。
 
+## 版本与更新日志
+
+当前版本见 [`VERSION`](VERSION)，完整更新日志见 [`CHANGELOG.md`](CHANGELOG.md)。Web 控制台概览页会读取 `CHANGELOG.md` 最新版本段展示更新说明。
+
+发布新版本时使用：
+
+```bash
+scripts/release.sh 1.0.0-beta.1
+```
+
+脚本会更新 `VERSION`、用 git-cliff 生成 `CHANGELOG.md`、创建 release commit 和 tag。确认无误后再手动 push：
+
+```bash
+git push
+git push origin v1.0.0-beta.1
+```
+
 ## 目录结构
 
 ```text
 app/
   ai/           AI Provider、日程提取 Schema、Prompt
-  calendar/     CalDAV 事件创建/修改/删除
-  channels/     Telegram Bot、消息处理
+  channels/     消息处理、Discord 渠道
   core/         配置、加密、安全、启动引导
   db/           SQLAlchemy 数据模型
-  services/     业务服务（AI、CalDAV、TG、设置）
+  services/     业务服务（AI、CalDAV、Telegram、Discord、设置）
   web/          Web 控制台路由、模板、样式
 docs/
   requirements.md
