@@ -113,11 +113,12 @@
       {% endif %}
     </summary>
     <div style="padding:0 16px 12px 48px;font-size:13px;color:#d0d6e0;">
-      {% if ev.title %}<div style="margin-bottom:4px;">📌 {{ ev.title }}</div>{% endif %}
-      {% if ev.start %}<div style="margin-bottom:4px;color:#8a8f98;">🕒 {{ ev.start }}{% if ev.end %} - {{ ev.end }}{% endif %}</div>{% endif %}
-      {% if ev.location %}<div style="margin-bottom:4px;color:#8a8f98;">📍 {{ ev.location }}</div>{% endif %}
-      {% if ev.description %}<div style="margin-bottom:4px;color:#8a8f98;">📝 {{ ev.description }}</div>{% endif %}
-      {% if ev.recurrence %}<div style="color:#8a8f98;">🔁 {{ ev.recurrence }}</div>{% endif %}
+      {% if ev.title %}<div style="margin-bottom:4px;">📌 标题：{{ ev.title }}</div>{% endif %}
+      {% if ev.start %}<div style="margin-bottom:4px;color:#8a8f98;">🕒 时间：{{ ev.start }}{% if ev.end %} - {{ ev.end }}{% endif %}</div>{% endif %}
+      {% if ev.location %}<div style="margin-bottom:4px;color:#8a8f98;">📍 地点：{{ ev.location }}</div>{% endif %}
+      {% if ev.description %}<div style="margin-bottom:4px;color:#8a8f98;">📝 描述：{{ ev.description }}</div>{% endif %}
+      {% if ev.recurrence %}<div style="margin-bottom:4px;color:#8a8f98;">🔁 重复：{{ ev.recurrence }}</div>{% endif %}
+      {% if ev.reminder %}<div style="color:#8a8f98;">⏰ 提醒：提前 {{ ev.reminder }} 分钟</div>{% endif %}
     </div>
   </details>
   {% endfor %}

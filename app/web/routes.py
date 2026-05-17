@@ -182,15 +182,24 @@ def status_context(session: Session, request: Request) -> dict[str, Any]:
             "location": "",
             "description": "",
             "recurrence": "",
+            "reminder": "",
         })
         if rec.event_json:
             try:
                 data = json.loads(rec.event_json)
-                events[-1]["start"] = data.get("start_time", "")[:16].replace("T", " ") if data.get("start_time") else ""
-                events[-1]["end"] = data.get("end_time", "")[:16].replace("T", " ") if data.get("end_time") else ""
+                start = data.get("start_time", "")
+                end = data.get("end_time", "")
+                events[-1]["start"] = start[:16].replace("T", " ") if start else ""
+                if end and start and start[:10] == end[:10]:
+                    events[-1]["end"] = end[11:16]
+                else:
+                    events[-1]["end"] = end[:16].replace("T", " ") if end else ""
                 events[-1]["location"] = data.get("location") or ""
                 events[-1]["description"] = data.get("description") or ""
                 events[-1]["recurrence"] = str(data.get("recurrence", {}).get("frequency", "")) if data.get("recurrence") else ""
+                reminders = data.get("reminders") or []
+                if reminders and reminders[0].get("minutes_before"):
+                    events[-1]["reminder"] = str(reminders[0]["minutes_before"])
             except Exception:
                 pass
 

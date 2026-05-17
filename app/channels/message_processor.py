@@ -199,31 +199,7 @@ def _g(obj, key, default=None):
 
 
 def _format_modify_result(event) -> str:
-    title = _g(event, "title", "日程")
-    st = _g(event, "start_time", "?")
-    et = _g(event, "end_time")
-    loc = _g(event, "location")
-    desc = _g(event, "description")
-    reminders = _g(event, "reminders") or []
-    lines = ["✅ 日程已更新！", ""]
-    lines.append(f"📌 标题：{title}")
-    if st and st != "?":
-        if et and st[:10] == et[:10]:
-            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {et[11:16]}")
-        elif et:
-            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {et[:16].replace('T', ' ')}")
-        else:
-            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')}")
-    if loc:
-        lines.append(f"📍 地点：{loc}")
-    if desc:
-        lines.append(f"📝 描述：{desc}")
-    if reminders:
-        first = reminders[0]
-        m = first.get("minutes_before") if isinstance(first, dict) else getattr(first, "minutes_before", None)
-        if m:
-            lines.append(f"⏰ 提醒：提前 {m} 分钟")
-    return "\n".join(lines)
+    return _format_event_result(event, "✅ 日程已更新！")
 
 
 def _merge_event(existing: dict[str, Any], ai_event: object, dur_minutes: int = 60) -> dict[str, Any]:
@@ -393,31 +369,40 @@ async def _handle_new(session, ctx: ChannelContext, text, result, caldav, svc) -
 
 
 def _format_one(event) -> str:
-    lines = ["✅ 日程已安排好啦！", ""]
-    lines.append(f"📌 {event.title}")
-    if getattr(event, 'is_all_day', False):
-        lines.append(f"📅 {event.start_time[:10]}")
-    elif getattr(event, 'start_time', None):
-        st = event.start_time[:16].replace("T", " ")
-        et = (getattr(event, 'end_time', None) or "")[:16].replace("T", " ")
+    return _format_event_result(event, "✅ 日程已安排好啦！")
+
+
+def _format_event_result(event, header: str) -> str:
+    title = _g(event, "title", "日程")
+    st = _g(event, "start_time", "") or ""
+    et = _g(event, "end_time", "") or ""
+    loc = _g(event, "location")
+    desc = _g(event, "description")
+    reminders = _g(event, "reminders") or []
+    lines = [header, ""]
+    lines.append(f"📌 标题：{title}")
+    if _g(event, "is_all_day", False) and st:
+        lines.append(f"📅 日期：{st[:10]}")
+    elif st:
         if et and st[:10] == et[:10]:
-            lines.append(f"🕒 {st} - {et[11:]}")
+            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {et[11:16]}")
         elif et:
-            lines.append(f"🕒 {st} - {et}")
+            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')} - {et[:16].replace('T', ' ')}")
         else:
-            lines.append(f"🕒 {st}")
-    if getattr(event, 'location', None):
-        lines.append(f"📍 {event.location}")
-    if getattr(event, 'description', None):
-        lines.append(f"📝 {event.description}")
-    if getattr(event, 'recurrence', None):
-        rec = event.recurrence
-        freq = rec.get("frequency", "") if isinstance(rec, dict) else getattr(rec, 'frequency', '')
-        if freq:
-            lines.append(f"🔁 {freq}")
-    reminders = getattr(event, 'reminders', []) or []
-    if reminders and reminders[0].minutes_before:
-        lines.append(f"⏰ 提前 {reminders[0].minutes_before} 分钟")
+            lines.append(f"🕒 时间：{st[:16].replace('T', ' ')}")
+    if loc:
+        lines.append(f"📍 地点：{loc}")
+    if desc:
+        lines.append(f"📝 描述：{desc}")
+    recurrence = _g(event, "recurrence")
+    freq = recurrence.get("frequency", "") if isinstance(recurrence, dict) else getattr(recurrence, "frequency", "")
+    if freq:
+        lines.append(f"🔁 重复：{freq}")
+    if reminders:
+        first = reminders[0]
+        minutes = first.get("minutes_before") if isinstance(first, dict) else getattr(first, "minutes_before", None)
+        if minutes:
+            lines.append(f"⏰ 提醒：提前 {minutes} 分钟")
     return "\n".join(lines)
 
 
