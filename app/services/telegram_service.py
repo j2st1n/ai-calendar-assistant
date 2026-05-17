@@ -284,7 +284,14 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             processor = MessageProcessor()
             reply_id = str(update.effective_message.reply_to_message.message_id) if update.effective_message.reply_to_message else None
-            replies = await processor.process(session, user_id, update.effective_message.text, reply_id)
+            replies = await processor.process(
+                session,
+                user_id,
+                update.effective_message.text,
+                reply_id,
+                conversation_id=str(update.effective_chat.id),
+                source_message_id=str(update.effective_message.message_id),
+            )
             for response, record_id in replies:
                 sent = await update.effective_message.reply_text(response)
                 if record_id and sent:
@@ -364,7 +371,13 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         processor = MessageProcessor()
-        replies = await processor.process(session, user_id, text)
+        replies = await processor.process(
+            session,
+            user_id,
+            text,
+            conversation_id=str(update.effective_chat.id),
+            source_message_id=str(update.effective_message.message_id),
+        )
         for response, record_id in replies:
             sent = await update.effective_message.reply_text(response)
             if record_id and sent:
