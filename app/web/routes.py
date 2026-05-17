@@ -2,10 +2,11 @@ from collections.abc import Generator
 from datetime import date, datetime as dt, timedelta
 import json
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
@@ -25,8 +26,9 @@ from app.services.telegram_service import TelegramService
 
 router = APIRouter(prefix="/console")
 templates = Jinja2Templates(directory="app/web/templates")
-templates.env.globals["version"] = read_version()
-templates.env.globals["changes"] = read_changes()
+template_globals: dict[str, Any] = templates.env.globals
+template_globals["version"] = read_version()
+template_globals["changes"] = read_changes()
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -133,7 +135,7 @@ def dashboard_stats(session: Session) -> dict[str, int]:
     }
 
 
-def status_context(session: Session, request) -> dict:
+def status_context(session: Session, request: Request) -> dict[str, Any]:
     settings_service = SettingsService(session)
     ai_name = settings_service.get("ai_provider_name") or ""
     ai_model = settings_service.get("ai_model") or ""
@@ -197,15 +199,15 @@ def status_context(session: Session, request) -> dict:
         "vision_label": vision_label,
         "caldav_ok": caldav_ok,
         "caldav_name": caldav_cal if caldav_ok else "",
-        "tg_running": get_telegram_bot_runtime() is not None and get_telegram_bot_runtime().running,
-        "dc_running": get_discord_bot_runtime() is not None and get_discord_bot_runtime().running,
+        "tg_running": (tg_runtime := get_telegram_bot_runtime()) is not None and tg_runtime.running,
+        "dc_running": (dc_runtime := get_discord_bot_runtime()) is not None and dc_runtime.running,
         "recent_events": events,
         "version": read_version(),
         "changes": read_changes(),
     }
 
 
-def ai_settings_payload(settings_service: SettingsService) -> dict[str, str | list[dict[str, str]]]:
+def ai_settings_payload(settings_service: SettingsService) -> dict[str, Any]:
     provider_name = settings_service.get("ai_provider_name") or "OpenAI"
     provider_type = settings_service.get("ai_provider_type") or "openai_compatible"
     base_url = settings_service.get("ai_base_url") or next(
@@ -242,7 +244,7 @@ async def dashboard(request: Request, session: Session = Depends(get_db), _: Non
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request) -> HTMLResponse:
+async def login_page(request: Request) -> Response:
     if request.session.get("admin_authenticated"):
         return redirect("/console")
     return templates.TemplateResponse(request, "login.html", {"error": None})
@@ -329,6 +331,7 @@ async def ai_settings(
 
 @router.post("/ai")
 async def update_ai_settings(
+    request: Request,
     provider_name: str = Form(...),
     provider_type: str = Form(...),
     base_url: str = Form(...),
@@ -341,7 +344,6 @@ async def update_ai_settings(
     vision_base_url: str = Form(""),
     vision_api_key: str = Form(""),
     vision_model: str = Form(""),
-    request: Request = None,
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -544,7 +546,7 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-def caldav_payload(settings_service: SettingsService) -> dict:
+def caldav_payload(settings_service: SettingsService) -> dict[str, Any]:
     return {
         "caldav_url": settings_service.get("caldav_url") or "",
         "caldav_username": settings_service.get("caldav_username") or "",
@@ -639,8 +641,6 @@ async def test_caldav_connection(
         if "405" in error_msg or "Not Allowed" in error_msg or "nginx" in error_msg:
             error_msg = f"连接失败：URL 可能不是 CalDAV 端点。请确认填的是 CalDAV 地址，不是网站首页。\n常见：iCloud: https://caldav.icloud.com，Nextcloud: https://your.domain/remote.php/dav/"
         return redirect_with_query("/console/caldav", error=error_msg)
-    except CalDAVServiceError as exc:
-        return redirect_with_query("/console/caldav", error=str(exc))
     set_flash(request, "连接测试成功。")
     return redirect("/console/caldav")
 

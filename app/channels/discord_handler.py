@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib
 import json as _json
 import logging
 import re
@@ -23,16 +24,15 @@ def register_handlers(client) -> None:
     async def on_message(message):
         if message.author.bot:
             return
-        import discord as _discord
+        _discord = importlib.import_module("discord")
         is_private = isinstance(message.channel, (_discord.DMChannel, _discord.Thread))
         if message.guild is not None and not is_private and message.guild.me not in message.mentions:
             return
         user_id = str(message.author.id)
 
         with SessionLocal() as session:
-            from app.services.discord_service import DiscordService
-            service = DiscordService()
-            if not service.is_user_allowed(session, user_id):
+            from app.db.models import DiscordIdentity
+            if session.query(DiscordIdentity).filter_by(discord_user_id=user_id, enabled=True).first() is None:
                 await message.channel.send(
                     f"你没有权限使用此 Bot。你的 Discord user_id 是：`{user_id}`\n请联系管理员在控制台中添加。"
                 )
@@ -66,7 +66,7 @@ def register_handlers(client) -> None:
 
 
 async def _handle_attachments(message, text: str, session) -> str:
-    import aiohttp
+    aiohttp = importlib.import_module("aiohttp")
     settings_service = SettingsService(session)
     use_main = settings_service.get("ai_vision_use_main") or "true"
 
