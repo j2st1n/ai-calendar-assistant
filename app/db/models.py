@@ -2,9 +2,11 @@ from datetime import datetime
 from datetime import timezone
 
 from sqlalchemy import Boolean, DateTime, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from app.db.session import Base
+
+class Base(DeclarativeBase):
+    pass
 
 
 class Setting(Base):
