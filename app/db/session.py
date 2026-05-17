@@ -28,4 +28,7 @@ def _migrate_event_records() -> None:
         if "conversation_id" not in columns:
             conn.execute(text("ALTER TABLE event_records ADD COLUMN conversation_id VARCHAR(128)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_event_records_conversation_id ON event_records (conversation_id)"))
+        if "event_id" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN event_id VARCHAR(64)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_event_records_event_id ON event_records (event_id)"))
         conn.execute(text("UPDATE event_records SET source_user_id = telegram_user_id WHERE source_user_id IS NULL"))

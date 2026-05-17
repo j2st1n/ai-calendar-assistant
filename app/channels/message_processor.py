@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
@@ -166,7 +167,7 @@ async def _do_delete_with(session, ctx: ChannelContext, target, caldav) -> str:
                                           target.caldav_uid, target.caldav_href)
     _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
             target.event_json or "", cr={"uid": target.caldav_uid},
-            start_time=target.start_time or "")
+            start_time=target.start_time or "", event_id=target.event_id)
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
@@ -188,7 +189,7 @@ async def _do_modify_with(session, ctx: ChannelContext, text, target, new_event,
     return _record(session, ctx, "update", title, text, "success",
              json.dumps(new_event, ensure_ascii=False),
              cr={"href": target.caldav_href, "uid": target.caldav_uid},
-             start_time=new_event.get("start_time", ""))
+             start_time=new_event.get("start_time", ""), event_id=target.event_id)
 
 
 def _g(obj, key, default=None):
@@ -350,7 +351,7 @@ async def _do_delete(session, ctx: ChannelContext, caldav) -> str:
                                           target.caldav_uid, target.caldav_href)
     _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
             target.event_json or "", cr={"uid": target.caldav_uid},
-            start_time=target.start_time or "")
+            start_time=target.start_time or "", event_id=target.event_id)
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
@@ -468,10 +469,10 @@ async def _write_caldav(event, caldav: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
-def _record(session, ctx: ChannelContext, op, title, text, status, js, cr=None, err=None, start_time="") -> int:
+def _record(session, ctx: ChannelContext, op, title, text, status, js, cr=None, err=None, start_time="", event_id=None) -> int:
     rec = EventRecord(
         source=ctx.source, telegram_user_id=ctx.source_user_id, source_user_id=ctx.source_user_id,
-        conversation_id=ctx.conversation_id, operation=op,
+        conversation_id=ctx.conversation_id, event_id=event_id or uuid.uuid4().hex, operation=op,
         title=title, start_time=start_time, status=status,
         source_message_id=ctx.source_message_id,
         original_text=(text or "")[:2000],

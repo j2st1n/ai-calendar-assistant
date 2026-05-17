@@ -107,12 +107,13 @@ def dashboard_stats(session: Session) -> dict[str, int]:
         ).order_by(EventRecord.created_at.desc())
     ).scalars().all()
 
-    seen_uids = set()
+    seen_events = set()
     today_events = week_events = month_events = 0
     for rec in all_records:
-        if rec.caldav_uid in seen_uids:
+        event_key = _event_key(rec)
+        if event_key in seen_events:
             continue
-        seen_uids.add(rec.caldav_uid)
+        seen_events.add(event_key)
         if rec.operation == "delete":
             continue
         st = rec.start_time
@@ -161,9 +162,9 @@ def status_context(session: Session, request: Request) -> dict[str, Any]:
     seen = set()
     deduped = []
     for rec in recent:
-        uid = rec.caldav_uid or f"_{rec.id}"
-        if uid not in seen:
-            seen.add(uid)
+        event_key = _event_key(rec)
+        if event_key not in seen:
+            seen.add(event_key)
             if rec.operation != "delete":
                 deduped.append(rec)
             if len(deduped) >= 5:
@@ -205,6 +206,10 @@ def status_context(session: Session, request: Request) -> dict[str, Any]:
         "version": read_version(),
         "changes": read_changes(),
     }
+
+
+def _event_key(rec: EventRecord) -> str:
+    return rec.event_id or rec.caldav_uid or f"_{rec.id}"
 
 
 def ai_settings_payload(settings_service: SettingsService) -> dict[str, Any]:

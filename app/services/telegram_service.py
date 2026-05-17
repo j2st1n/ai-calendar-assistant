@@ -427,10 +427,10 @@ async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         seen = set()
         active = []
         for rec in records:
-            uid = rec.caldav_uid or f"_{rec.id}"
-            if uid in seen:
+            event_key = _event_key(rec)
+            if event_key in seen:
                 continue
-            seen.add(uid)
+            seen.add(event_key)
             if rec.operation == "delete":
                 continue
             active.append(rec)
@@ -474,6 +474,10 @@ def _get_start(rec, json_mod) -> str:
     return "9"
 
 
+def _event_key(rec: EventRecord) -> str:
+    return rec.event_id or rec.caldav_uid or f"_{rec.id}"
+
+
 async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message is None or update.effective_chat is None:
         return
@@ -502,10 +506,10 @@ async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         rec = None
         seen = set()
         for r in records:
-            uid = r.caldav_uid or f"_{r.id}"
-            if uid in seen:
+            event_key = _event_key(r)
+            if event_key in seen:
                 continue
-            seen.add(uid)
+            seen.add(event_key)
             if r.operation != "delete":
                 rec = r
                 break
