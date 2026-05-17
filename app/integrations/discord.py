@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import importlib
-import json as _json
 import logging
 import re
-from datetime import date as dt_date, timedelta
 
-from app.channels.message_processor import MessageProcessor
+from app.channels.commands import handle_command
+from app.channels.message_bindings import bind_bot_message
+from app.channels.message_processor import ChannelContext, MessageProcessor
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 
@@ -41,6 +40,18 @@ def register_handlers(client) -> None:
             try:
                 async with message.channel.typing():
                     text = re.sub(r'<@[!&]?\d+>', '', message.content or "").strip()
+                    ctx = ChannelContext(
+                        "discord",
+                        user_id,
+                        str(message.channel.id),
+                        str(message.id),
+                        str(message.reference.message_id) if message.reference else None,
+                    )
+                    command_replies = await handle_command(session, ctx, text)
+                    if command_replies is not None:
+                        await _send_discord_replies(message, session, command_replies)
+                        return
+
                     if message.attachments:
                         text = await _handle_attachments(message, text, session)
 
@@ -48,29 +59,26 @@ def register_handlers(client) -> None:
                         await message.reply("🤔 未识别到日程信息，请补充时间和事件内容。")
                         return
 
-                    processor = MessageProcessor()
-                    reply_to = str(message.reference.message_id) if message.reference else None
-                    replies = await processor.process(
+                    replies = await MessageProcessor().process(
                         session,
                         user_id,
                         text,
-                        reply_to,
+                        ctx.reply_to_message_id,
                         source="discord",
-                        conversation_id=str(message.channel.id),
-                        source_message_id=str(message.id),
+                        conversation_id=ctx.conversation_id,
+                        source_message_id=ctx.source_message_id,
                     )
-                    from app.db.models import EventRecord
-                    from sqlalchemy import select as sa_select
-                    for response, record_id in replies:
-                        sent = await message.reply(response)
-                        if record_id:
-                            rec = session.get(EventRecord, record_id)
-                            if rec:
-                                rec.bot_message_id = str(sent.id)
-                                session.commit()
+                    await _send_discord_replies(message, session, replies)
             except Exception as exc:
                 logger.exception("Discord message processing failed")
                 await message.reply(f"处理消息时出错：{exc}")
+
+
+async def _send_discord_replies(message, session, replies: list[tuple[str, int | None]]) -> None:
+    for response, record_id in replies:
+        sent = await message.reply(response)
+        bind_bot_message(session, record_id, str(sent.id))
+    session.commit()
 
 
 async def _handle_attachments(message, text: str, session) -> str:

@@ -29,7 +29,7 @@ class DiscordBotRuntime:
 
     async def reload(self, token: str) -> str:
         discord = importlib.import_module("discord")
-        from app.channels.discord_handler import register_handlers
+        discord_integration = importlib.import_module("app.integrations.discord")
 
         old_task = self._task
         if old_task is not None and not old_task.done():
@@ -44,7 +44,7 @@ class DiscordBotRuntime:
         intents = discord.Intents.default()
         intents.message_content = True
         client = discord.Client(intents=intents)
-        register_handlers(client)
+        discord_integration.register_handlers(client)
         self._client = client
         self.running = True
 
