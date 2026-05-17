@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 PENDING_DRAFT_TTL = 24 * 3600
 LAST_EVENT_WINDOW = 24 * 3600
+CLEARABLE_FIELDS = {"description", "location"}
 _pending_drafts: dict[str, dict[str, Any]] = {}
 
 
@@ -206,8 +207,11 @@ def _merge_event(existing: dict[str, Any], ai_event: object, dur_minutes: int = 
     start_changed = changes.get("start_time") and changes["start_time"] != existing.get("start_time")
     merged = dict(existing)
     for key, val in changes.items():
-        if val is not None and val != "":
-            merged[key] = val
+        if val is None:
+            continue
+        if val == "" and key not in CLEARABLE_FIELDS:
+            continue
+        merged[key] = val
     if start_changed and not changes.get("end_time"):
         merged["end_time"] = _shift_end(merged["start_time"], dur_minutes)
     return merged

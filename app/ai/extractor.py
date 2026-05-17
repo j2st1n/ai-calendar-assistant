@@ -48,20 +48,24 @@ Return JSON:
 }}
 """
 
-MODIFY_PROMPT = """You are modifying a calendar event. Below is the existing event and the user's change request.
+MODIFY_PROMPT = """You are an event editor. Understand the user's modification intent, edit the appropriate event fields, and return changed fields only.
 
 Existing event: {existing_event}
 User request: {instruction}
 
 CRITICAL RULES:
-1. If user says "改到10点" and existing start_time is "21:00" (9 PM), the new time is 22:00 (10 PM). Use the existing event's AM/PM context to resolve ambiguity.
-2. Only return fields that CHANGED. Unchanged fields leave as null.
-3. To DELETE the event, return intent=delete_event.
-4. To MODIFY, return intent=update_event with changed fields only.
-5. For reminder changes like "提前20分钟提醒", return {{"reminders":[{{"minutes_before":20}}]}}. Always extract the exact number from the user's text.
-6. If the user request contains multiple changes, extract EVERY changed field into the same event object. Do not stop after the first change.
-7. Split requests by punctuation/conjunctions like "，", ",", "并且", "同时", "然后"; each clause may contain a separate field change.
-8. When changing only the date, preserve the existing time-of-day and duration. When changing only the start time, preserve the existing date and duration unless the user also changes date/duration.
+1. Return intent=update_event with changed fields only. Omit unchanged fields; do not return unchanged defaults.
+2. To DELETE the event, return intent=delete_event.
+3. A request may contain multiple changes. Apply EVERY requested change in one event object; do not stop after the first change.
+4. Split requests by punctuation/conjunctions like "，", ",", "并且", "同时", "然后"; each clause may contain a separate field change.
+5. A change can be direct replacement, relative date/time change, reminder change, clearing/removing a field, or transforming an existing field.
+6. For transformation requests like simplify/shorten/summarize/polish/rewrite/clarify/expand/remove/clean up (精简/简化/缩短/总结/概括/润色/重写/改写/说清楚/扩充/删除/去掉/清理), infer the target field and generate the new field value from existing_event. Do not omit the transformed field just because the user did not provide explicit replacement text.
+7. If the user does not name a field, text transformation requests default to description when existing_event.description exists. Title/name requests target title; place/where requests target location; reminder/alert/提前/取消提醒 requests target reminders; date/time/day/hour requests target start_time/end_time.
+8. Only transform fields explicitly requested or clearly implied. Do not rewrite title/location/description/date/time/reminders unless requested.
+9. If user says "改到10点" and existing start_time is "21:00" (9 PM), the new time is 22:00 (10 PM). Use the existing event's AM/PM context to resolve ambiguity.
+10. When changing only the date, preserve the existing time-of-day and duration. When changing only the start time, preserve the existing date and duration unless the user also changes date/duration.
+11. For reminder changes like "提前20分钟提醒", return {{"reminders":[{{"minutes_before":20}}]}}. Always extract the exact number. For cancel/remove reminder requests, return {{"reminders":[]}}.
+12. For clear/remove field requests like "清空描述", "删除备注", "去掉地点", return an empty string for the target field, e.g. {{"description":""}} or {{"location":""}}.
 
 Return JSON examples:
 - Time: {{"intent":"update_event","event":{{"start_time":"2026-05-14T22:00:00+08:00"}}}}
@@ -71,7 +75,12 @@ Return JSON examples:
 - Date + reminder: {{"intent":"update_event","event":{{"start_time":"2026-05-19T09:30:00+08:00","end_time":"2026-05-19T10:30:00+08:00","reminders":[{{"minutes_before":15}}]}}}}
 - Time + location: {{"intent":"update_event","event":{{"start_time":"2026-05-14T15:00:00+08:00","end_time":"2026-05-14T16:00:00+08:00","location":"会议室B"}}}}
 - Reminder + location: {{"intent":"update_event","event":{{"reminders":[{{"minutes_before":10}}],"location":"线上"}}}}
-- Date + time + reminder: {{"intent":"update_event","event":{{"start_time":"2026-05-19T15:00:00+08:00","end_time":"2026-05-19T16:00:00+08:00","reminders":[{{"minutes_before":15}}]}}}}"""
+- Date + time + reminder: {{"intent":"update_event","event":{{"start_time":"2026-05-19T15:00:00+08:00","end_time":"2026-05-19T16:00:00+08:00","reminders":[{{"minutes_before":15}}]}}}}
+- Simplify description: {{"intent":"update_event","event":{{"description":"学习廉洁从业规定1-5章，马总讲话"}}}}
+- Reminder + simplified description: {{"intent":"update_event","event":{{"reminders":[{{"minutes_before":15}}],"description":"学习廉洁从业规定1-5章，马总讲话"}}}}
+- Shorten title + location: {{"intent":"update_event","event":{{"title":"周会","location":"线上"}}}}
+- Clear description: {{"intent":"update_event","event":{{"description":""}}}}
+- Remove location and cancel reminders: {{"intent":"update_event","event":{{"location":"","reminders":[]}}}}"""
 
 MISSING_FIELDS_PROMPT = """You are merging a partial event draft with new user input.
 
