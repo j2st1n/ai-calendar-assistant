@@ -432,8 +432,8 @@ def _telegram_context(update: Update, user_id: str, reply_to: str | None = None)
 async def _send_telegram_replies(update: Update, session: Session, replies: list[tuple[str, int | None]]) -> None:
     if update.effective_message is None:
         return
-        for response, record_id in replies:
-            sent = await update.effective_message.reply_text(response)
-            if sent:
-                bind_bot_message(session, record_id, str(sent.message_id))
+    for response, record_id in replies:
+        sent = await update.effective_message.reply_text(response)
+        if sent:
+            bind_bot_message(session, record_id, str(sent.message_id))
     session.commit()

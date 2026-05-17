@@ -41,10 +41,7 @@ def register_handlers(client) -> None:
         if getattr(client, "_ai_calendar_commands_synced", False):
             return
         try:
-            tree.clear_commands(guild=None)
-            await tree.sync()
             for guild in client.guilds:
-                tree.copy_global_to(guild=guild)
                 await tree.sync(guild=guild)
             client._ai_calendar_commands_synced = True
             logger.info("Discord slash commands synced")
