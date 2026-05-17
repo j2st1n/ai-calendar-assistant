@@ -1,13 +1,14 @@
 import json
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
+from typing import Any, Protocol, runtime_checkable
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.ai.extractor import EventExtractor
-from app.ai.schemas import Intent, Reminder
+from app.ai.schemas import Intent
 from app.db.models import EventRecord
 from app.services.ai_provider_service import AIProviderConfig
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
@@ -17,7 +18,17 @@ logger = logging.getLogger(__name__)
 
 PENDING_DRAFT_TTL = 24 * 3600
 LAST_EVENT_WINDOW = 24 * 3600
-_pending_drafts: dict[str, dict] = {}
+_pending_drafts: dict[str, dict[str, Any]] = {}
+
+
+@runtime_checkable
+class _ModelDumpable(Protocol):
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class _DictDumpable(Protocol):
+    def dict(self) -> dict[str, Any]: ...
 
 
 class MessageProcessor:
@@ -39,7 +50,7 @@ class MessageProcessor:
         return await _route(session, user_id, text, reply_to_message_id, extractor, caldav_cfg, svc, source)
 
 
-def _caldav_config(svc: SettingsService) -> dict:
+def _caldav_config(svc: SettingsService) -> dict[str, Any]:
     return {
         "url": svc.get("caldav_url") or "",
         "user": svc.get("caldav_username") or "",
@@ -182,13 +193,15 @@ def _format_modify_result(event) -> str:
         lines.append(f"📍 地点：{loc}")
     if desc:
         lines.append(f"📝 描述：{desc}")
-    if reminders and reminders[0].get("minutes_before") if isinstance(reminders[0], dict) else getattr(reminders[0], 'minutes_before', None):
-        m = reminders[0].get("minutes_before") if isinstance(reminders[0], dict) else reminders[0].minutes_before
-        lines.append(f"⏰ 提醒：提前 {m} 分钟")
+    if reminders:
+        first = reminders[0]
+        m = first.get("minutes_before") if isinstance(first, dict) else getattr(first, "minutes_before", None)
+        if m:
+            lines.append(f"⏰ 提醒：提前 {m} 分钟")
     return "\n".join(lines)
 
 
-def _merge_event(existing: dict, ai_event, dur_minutes: int = 60) -> dict:
+def _merge_event(existing: dict[str, Any], ai_event: object, dur_minutes: int = 60) -> dict[str, Any]:
     changes = _to_dict(ai_event)
     start_changed = changes.get("start_time") and changes["start_time"] != existing.get("start_time")
     merged = dict(existing)
@@ -207,19 +220,19 @@ def _shift_end(start_iso: str, dur_minutes: int = 60) -> str:
     return ""
 
 
-def _to_dict(obj):
+def _to_dict(obj: object) -> dict[str, Any]:
     if isinstance(obj, dict):
         return obj
     if obj is None:
         return {}
-    if hasattr(obj, 'model_dump'):
+    if isinstance(obj, _ModelDumpable):
         return obj.model_dump(exclude_unset=True)
-    if hasattr(obj, 'dict'):
+    if isinstance(obj, _DictDumpable):
         return obj.dict()
     return {}
 
 
-def _try_quick_modify(text: str, existing: dict) -> dict | None:
+def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | None:
     import re
     from datetime import timedelta as td
     old_st = existing.get("start_time", "")
@@ -383,7 +396,7 @@ async def _write_one(session, user_id, text, event, caldav, source="telegram") -
             start_time=getattr(event, "start_time", ""), source=source)
 
 
-async def _write_caldav_dict(event_dict, caldav) -> dict | None:
+async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any]) -> dict[str, Any] | None:
     svc = CalDAVService()
     return await svc.create_event(
         caldav["url"], caldav["user"], caldav["pw"], caldav["cal"],
@@ -395,9 +408,9 @@ async def _write_caldav_dict(event_dict, caldav) -> dict | None:
     )
 
 
-async def _write_caldav(event, caldav) -> dict | None:
+async def _write_caldav(event, caldav: dict[str, Any]) -> dict[str, Any] | None:
     svc = CalDAVService()
-    rec = event.model_dump() if hasattr(event, 'model_dump') else {}
+    rec: dict[str, Any] = event.model_dump() if hasattr(event, 'model_dump') else {}
     return await svc.create_event(
         caldav["url"], caldav["user"], caldav["pw"], caldav["cal"],
         event.title, event.start_time, event.end_time, event.timezone,
