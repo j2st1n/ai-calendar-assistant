@@ -15,9 +15,40 @@ logger = logging.getLogger(__name__)
 
 
 def register_handlers(client) -> None:
+    discord = importlib.import_module("discord")
+    tree = discord.app_commands.CommandTree(client)
+
+    @tree.command(name="help", description="查看使用帮助")
+    async def slash_help(interaction):
+        await _handle_slash_command(interaction, "/help")
+
+    @tree.command(name="upcoming", description="查看未来日程")
+    @discord.app_commands.describe(days="未来天数，最多 14 天")
+    async def slash_upcoming(interaction, days: int = 7):
+        await _handle_slash_command(interaction, f"/upcoming {days}")
+
+    @tree.command(name="latest", description="查看最近一条日程")
+    async def slash_latest(interaction):
+        await _handle_slash_command(interaction, "/latest")
+
+    @tree.command(name="status", description="查看配置状态")
+    async def slash_status(interaction):
+        await _handle_slash_command(interaction, "/status")
+
     @client.event
     async def on_ready():
         logger.info(f"Discord bot logged in as {client.user}")
+        if getattr(client, "_ai_calendar_commands_synced", False):
+            return
+        try:
+            await tree.sync()
+            for guild in client.guilds:
+                tree.copy_global_to(guild=guild)
+                await tree.sync(guild=guild)
+            client._ai_calendar_commands_synced = True
+            logger.info("Discord slash commands synced")
+        except Exception:
+            logger.exception("Discord slash command sync failed")
 
     @client.event
     async def on_message(message):
@@ -77,6 +108,41 @@ def register_handlers(client) -> None:
 async def _send_discord_replies(message, session, replies: list[tuple[str, int | None]]) -> None:
     for response, record_id in replies:
         sent = await message.reply(response)
+        bind_bot_message(session, record_id, str(sent.id))
+    session.commit()
+
+
+async def _handle_slash_command(interaction, command_text: str) -> None:
+    user_id = str(interaction.user.id)
+    with SessionLocal() as session:
+        from app.db.models import DiscordIdentity
+        if session.query(DiscordIdentity).filter_by(discord_user_id=user_id, enabled=True).first() is None:
+            await interaction.response.send_message(
+                f"你没有权限使用此 Bot。你的 Discord user_id 是：`{user_id}`\n请联系管理员在控制台中添加。",
+                ephemeral=True,
+            )
+            return
+
+        ctx = ChannelContext(
+            "discord",
+            user_id,
+            str(interaction.channel_id),
+            str(interaction.id),
+            None,
+        )
+        replies = await handle_command(session, ctx, command_text)
+        await _send_interaction_replies(interaction, session, replies or [])
+
+
+async def _send_interaction_replies(interaction, session, replies: list[tuple[str, int | None]]) -> None:
+    first = True
+    for response, record_id in replies:
+        if first:
+            await interaction.response.send_message(response)
+            sent = await interaction.original_response()
+            first = False
+        else:
+            sent = await interaction.followup.send(response, wait=True)
         bind_bot_message(session, record_id, str(sent.id))
     session.commit()
 
