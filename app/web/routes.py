@@ -27,8 +27,7 @@ from app.services.telegram_service import TelegramService
 router = APIRouter(prefix="/console")
 templates = Jinja2Templates(directory="app/web/templates")
 template_globals: dict[str, Any] = templates.env.globals
-template_globals["version"] = read_version()
-template_globals["changes"] = read_changes()
+template_globals["app_version"] = read_version
 
 
 def get_db() -> Generator[Session, None, None]:

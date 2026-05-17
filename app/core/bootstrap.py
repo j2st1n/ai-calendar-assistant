@@ -3,6 +3,7 @@ import os
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -103,24 +104,38 @@ def read_version() -> str:
         return "dev"
 
 
-def read_changes() -> list[str]:
+def read_changes() -> dict[str, Any]:
     try:
         lines = Path("CHANGELOG.md").read_text().splitlines()
     except Exception:
-        return []
+        return {"version": "", "sections": []}
 
-    latest: list[str] = []
+    version = ""
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
     in_latest = False
     for line in lines:
         if line.startswith("## "):
             if in_latest:
                 break
             in_latest = True
-            latest.append(line.lstrip("# ").strip())
+            version = line.lstrip("# ").strip()
             continue
-        if in_latest and line.strip():
-            latest.append(line.strip())
-    return latest
+        if not in_latest:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("### "):
+            current = {"title": stripped.lstrip("# ").strip(), "entries": []}
+            sections.append(current)
+            continue
+        if stripped.startswith("- "):
+            if current is None:
+                current = {"title": "Changes", "entries": []}
+                sections.append(current)
+            current["entries"].append(stripped[2:].strip())
+    return {"version": version, "sections": sections}
 
 
 def generate_password() -> str:

@@ -128,14 +128,20 @@
 {% endif %}
 
 
-{% if changes %}
+{% if changes and changes.sections %}
 <details style="margin-top:24px;">
   <summary style="cursor:pointer;color:#8a8f98;font-size:14px;font-weight:500;margin-bottom:8px;">
     更新说明 ({{ version or 'dev' }})
   </summary>
   <div style="color:#62666d;font-size:12px;line-height:1.8;padding:8px 0;">
-    {% for line in changes %}
-    <div>{{ line }}</div>
+    <div style="color:#8a8f98;font-weight:600;margin-bottom:8px;">{{ changes.version }}</div>
+    {% for section in changes.sections %}
+    <div style="color:#d0d6e0;font-weight:600;margin-top:10px;">{{ section.title }}</div>
+    <ul style="margin:4px 0 0 18px;padding:0;">
+      {% for item in section.entries %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
     {% endfor %}
   </div>
 </details>
