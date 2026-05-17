@@ -365,8 +365,13 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         processor = MessageProcessor()
         replies = await processor.process(session, user_id, text)
-        for response, _ in replies:
-            await update.effective_message.reply_text(response)
+        for response, record_id in replies:
+            sent = await update.effective_message.reply_text(response)
+            if record_id and sent:
+                rec = session.get(EventRecord, record_id)
+                if rec:
+                    rec.bot_message_id = str(sent.message_id)
+        session.commit()
 
 
 async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -74,21 +74,23 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc, sourc
             return [(_format_one(result.event), r)]
         return [("🤔 仍缺少信息，请重新描述。", None)]
 
-    target = await _find_target(session, user_id, reply_to)
+    target = await _find_target(session, user_id, reply_to, source)
+    if reply_to and target is None:
+        return [("🤔 没有找到这条回复对应的日程。请回复我发送的某条日程消息，或重新描述要修改的日程。", None)]
     if reply_to and target and target.event_json:
         existing = json.loads(target.event_json)
         quick = _try_quick_modify(text, existing)
         if quick:
-            await _do_modify_with(session, user_id, text, target, quick, caldav, source)
+            rec_id = await _do_modify_with(session, user_id, text, target, quick, caldav, source)
             session.commit()
-            return [(_format_modify_result(quick), None)]
+            return [(_format_modify_result(quick), rec_id)]
         mod_result = await extractor.modify(existing, text)
         if mod_result.intent == Intent.delete_event:
             return [(await _do_delete_with(session, user_id, target, caldav, source), None)]
         merged = _merge_event(existing, mod_result.event, caldav["dur"])
-        await _do_modify_with(session, user_id, text, target, merged, caldav, source)
+        rec_id = await _do_modify_with(session, user_id, text, target, merged, caldav, source)
         session.commit()
-        return [(_format_modify_result(merged), None)]
+        return [(_format_modify_result(merged), rec_id)]
 
     result = await extractor.extract(text)
     if result.intent == Intent.delete_event:
@@ -96,13 +98,13 @@ async def _route(session, user_id, text, reply_to, extractor, caldav, svc, sourc
     if result.intent == Intent.update_event and target and result.event:
         existing = json.loads(target.event_json) if target.event_json else {}
         merged = _merge_event(existing, result.event, caldav["dur"])
-        await _do_modify_with(session, user_id, text, target, merged, caldav, source)
+        rec_id = await _do_modify_with(session, user_id, text, target, merged, caldav, source)
         session.commit()
-        return [(_format_modify_result(merged), None)]
+        return [(_format_modify_result(merged), rec_id)]
     return await _handle_new(session, user_id, text, result, caldav, svc, source)
 
 
-async def _find_target(session, user_id, reply_to) -> EventRecord | None:
+async def _find_target(session, user_id, reply_to, source="telegram") -> EventRecord | None:
     deleted_uids = select(EventRecord.caldav_uid).where(
         EventRecord.operation == "delete",
         EventRecord.caldav_uid.isnot(None),
@@ -110,7 +112,10 @@ async def _find_target(session, user_id, reply_to) -> EventRecord | None:
     if reply_to:
         rec = session.execute(
             select(EventRecord).where(
+                EventRecord.source == source,
+                EventRecord.telegram_user_id == user_id,
                 EventRecord.bot_message_id == reply_to,
+                EventRecord.operation.in_(["create", "update"]),
                 or_(
                     EventRecord.caldav_uid.is_(None),
                     ~EventRecord.caldav_uid.in_(deleted_uids),
@@ -119,10 +124,13 @@ async def _find_target(session, user_id, reply_to) -> EventRecord | None:
         ).scalar()
         if rec:
             return rec
+        logger.warning("Reply target not found: source=%s user_id=%s reply_to=%s", source, user_id, reply_to)
+        return None
     cutoff = int((time.time() - LAST_EVENT_WINDOW) * 1000)
     return session.execute(
         select(EventRecord)
         .where(
+            EventRecord.source == source,
             EventRecord.telegram_user_id == user_id,
             EventRecord.operation.in_(["create", "update"]),
             or_(
@@ -149,7 +157,7 @@ async def _do_delete_with(session, user_id, target, caldav, source="telegram") -
     return f"🗑️ 已删除日程：{title}{status}"
 
 
-async def _do_modify_with(session, user_id, text, target, new_event, caldav, source="telegram"):
+async def _do_modify_with(session, user_id, text, target, new_event, caldav, source="telegram") -> int:
     title = _g(new_event, "title") or "日程"
     if caldav["url"] and target.caldav_uid:
         cal = CalDAVService()
@@ -162,7 +170,7 @@ async def _do_modify_with(session, user_id, text, target, new_event, caldav, sou
             target.start_time = new_event.get("start_time", "")
             target.event_json = json.dumps(new_event, ensure_ascii=False)
         session.commit()
-    _record(session, user_id, "update", title, text, "success",
+    return _record(session, user_id, "update", title, text, "success",
              json.dumps(new_event, ensure_ascii=False),
              cr={"href": target.caldav_href, "uid": target.caldav_uid},
              start_time=new_event.get("start_time", ""), source=source)
@@ -316,7 +324,7 @@ def _quick_modify_leftover(text: str, consumed: list[tuple[int, int]]) -> str:
 
 
 async def _do_delete(session, user_id, reply_to, caldav, source="telegram") -> str:
-    target = await _find_target(session, user_id, reply_to)
+    target = await _find_target(session, user_id, reply_to, source)
     if target is None:
         return "🤔 没有找到要删除的日程。请回复某条日程消息，或最近 24 小时内创建过日程。"
     title = target.title or "日程"
