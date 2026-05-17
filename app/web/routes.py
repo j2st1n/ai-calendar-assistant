@@ -923,23 +923,16 @@ async def event_records(
     )
 
 
-@router.post("/system")
-async def update_system_settings(
+@router.post("/system/admin")
+async def update_admin_settings(
     request: Request,
     username: str = Form(""),
     current_password: str = Form(""),
     new_password: str = Form(""),
     confirm_password: str = Form(""),
-    session_days: int = Form(7),
-    event_record_limit: int = Form(0),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    if session_days < 1 or session_days > 365:
-        return redirect("/console/system?error=Session 有效期必须在 1 到 365 天之间。")
-    if event_record_limit > 100000:
-        return redirect("/console/system?error=记录保留数量必须在 1 到 100000 之间。")
-
     settings_service = SettingsService(session)
     saved_password_hash = settings_service.get("admin_password_hash")
     if new_password or confirm_password:
@@ -951,10 +944,24 @@ async def update_system_settings(
         settings_service.set("admin_password_changed", "true")
 
     settings_service.set("admin_username", username.strip() or "admin")
-    settings_service.set("session_days", str(session_days))
-    if event_record_limit > 0:
-        settings_service.set("event_record_limit", str(event_record_limit))
-        prune_event_records(session, event_record_limit)
+    settings_service.commit()
+    set_flash(request, "管理员设置已保存。")
+    return redirect("/console/system")
+
+
+@router.post("/system/data")
+async def update_data_settings(
+    request: Request,
+    event_record_limit: int = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    if event_record_limit < 1 or event_record_limit > 100000:
+        return redirect("/console/system?error=记录保留数量必须在 1 到 100000 之间。")
+
+    settings_service = SettingsService(session)
+    settings_service.set("event_record_limit", str(event_record_limit))
+    prune_event_records(session, event_record_limit)
     set_flash(request, "系统设置已保存。")
     return redirect("/console/system")
 

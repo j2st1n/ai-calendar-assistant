@@ -9,7 +9,7 @@
 
   <div class="card" style="margin-bottom:0;">
     <h2>管理员</h2>
-    <form method="post" action="/console/system" class="stack">
+    <form method="post" action="/console/system/admin" class="stack">
       <label>
         <span>用户名</span>
         <input name="username" value="{{ username }}" required>
@@ -34,7 +34,7 @@
 
   <div class="card" style="margin-bottom:0;">
     <h2>数据管理</h2>
-    <form method="post" action="/console/system" class="stack">
+    <form method="post" action="/console/system/data" class="stack">
       <label>
         <span>事件记录保留数量</span>
         <input name="event_record_limit" type="number" min="1" max="100000" value="{{ event_record_limit }}" required>
