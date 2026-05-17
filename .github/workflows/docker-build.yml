@@ -57,7 +57,7 @@ jobs:
           args: --tag ${{ env.VER }} --output CHANGELOG.md
 
       - name: Set version
-        run: echo "${VER#v}" > VERSION
+        run: echo "$VER" > VERSION
 
       - name: Commit changelog and version back
         if: env.SKIP_BUMP == '0'
