@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.1.3] - 2026-05-17
+
+
+### Bug Fixes
+
+- move web alerts from query params to flash — Web提示从URL参数改为Flash
+
+
+
+### Maintenance
+
+- bump version to 1.1.2 [skip ci]
+
+
 ## [v1.1.2] - 2026-05-17
 
 
