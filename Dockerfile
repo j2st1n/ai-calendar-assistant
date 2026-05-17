@@ -10,7 +10,7 @@ RUN groupadd -g 1000 app \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY VERSION CHANGES ./
+COPY VERSION CHANGELOG.md ./
 COPY app ./app
 COPY .env.example ./.env.example
 COPY .env.example ./.env.example
