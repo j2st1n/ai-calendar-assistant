@@ -10,9 +10,8 @@
 - 📅 **自然语言提取** — Telegram / Discord 里说一句「明天下午 3 点和张三开会」，自动创建日程
 - ✏️ **自然语言修改** — 回复日程消息即可修改时间、地点、提醒、描述等字段
 - 🧭 **精准回复定位** — 按渠道和会话定位被回复的日程，避免改错最近一条
-- 🧩 **多渠道基础** — 已支持 Telegram、Discord，并预留飞书、微信等渠道扩展模型
 - 🤖 **自定义 AI 供应商** — 支持 OpenAI、DeepSeek、Anthropic、OpenRouter、Ollama 等任意 OpenAI 兼容接口
-- 📆 **CalDAV 同步** — 群晖 / iCloud / Nextcloud / Radicale / Baikal 等标准 CalDAV 日历
+- 📆 **CalDAV 同步** — 已测试群晖和 iCloud，推荐使用 iCloud
 - 🔐 **自部署、单用户** — 数据全在本地，不上传第三方
 - 📸 **图片识别日程** — 发送照片自动识别文字后提取日程
 - 🎛️ **Web 控制台** — 概览状态、配置 AI/日历/Telegram/Discord、查看事件记录
@@ -56,7 +55,7 @@ Please change this password in System Settings.
 选择供应商（OpenAI / DeepSeek / Anthropic 等），填写 Base URL 和 API Key，拉取模型列表选择模型，测试连接通过后保存。
 
 - 支持所有 OpenAI-compatible 接口，可自定义 Base URL
-- 支持设置独立的识图模型，用于 Telegram 图片识别
+- 支持设置独立的识图模型，用于图片识别
 
 ### 2. 日历设置
 
@@ -64,10 +63,8 @@ Please change this password in System Settings.
 
 | 服务 | 地址示例 | 状态 |
 |---|---|---|
+| iCloud | `https://caldav.icloud.com` | ✅ 已测试，推荐 |
 | 群晖 | `https://nas.example.com:5001/caldav/` | ✅ 已测试 |
-| iCloud | `https://caldav.icloud.com` | |
-| Nextcloud | `https://cloud.example.com/remote.php/dav/` | |
-| Radicale | `http://localhost:5232` | |
 
 ### 3. Telegram 设置
 
@@ -103,7 +100,8 @@ Bot：🗑️ 已删除日程：和张三开会
 
 ## 安全
 
-- 数据全在本地 SQLite，不上传第三方（配置文件除外）
+- 日程记录和配置存储在本地 SQLite / 本地文件中
+- 自然语言输入、图片内容和必要的日程上下文会发送给你配置的 AI 模型服务用于识别与修改
 - 管理员密码使用 bcrypt 哈希存储
 - AI API Key、Telegram Token、CalDAV 密码使用 `APP_SECRET_KEY` 加密存储
 - Web 控制台默认只绑定 `127.0.0.1`，不暴露公网
@@ -117,23 +115,6 @@ docker compose pull && docker compose up -d
 ```
 
 数据在 `data/` 目录下持久化，升级不会丢失配置和记录。
-
-## 版本与更新日志
-
-当前版本见 [`VERSION`](VERSION)，完整更新日志见 [`CHANGELOG.md`](CHANGELOG.md)。Web 控制台概览页会读取 `CHANGELOG.md` 最新版本段展示更新说明。
-
-发布新版本时使用：
-
-```bash
-scripts/release.sh 1.0.0-beta.1
-```
-
-脚本会更新 `VERSION`、用 git-cliff 生成 `CHANGELOG.md`、创建 release commit 和 tag。确认无误后再手动 push：
-
-```bash
-git push
-git push origin v1.0.0-beta.1
-```
 
 ## 目录结构
 
@@ -159,7 +140,3 @@ git clone https://github.com/j2st1n/ai-calendar-assistant.git
 cd ai-calendar-assistant
 docker compose -f docker-compose.dev.yml up -d --build
 ```
-
-## License
-
-MIT
