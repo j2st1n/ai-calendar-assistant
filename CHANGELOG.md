@@ -1,6 +1,22 @@
 # Changelog
 
-## [1.1.1] - 2026-05-17
+## [v1.1.2] - 2026-05-17
+
+
+### Bug Fixes
+
+- persist admin password changes separately — 单独保存管理员密码修改
+
+
+
+### Maintenance
+
+- preserve v prefix in generated version and changelog — CI生成版本和更新日志保留v前缀
+
+- bump version to 1.1.1 [skip ci]
+
+
+## [v1.1.1] - 2026-05-17
 
 
 ### Bug Fixes
@@ -14,7 +30,7 @@
 - bump version to 1.1.0, fix CI semver sort and changelog commit-back — 升级版本到1.1.0，修复CI semver排序和更新日志回写
 
 
-## [1.1.0] - 2026-05-17
+## [v1.1.0] - 2026-05-17
 
 
 ### Bug Fixes
@@ -36,7 +52,7 @@
 - auto-generate CHANGELOG.md and version in build — CI自动生成CHANGELOG和版本号
 
 
-## [1.0.0] - 2026-05-17
+## [v1.0.0] - 2026-05-17
 
 
 ### Bug Fixes
@@ -74,7 +90,7 @@
 - move Discord adapter to integrations — 移动Discord适配层
 
 
-## [1.0.0-beta.1] - 2026-05-17
+## [v1.0.0-beta.1] - 2026-05-17
 
 
 ### Bug Fixes
@@ -90,7 +106,7 @@
 - automate changelog generation — 自动化更新日志生成
 
 
-## [0.17.17] - 2026-05-17
+## [v0.17.17] - 2026-05-17
 
 
 ### Bug Fixes
@@ -98,7 +114,7 @@
 - dedupe current events by event id — 用事件ID去重当前日程
 
 
-## [0.17.16] - 2026-05-17
+## [v0.17.16] - 2026-05-17
 
 
 ### Bug Fixes
@@ -118,7 +134,7 @@
 - introduce channel context — 引入渠道上下文抽象
 
 
-## [0.17.12] - 2026-05-17
+## [v0.17.12] - 2026-05-17
 
 
 ### Bug Fixes
@@ -134,7 +150,7 @@
 - handle empty reminders in modify result — 修改结果兼容空提醒列表
 
 
-## [0.17.7] - 2026-05-16
+## [v0.17.7] - 2026-05-16
 
 
 ### Bug Fixes
@@ -142,7 +158,7 @@
 - track event source for Discord vs Telegram — 事件来源区分Discord和Telegram
 
 
-## [0.17.6] - 2026-05-16
+## [v0.17.6] - 2026-05-16
 
 
 ### Bug Fixes
@@ -150,7 +166,7 @@
 - modify should only merge changed fields — 修改只合并AI实际返回的字段
 
 
-## [0.17.5] - 2026-05-16
+## [v0.17.5] - 2026-05-16
 
 
 ### Bug Fixes
@@ -158,7 +174,7 @@
 - relax validation for partial update events — 修改路径放宽校验支持部分字段更新
 
 
-## [0.17.4] - 2026-05-16
+## [v0.17.4] - 2026-05-16
 
 
 ### Bug Fixes
@@ -166,7 +182,7 @@
 - hard rule for reminder extraction in modify — 提醒修改提升为CRITICAL规则
 
 
-## [0.17.3] - 2026-05-16
+## [v0.17.3] - 2026-05-16
 
 
 ### Bug Fixes
@@ -174,7 +190,7 @@
 - clear reminder extraction rule in modify prompt — 明确提醒修改规则避免AI默认值
 
 
-## [0.17.2] - 2026-05-16
+## [v0.17.2] - 2026-05-16
 
 
 ### Bug Fixes
@@ -182,7 +198,7 @@
 - full event display on modify and multi-field prompt — 修改回复显示完整日程并优化AI提示
 
 
-## [0.17.1] - 2026-05-16
+## [v0.17.1] - 2026-05-16
 
 
 ### Bug Fixes
@@ -190,7 +206,7 @@
 - AI modify prompt supports reminders change — AI修改提示支持提醒时间修改
 
 
-## [0.17.0] - 2026-05-16
+## [v0.17.0] - 2026-05-16
 
 
 ### Features
@@ -198,7 +214,7 @@
 - quick-modify support X点 format — 快捷修改支持X点格式
 
 
-## [0.16.4] - 2026-05-16
+## [v0.16.4] - 2026-05-16
 
 
 ### Bug Fixes
@@ -206,7 +222,7 @@
 - track Discord reply for modify/delete — Discord回复追踪以支持修改删除
 
 
-## [0.16.3] - 2026-05-16
+## [v0.16.3] - 2026-05-16
 
 
 ### Bug Fixes
@@ -214,7 +230,7 @@
 - strip @mentions from Discord messages — 清洗Discord消息中的@提及标记
 
 
-## [0.16.2] - 2026-05-16
+## [v0.16.2] - 2026-05-16
 
 
 ### Bug Fixes
@@ -222,7 +238,7 @@
 - allow DM and threads without @mention — 私聊和子线程无需@提及
 
 
-## [0.16.1] - 2026-05-16
+## [v0.16.1] - 2026-05-16
 
 
 ### Bug Fixes
@@ -230,7 +246,7 @@
 - Discord mention gate and manual auth — Discord需@提及且手动授权
 
 
-## [0.16.0] - 2026-05-16
+## [v0.16.0] - 2026-05-16
 
 
 ### Features
@@ -238,7 +254,7 @@
 - Discord channel support — Discord渠道支持
 
 
-## [0.15.1] - 2026-05-16
+## [v0.15.1] - 2026-05-16
 
 
 ### Bug Fixes
@@ -246,7 +262,7 @@
 - add TYPE_CHECKING imports for Update/ContextTypes — 添加类型检查导入消LSP错误
 
 
-## [0.15.0] - 2026-05-16
+## [v0.15.0] - 2026-05-16
 
 
 ### Features
@@ -254,7 +270,7 @@
 - rename /list to /upcoming with future days — 重命名命令为upcoming显示未来日程
 
 
-## [0.14.0] - 2026-05-16
+## [v0.14.0] - 2026-05-16
 
 
 ### Features
@@ -262,7 +278,7 @@
 - /list grouped by date with day limit — 列表按日期分组显示并限制天数
 
 
-## [0.13.1] - 2026-05-16
+## [v0.13.1] - 2026-05-16
 
 
 ### Bug Fixes
@@ -270,7 +286,7 @@
 - AI error no longer in URL query string — AI错误不再出现在URL中
 
 
-## [0.13.0] - 2026-05-16
+## [v0.13.0] - 2026-05-16
 
 
 ### Features
@@ -278,7 +294,7 @@
 - host network mode for production compose — 正式环境用host网络访问本地API
 
 
-## [0.12.0] - 2026-05-16
+## [v0.12.0] - 2026-05-16
 
 
 ### Features
@@ -286,7 +302,7 @@
 - host network mode for local API access — 开发环境用host网络访问本地API
 
 
-## [0.11.0] - 2026-05-16
+## [v0.11.0] - 2026-05-16
 
 
 ### Features
@@ -294,7 +310,7 @@
 - vision status on dashboard and unconfigured prompt — 概览显示识图状态及未配置提示
 
 
-## [0.10.0] - 2026-05-16
+## [v0.10.0] - 2026-05-16
 
 
 ### Features
@@ -302,7 +318,7 @@
 - show vision model status on dashboard — 概览页显示识图模型状态
 
 
-## [0.9.0] - 2026-05-16
+## [v0.9.0] - 2026-05-16
 
 
 ### Features
@@ -310,7 +326,7 @@
 - auto-start Telegram bot on startup — 启动时自动运行 Telegram Bot
 
 
-## [0.8.8] - 2026-05-16
+## [v0.8.8] - 2026-05-16
 
 
 ### Bug Fixes
@@ -318,7 +334,7 @@
 - /list and /latest showed deleted/modified duplicates — 修复列表和最近显示已删除和重复日程
 
 
-## [0.8.7] - 2026-05-16
+## [v0.8.7] - 2026-05-16
 
 
 ### Bug Fixes
@@ -326,7 +342,7 @@
 - deleted events still shown in dashboard — 修复已删除日程仍显示在概览页
 
 
-## [0.8.6] - 2026-05-16
+## [v0.8.6] - 2026-05-16
 
 
 ### Bug Fixes
@@ -334,7 +350,7 @@
 - photo handler never reached and missing typing — 修复图片处理器无法触发且缺少输入提示
 
 
-## [0.8.5] - 2026-05-16
+## [v0.8.5] - 2026-05-16
 
 
 ### Bug Fixes
@@ -342,7 +358,7 @@
 - vision test/save redirect lost vision section — 修复识图测试保存重定向丢失识图区
 
 
-## [0.8.4] - 2026-05-16
+## [v0.8.4] - 2026-05-16
 
 
 ### Bug Fixes
@@ -350,7 +366,7 @@
 - vision save 422 and redirect hidden — 修复识图保存校验失败和重定向隐藏
 
 
-## [0.8.3] - 2026-05-16
+## [v0.8.3] - 2026-05-16
 
 
 ### Bug Fixes
@@ -358,7 +374,7 @@
 - vision model pull reverted to main model — 修复识图模型拉取返回主模型
 
 
-## [0.8.2] - 2026-05-16
+## [v0.8.2] - 2026-05-16
 
 
 ### Bug Fixes
@@ -366,7 +382,7 @@
 - month_str format broke month event count — 修复本月日程统计
 
 
-## [0.8.1] - 2026-05-16
+## [v0.8.1] - 2026-05-16
 
 
 ### Bug Fixes
@@ -374,7 +390,7 @@
 - dashboard stats accuracy and layout — 概览统计准确性及布局优化
 
 
-## [0.8.0] - 2026-05-15
+## [v0.8.0] - 2026-05-15
 
 
 ### Features
@@ -388,7 +404,7 @@
 - Revert "debug: log modify and delete operations — 调试修改删除操作"
 
 
-## [0.7.0] - 2026-05-15
+## [v0.7.0] - 2026-05-15
 
 
 ### Features
@@ -396,7 +412,7 @@
 - per-event separate replies for multi-event — 多条日程各自回复独立消息
 
 
-## [0.6.3] - 2026-05-15
+## [v0.6.3] - 2026-05-15
 
 
 ### Bug Fixes
@@ -404,7 +420,7 @@
 - await _write_one — 修复写入事件未等待异步完成
 
 
-## [0.6.2] - 2026-05-15
+## [v0.6.2] - 2026-05-15
 
 
 ### Bug Fixes
@@ -412,7 +428,7 @@
 - no_event commit and same-day date format — 修复无事件提交和同日时间显示
 
 
-## [0.6.1] - 2026-05-15
+## [v0.6.1] - 2026-05-15
 
 
 ### Bug Fixes
@@ -420,7 +436,7 @@
 - make _write_one async — 修复异步函数定义
 
 
-## [0.6.0] - 2026-05-15
+## [v0.6.0] - 2026-05-15
 
 
 ### Features
@@ -428,7 +444,7 @@
 - multi-event extraction, simplified reply — 支持多条日程提取，精简回复格式
 
 
-## [0.5.1] - 2026-05-15
+## [v0.5.1] - 2026-05-15
 
 
 ### Bug Fixes
@@ -436,7 +452,7 @@
 - save caldav form values on calendar list — 拉取日历列表时保存表单信息
 
 
-## [0.5.0] - 2026-05-15
+## [v0.5.0] - 2026-05-15
 
 
 ### Features
@@ -444,7 +460,7 @@
 - add typing indicator in tg — Telegram 回复时显示正在输入
 
 
-## [0.4.1] - 2026-05-15
+## [v0.4.1] - 2026-05-15
 
 
 ### Bug Fixes
@@ -452,7 +468,7 @@
 - version calc and changes interval
 
 
-## [0.4.0] - 2026-05-15
+## [v0.4.0] - 2026-05-15
 
 
 ### Bug Fixes
@@ -488,7 +504,7 @@
 - auto version based on conventional commits
 
 
-## [0.3.0] - 2026-05-15
+## [v0.3.0] - 2026-05-15
 
 
 ### Bug Fixes
@@ -556,7 +572,7 @@
 - unified flash messages across all pages
 
 
-## [0.2.0] - 2026-05-15
+## [v0.2.0] - 2026-05-15
 
 
 ### Bug Fixes
@@ -586,7 +602,7 @@
 - trigger build on tag push
 
 
-## [0.1.0] - 2026-05-14
+## [v0.1.0] - 2026-05-14
 
 
 ### Bug Fixes
