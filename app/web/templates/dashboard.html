@@ -38,7 +38,7 @@
     <h3 style="margin-bottom:8px;">日历</h3>
     {% if caldav_ok %}
     <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
-    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">{{ caldav_name }}</span>
+    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">{{ caldav_source }} / {{ caldav_name }}</span>
     {% else %}
     <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
     <a href="/console/caldav" class="button-link secondary" style="margin-top:8px;font-size:12px;padding:4px 10px;">去配置</a>

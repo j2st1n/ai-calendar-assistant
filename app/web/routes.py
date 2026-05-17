@@ -151,6 +151,11 @@ def status_context(session: Session, request: Request) -> dict[str, Any]:
     caldav_url = settings_service.get("caldav_url") or ""
     caldav_cal = settings_service.get("caldav_calendar_name") or ""
     caldav_ok = bool(caldav_url and caldav_cal)
+    caldav_source = ""
+    if caldav_ok:
+        from urllib.parse import urlparse
+        host = urlparse(caldav_url).hostname or ""
+        caldav_source = host.removeprefix("caldav.").removeprefix("dav.")
 
     recent = session.execute(
         select(EventRecord).where(
@@ -209,6 +214,7 @@ def status_context(session: Session, request: Request) -> dict[str, Any]:
         "vision_label": vision_label,
         "caldav_ok": caldav_ok,
         "caldav_name": caldav_cal if caldav_ok else "",
+        "caldav_source": caldav_source,
         "tg_running": (tg_runtime := get_telegram_bot_runtime()) is not None and tg_runtime.running,
         "dc_running": (dc_runtime := get_discord_bot_runtime()) is not None and dc_runtime.running,
         "recent_events": events,

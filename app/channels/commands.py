@@ -56,11 +56,30 @@ def _format_help(ctx: ChannelContext) -> str:
 
 
 def _format_status(session: Session) -> str:
+    from urllib.parse import urlparse
+
     svc = SettingsService(session)
     ai_vendor = svc.get("ai_provider_name") or "未配置"
     ai_model = svc.get("ai_model") or "未配置"
+
+    vision_name = svc.get("ai_vision_provider_name") or ""
+    vision_model = svc.get("ai_vision_model") or ""
+    vision_use_main = svc.get("ai_vision_use_main") or "true"
+    if vision_use_main != "false" and ai_vendor != "未配置":
+        vision_label = "共用主模型"
+    else:
+        vision_label = f"{vision_name} / {vision_model}" if (vision_name and vision_model) else "共用主模型"
+
+    caldav_url = svc.get("caldav_url") or ""
     caldav_name = svc.get("caldav_calendar_name") or "未配置"
-    return f"🤖 AI：{ai_vendor} / {ai_model}\n📆 日历：{caldav_name}"
+    host = urlparse(caldav_url).hostname or "" if caldav_url else ""
+    caldav_source = host.removeprefix("caldav.").removeprefix("dav.") if host else "未配置"
+
+    return "\n".join([
+        f"🤖 主模型：{ai_vendor} / {ai_model}",
+        f"👁️ 识图模型：{vision_label}",
+        f"📆 日历：{caldav_source} / {caldav_name}",
+    ])
 
 
 def _format_upcoming(session: Session, ctx: ChannelContext, args: list[str]) -> str:
