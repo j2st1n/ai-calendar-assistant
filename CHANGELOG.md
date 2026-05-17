@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0] - 2026-05-17
+
+### Features
+- feat: add Discord slash commands — 添加Discord斜杠命令
+- feat: share channel command handlers — 共享渠道命令处理
+
+### Bug Fixes
+- fix: avoid duplicate Discord slash commands — 避免Discord斜杠命令重复
+- fix: copy changelog in Docker build — Docker构建复制更新日志
+
+### Refactoring
+- refactor: move Discord adapter to integrations — 移动Discord适配层
+
+### Documentation
+- docs: refine readme scope and privacy notes — 调整README范围和隐私说明
+
 ## [1.0.0-beta.1] - 2026-05-17
 
 ### Features
