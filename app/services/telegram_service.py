@@ -13,9 +13,12 @@ if TYPE_CHECKING:
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.channels.commands import handle_command
+from app.channels.message_bindings import bind_bot_message
+from app.channels.message_processor import ChannelContext
 from app.channels.message_processor import MessageProcessor
 from app.core.crypto import mask_secret
-from app.db.models import EventRecord, TelegramIdentity
+from app.db.models import TelegramIdentity
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 
@@ -295,9 +298,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             for response, record_id in replies:
                 sent = await update.effective_message.reply_text(response)
                 if record_id and sent:
-                    rec = session.get(EventRecord, record_id)
-                    if rec:
-                        rec.bot_message_id = str(sent.message_id)
+                    bind_bot_message(session, record_id, str(sent.message_id))
             session.commit()
         except Exception as exc:
             logger.exception("Message processing failed")
@@ -305,20 +306,12 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_message is None:
+    if update.effective_message is None or update.effective_chat is None:
         return
-    await update.effective_message.reply_text(
-        "👋 使用方式\n\n"
-        "直接发消息即可创建日程：\n"
-        "明天下午 3 点和张三开会，地点会议室 A\n\n"
-        "回复日程消息可以修改或删除。\n"
-        "支持图片识别（需配置）。\n\n"
-        "/start    — 开始使用\n"
-        "/upcoming — 未来日程（/upcoming 7 = 未来 7 天，最多 14 天）\n"
-        "/latest   — 最近一条日程\n"
-        "/status   — 配置状态\n"
-        "/help     — 使用帮助"
-    )
+    user_id = str(update.effective_user.id) if update.effective_user else ""
+    with SessionLocal() as session:
+        replies = await handle_command(session, _telegram_context(update, user_id), "/help")
+        await _send_telegram_replies(update, session, replies or [])
 
 
 async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -381,9 +374,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         for response, record_id in replies:
             sent = await update.effective_message.reply_text(response)
             if record_id and sent:
-                rec = session.get(EventRecord, record_id)
-                if rec:
-                    rec.bot_message_id = str(sent.message_id)
+                    bind_bot_message(session, record_id, str(sent.message_id))
         session.commit()
 
 
@@ -391,91 +382,15 @@ async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if update.effective_message is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
-    days = 7
-    if context.args:
-        try:
-            days = min(int(context.args[0]), 14)
-        except ValueError:
-            pass
 
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
             await update.effective_message.reply_text("你没有权限使用此 Bot。")
             return
-
-        from datetime import datetime as dt
-        from sqlalchemy import select
-
-        records = session.execute(
-            select(EventRecord)
-            .where(
-                EventRecord.telegram_user_id == user_id,
-                EventRecord.source == "telegram",
-                EventRecord.conversation_id == str(update.effective_chat.id),
-                EventRecord.operation.in_(["create", "update", "delete"]),
-                EventRecord.status == "success",
-            )
-            .order_by(EventRecord.created_at.desc())
-        ).scalars().all()
-
-        if not records:
-            await update.effective_message.reply_text(f"📅 未来 {days} 天暂无日程")
-            return
-
-        import json as _json
-        seen = set()
-        active = []
-        for rec in records:
-            event_key = _event_key(rec)
-            if event_key in seen:
-                continue
-            seen.add(event_key)
-            if rec.operation == "delete":
-                continue
-            active.append(rec)
-
-        from datetime import date as dt_date, timedelta
-
-        cutoff = dt_date.today().isoformat()
-        end = (dt_date.today() + timedelta(days=days)).isoformat()
-        active = [r for r in active if cutoff <= _get_start(r, _json) < end]
-
-        if not active:
-            await update.effective_message.reply_text(f"📅 未来 {days} 天暂无生效日程")
-            return
-
-        active.sort(key=lambda r: _get_start(r, _json))
-
-        groups: dict[str, list[EventRecord]] = {}
-        for rec in active:
-            st = _get_start(rec, _json)
-            key = st[:10]
-            groups.setdefault(key, []).append(rec)
-
-        lines = [f"📅 未来 {days} 天日程", ""]
-        for d in sorted(groups):
-            lines.append(d)
-            evts = groups[d]
-            for rec in evts:
-                title = rec.title or "(无标题)"
-                time_part = _get_start(rec, _json)[11:16]
-                lines.append(f"🕒 {time_part}  {title}")
-            lines.append("")
-        await update.effective_message.reply_text("\n".join(lines).strip())
-
-
-def _get_start(rec, json_mod) -> str:
-    if rec.event_json:
-        try:
-            return json_mod.loads(rec.event_json).get("start_time", "") or "9"
-        except Exception:
-            return "9"
-    return "9"
-
-
-def _event_key(rec: EventRecord) -> str:
-    return rec.event_id or rec.caldav_uid or f"_{rec.id}"
+        text = "/upcoming" + (" " + " ".join(context.args) if context.args else "")
+        replies = await handle_command(session, _telegram_context(update, user_id), text)
+        await _send_telegram_replies(update, session, replies or [])
 
 
 async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -489,49 +404,8 @@ async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.effective_message.reply_text("你没有权限使用此 Bot。")
             return
 
-        from sqlalchemy import select
-
-        records = session.execute(
-            select(EventRecord)
-            .where(
-                EventRecord.telegram_user_id == user_id,
-                EventRecord.source == "telegram",
-                EventRecord.conversation_id == str(update.effective_chat.id),
-                EventRecord.operation.in_(["create", "update", "delete"]),
-                EventRecord.status == "success",
-            )
-            .order_by(EventRecord.created_at.desc())
-        ).scalars().all()
-
-        rec = None
-        seen = set()
-        for r in records:
-            event_key = _event_key(r)
-            if event_key in seen:
-                continue
-            seen.add(event_key)
-            if r.operation != "delete":
-                rec = r
-                break
-
-        if rec is None:
-            await update.effective_message.reply_text("📌 暂无日程记录")
-            return
-
-        event_json = rec.event_json or "{}"
-        import json as _json
-        data = _json.loads(event_json) if event_json else {}
-        lines = ["📌 最近日程", ""]
-        lines.append(f"{rec.title or '(无标题)'}")
-        if data.get("start_time"):
-            lines.append(f"🕒 {data['start_time'][:16].replace('T', ' ')}")
-        if data.get("location"):
-            lines.append(f"📍 {data['location']}")
-        lines.append("")
-        lines.append("回复这条消息可修改或删除。")
-        msg = await update.effective_message.reply_text("\n".join(lines))
-        rec.bot_message_id = str(msg.message_id)
-        session.commit()
+        replies = await handle_command(session, _telegram_context(update, user_id), "/latest")
+        await _send_telegram_replies(update, session, replies or [])
 
 
 async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -545,13 +419,21 @@ async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.effective_message.reply_text("你没有权限使用此 Bot。")
             return
 
-        from app.services.settings_service import SettingsService
-        svc = SettingsService(session)
-        ai_vendor = svc.get("ai_provider_name") or "未配置"
-        ai_model = svc.get("ai_model") or "未配置"
-        caldav_name = svc.get("caldav_calendar_name") or "未配置"
+        replies = await handle_command(session, _telegram_context(update, user_id), "/status")
+        await _send_telegram_replies(update, session, replies or [])
 
-        await update.effective_message.reply_text(
-            f"🤖 AI：{ai_vendor} / {ai_model}\n"
-            f"📆 日历：{caldav_name}"
-        )
+
+def _telegram_context(update: Update, user_id: str, reply_to: str | None = None) -> ChannelContext:
+    chat_id = str(update.effective_chat.id) if update.effective_chat else None
+    message_id = str(update.effective_message.message_id) if update.effective_message else None
+    return ChannelContext("telegram", user_id, chat_id, message_id, reply_to)
+
+
+async def _send_telegram_replies(update: Update, session: Session, replies: list[tuple[str, int | None]]) -> None:
+    if update.effective_message is None:
+        return
+        for response, record_id in replies:
+            sent = await update.effective_message.reply_text(response)
+            if sent:
+                bind_bot_message(session, record_id, str(sent.message_id))
+    session.commit()
