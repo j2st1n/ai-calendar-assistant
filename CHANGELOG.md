@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.1.4] - 2026-05-18
+
+
+### Bug Fixes
+
+- preserve CalDAV event timezones as UTC — 将CalDAV日程时间按UTC写入
+
+
+
+### Maintenance
+
+- bump version to 1.1.3 [skip ci]
+
+
 ## [v1.1.3] - 2026-05-17
 
 
