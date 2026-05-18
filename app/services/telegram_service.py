@@ -31,20 +31,20 @@ _bind_tokens: dict[str, float] = {}
 
 
 class TelegramBotProtocol(Protocol):
-    async def set_my_commands(self, commands: object) -> object: ...
+    async def set_my_commands(self, commands: object) -> bool: ...
 
 
 class TelegramUpdaterProtocol(Protocol):
-    async def start_polling(self, *, drop_pending_updates: bool) -> object: ...
+    async def start_polling(self, *, drop_pending_updates: bool) -> None: ...
 
 
 class TelegramApplicationProtocol(Protocol):
     bot: TelegramBotProtocol
     updater: TelegramUpdaterProtocol
 
-    async def initialize(self) -> object: ...
+    async def initialize(self) -> None: ...
 
-    async def start(self) -> object: ...
+    async def start(self) -> None: ...
 
 
 def get_telegram_bot_runtime():
@@ -157,10 +157,6 @@ class TelegramService:
         if _bind_tokens[token] < time.time():
             return "expired"
         return "pending"
-
-    def set_bot_running_username(self, username: str) -> None:
-        _ = username
-
 
 def _clean_bind_tokens() -> None:
     now = time.time()

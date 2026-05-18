@@ -87,7 +87,7 @@ class DiscordCommandTreeProtocol(Protocol):
 
     def copy_global_to(self, *, guild: object) -> None: ...
 
-    def sync(self, *, guild: object) -> Awaitable[object]: ...
+    def sync(self, *, guild: object) -> Awaitable[Sequence[object]]: ...
 
 
 class DiscordAppCommandsProtocol(Protocol):
@@ -210,6 +210,8 @@ def register_handlers(client: DiscordClientProtocol) -> None:
                 logger.exception("Discord message processing failed")
                 _ = await message.reply(f"处理消息时出错：{exc}")
 
+    # Decorator-registered handlers are live-used by discord.py at runtime;
+    # suppress static-analysis "unused function" diagnostics.
     _ = (slash_help, slash_upcoming, slash_latest, slash_status, on_ready, on_message)
 
 
