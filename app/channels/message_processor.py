@@ -92,7 +92,7 @@ async def _route(session, ctx: ChannelContext, text, extractor, caldav, svc) -> 
         return [("🤔 没有找到这条回复对应的日程。请回复我发送的某条日程消息，或重新描述要修改的日程。", None)]
     if reply_to and target and target.event_json:
         existing = json.loads(target.event_json)
-        quick = _try_quick_modify(text, existing)
+        quick = _try_quick_modify(text, existing, caldav["dur"])
         if quick:
             rec_id = await _do_modify_with(session, ctx, text, target, quick, caldav)
             session.commit()
@@ -236,7 +236,7 @@ def _to_dict(obj: object) -> dict[str, Any]:
     return {}
 
 
-def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | None:
+def _try_quick_modify(text: str, existing: dict[str, Any], dur_minutes: int = 60) -> dict[str, Any] | None:
     import re
     from datetime import timedelta as td
     old_st = existing.get("start_time", "")
@@ -294,9 +294,9 @@ def _try_quick_modify(text: str, existing: dict[str, Any]) -> dict[str, Any] | N
         return None
 
     result = dict(existing)
-    new_st = st.strftime("%Y-%m-%dT%H:%M:%S+08:00")
-    et = st + td(hours=1)
-    new_et = et.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    new_st = st.isoformat()
+    et = st + td(minutes=dur_minutes)
+    new_et = et.isoformat()
     result["start_time"] = new_st
     result["end_time"] = new_et
     return result
