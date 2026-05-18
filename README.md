@@ -121,9 +121,11 @@ docker compose pull && docker compose up -d
 ```text
 app/
   ai/           AI Provider、日程提取 Schema、Prompt
-  channels/     消息处理、Discord 渠道
+  calendar/     CalDAV 客户端、重复规则
+  channels/     消息处理、Bot 命令
   core/         配置、加密、安全、启动引导
   db/           SQLAlchemy 数据模型
+  integrations/ Discord 适配器
   services/     业务服务（AI、CalDAV、Telegram、Discord、设置）
   web/          Web 控制台路由、模板、样式
 docs/
