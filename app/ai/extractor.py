@@ -19,7 +19,7 @@ Rules:
 - Use ISO 8601 format: "2026-05-15T14:30:00+08:00".
 - Missing year → use nearest future date.
 - Missing time → default: morning=09:00, noon=12:00, afternoon=14:00, evening=19:00, else 09:00.
-- Missing end_time → default 1 hour later.
+- Missing end_time → set to null. Do not invent end_time.
 - All-day event → set is_all_day=true, only dates.
 - Reminders → minutes_before. Only include if user explicitly mentions reminders/alarms.
 - Recurrence → frequency=daily|weekly|monthly, interval, days_of_week=[MO,TU,...], day_of_month, until, count.
@@ -34,7 +34,7 @@ Return JSON:
   "events": [{{
     "title": "...",
     "start_time": "2026-05-15T15:00:00+08:00",
-    "end_time": "2026-05-15T16:00:00+08:00",
+    "end_time": null,
     "timezone": "Asia/Shanghai",
     "location": "...",
     "description": "...",
