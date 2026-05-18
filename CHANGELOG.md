@@ -1,5 +1,37 @@
 # Changelog
 
+## [v1.1.7] - 2026-05-18
+
+
+### Bug Fixes
+
+- default_duration 设置从不生效 — 时长修复
+
+- quick modify 忽略用户设置的 duration 和 timezone — 快改路径修复
+
+- reminder_minutes 设置从不生效 — 提醒时长修复
+
+
+
+### Maintenance
+
+- bump version to 1.1.4 [skip ci]
+
+
+
+### Refactoring
+
+- remove dead code and narrow protocol return types — 删除死代码并收窄协议返回类型
+
+- type Discord integration handlers — 为Discord集成处理器补充类型
+
+- type bot runtime service boundaries — 为机器人运行时服务边界补充类型
+
+- clear core service typing warnings — 清理核心服务类型告警
+
+- type CalDAV service boundaries — 为CalDAV服务边界补充类型
+
+
 ## [v1.1.4] - 2026-05-18
 
 
