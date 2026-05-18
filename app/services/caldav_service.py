@@ -1,8 +1,9 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, cast
+from typing import Protocol, TypedDict, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import caldav
@@ -10,11 +11,77 @@ from caldav.lib.error import AuthorizationError, DAVError
 from dateutil.parser import parse as parse_date
 from icalendar import Calendar, Event
 
+from app.ai.schemas import Recurrence
 from app.calendar.recurrence import to_rrule
 
 logger = logging.getLogger(__name__)
 
-_DAVClient = cast(Callable[..., Any], caldav.DAVClient)
+class CalendarObjectProtocol(Protocol):
+    url: object
+    id: object
+    data: bytes | str
+
+    def save(self) -> object: ...
+
+    def delete(self) -> object: ...
+
+
+class CalendarProtocol(Protocol):
+    url: object
+    name: str
+
+    def objects(self) -> Sequence[CalendarObjectProtocol]: ...
+
+    def save_event(self, ical: str) -> CalendarObjectProtocol: ...
+
+
+class PrincipalProtocol(Protocol):
+    def calendars(self) -> Sequence[CalendarProtocol]: ...
+
+
+class DAVClientProtocol(Protocol):
+    def principal(self) -> PrincipalProtocol: ...
+
+    def get_calendars(self) -> Sequence[CalendarProtocol]: ...
+
+    def calendar(self, url: str) -> CalendarProtocol: ...
+
+
+class ICalAddable(Protocol):
+    def add(self, name: str, value: object) -> None: ...
+
+
+class DateTimePropertyProtocol(Protocol):
+    dt: datetime
+
+
+class ICalComponentProtocol(Protocol):
+    name: str
+
+    def __contains__(self, key: object) -> bool: ...
+
+    def __getitem__(self, key: str) -> DateTimePropertyProtocol: ...
+
+    def __setitem__(self, key: str, value: object) -> None: ...
+
+
+class ReminderData(TypedDict, total=False):
+    minutes_before: int
+
+
+class EventDataPatch(TypedDict, total=False):
+    title: str
+    start_time: str
+    end_time: str
+    timezone: str
+    location: str
+    description: str
+
+
+CalDAVResult = dict[str, str]
+RecurrenceData = Recurrence | dict[str, object] | None
+
+_DAVClient = cast(Callable[..., DAVClientProtocol], caldav.DAVClient)
 
 
 class CalDAVServiceError(Exception):
@@ -53,20 +120,22 @@ class CalDAVService:
     def _list_calendars_sync(self, url: str, username: str, password: str) -> list[dict[str, str]]:
         url = url.strip()
         client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
-        errors = []
+        errors: list[str] = []
         for method in [_try_get_calendars, _try_propfind, _try_principal_calendars]:
             try:
                 calendars = method(client, url)
                 if calendars:
-                    return [{"name": getattr(cal, "name", "") or str(cal.url), "url": str(cal.url)} for cal in calendars]
+                    return [{"name": cal.name or str(cal.url), "url": str(cal.url)} for cal in calendars]
             except Exception as exc:
                 errors.append(f"{method.__name__}: {exc}")
         error_detail = "; ".join(errors) if errors else "所有方法均未发现日历"
         raise CalDAVServiceError(f"未发现任何日历。({error_detail})")
 
-    async def create_event(self, caldav_url, username, password, calendar_url, title,
-                           start_time, end_time, timezone_str, location, description,
-                           reminders, recurrence, is_all_day):
+    async def create_event(self, caldav_url: str, username: str, password: str, calendar_url: str | None,
+                           title: str, start_time: str, end_time: str | None, timezone_str: str | None,
+                           location: str | None, description: str | None,
+                           reminders: Sequence[ReminderData] | None, recurrence: RecurrenceData,
+                           is_all_day: bool) -> CalDAVResult:
         try:
             return await asyncio.to_thread(
                 self._create_event_sync, caldav_url, username, password, calendar_url,
@@ -77,9 +146,11 @@ class CalDAVService:
         except Exception as exc:
             raise CalDAVServiceError(f"创建事件失败：{exc}") from exc
 
-    def _create_event_sync(self, caldav_url, username, password, calendar_url, title,
-                           start_time, end_time, timezone_str, location, description,
-                           reminders, recurrence, is_all_day):
+    def _create_event_sync(self, caldav_url: str, username: str, password: str, calendar_url: str | None,
+                           title: str, start_time: str, end_time: str | None, timezone_str: str | None,
+                           location: str | None, description: str | None,
+                           reminders: Sequence[ReminderData] | None, recurrence: RecurrenceData,
+                           is_all_day: bool) -> CalDAVResult:
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
         calendars = client.get_calendars()
@@ -96,58 +167,61 @@ class CalDAVService:
 
         uid = str(uuid.uuid4())
         cal = Calendar()
-        cal.add("prodid", "-//AI Calendar Assistant//EN")
-        cal.add("version", "2.0")
+        _ical_add(cal, "prodid", "-//AI Calendar Assistant//EN")
+        _ical_add(cal, "version", "2.0")
         event = Event()
-        event.add("summary", title)
-        event.add("uid", uid)
-        event.add("dtstamp", datetime.now(timezone.utc))
+        _ical_add(event, "summary", title)
+        _ical_add(event, "uid", uid)
+        _ical_add(event, "dtstamp", datetime.now(timezone.utc))
         if is_all_day:
             dt = parse_date(start_time)
-            event.add("dtstart", dt.date())
+            _ical_add(event, "dtstart", dt.date())
             if end_time:
-                event.add("dtend", parse_date(end_time).date())
+                _ical_add(event, "dtend", parse_date(end_time).date())
         else:
             start_dt = _parse_caldav_datetime(start_time, timezone_str)
             end_dt = _parse_caldav_datetime(end_time, timezone_str) if end_time else start_dt + timedelta(hours=1)
-            event.add("dtstart", start_dt)
-            event.add("dtend", end_dt)
+            _ical_add(event, "dtstart", start_dt)
+            _ical_add(event, "dtend", end_dt)
         if description:
-            event.add("description", description)
+            _ical_add(event, "description", description)
         if location:
-            event.add("location", location)
+            _ical_add(event, "location", location)
         rrule = to_rrule(recurrence) if recurrence else None
         if rrule:
-            event.add("rrule", rrule)
+            _ical_add(event, "rrule", rrule)
         from icalendar import Alarm
         for r in (reminders or []):
             alarm = Alarm()
-            alarm.add("action", "DISPLAY")
-            alarm.add("trigger", timedelta(minutes=-r.get("minutes_before", 30)))
-            alarm.add("description", "Reminder")
+            _ical_add(alarm, "action", "DISPLAY")
+            _ical_add(alarm, "trigger", timedelta(minutes=-r.get("minutes_before", 30)))
+            _ical_add(alarm, "description", "Reminder")
             event.add_component(alarm)
         cal.add_component(event)
-        ical_data = cal.to_ical()
-        ical_str = ical_data.decode() if isinstance(ical_data, bytes) else str(ical_data)
+        ical_str = cal.to_ical().decode()
         saved = target_cal.save_event(ical_str)
-        href = getattr(saved, 'url', str(target_cal.url))
+        href = saved.url or target_cal.url
         return {"uid": uid, "href": str(href)}
 
-    async def delete_event(self, caldav_url, username, password, uid, href=None):
+    async def delete_event(self, caldav_url: str, username: str, password: str,
+                           uid: str | None, href: str | None = None) -> bool:
         try:
             return await asyncio.to_thread(self._delete_event_sync, caldav_url, username, password, uid, href)
         except Exception:
             return False
 
-    async def update_event(self, caldav_url, username, password, event_data, uid=None, href=None):
+    async def update_event(self, caldav_url: str, username: str, password: str,
+                           event_data: EventDataPatch, uid: str | None = None,
+                           href: str | None = None) -> bool:
         try:
             return await asyncio.to_thread(self._update_event_sync, caldav_url, username, password, event_data, uid, href)
         except Exception:
             return False
 
-    def _update_event_sync(self, caldav_url, username, password, event_data, uid, href):
-        from icalendar import Calendar as ICal, Event as ICalEvent
-        from datetime import timedelta
+    def _update_event_sync(self, caldav_url: str, username: str, password: str,
+                           event_data: EventDataPatch, uid: str | None,
+                           href: str | None) -> bool:
+        from icalendar import Calendar as ICal
 
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
@@ -155,30 +229,34 @@ class CalDAVService:
         for cal in calendars:
             try:
                 for obj in cal.objects():
-                    obj_url = getattr(obj, 'url', '')
-                    obj_uid = getattr(obj, 'id', '')
+                    obj_url = str(obj.url)
+                    obj_uid = str(obj.id)
                     if (href and obj_url == href) or (uid and obj_uid == uid):
                         ical = ICal.from_ical(obj.data)
-                        for component in ical.walk():
+                        for component in _ical_components(ical):
                             if component.name == 'VEVENT':
-                                if event_data.get('title'):
-                                    component['summary'] = event_data['title']
-                                if event_data.get('start_time'):
-                                    new_start = _parse_caldav_datetime(
-                                        event_data['start_time'], event_data.get('timezone', 'Asia/Shanghai'))
+                                title = event_data.get('title')
+                                if title:
+                                    component['summary'] = title
+                                start_time = event_data.get('start_time')
+                                timezone_name = event_data.get('timezone', 'Asia/Shanghai')
+                                if start_time:
+                                    new_start = _parse_caldav_datetime(start_time, timezone_name)
                                     component['dtstart'].dt = new_start
                                     if not event_data.get('end_time') and 'dtend' in component:
                                         component['dtend'].dt = new_start + timedelta(hours=1)
-                                if event_data.get('end_time'):
-                                    component['dtend'].dt = _parse_caldav_datetime(
-                                        event_data['end_time'], event_data.get('timezone', 'Asia/Shanghai'))
-                                if event_data.get('location'):
-                                    component['location'] = event_data['location']
-                                if event_data.get('description'):
-                                    component['description'] = event_data['description']
+                                end_time = event_data.get('end_time')
+                                if end_time:
+                                    component['dtend'].dt = _parse_caldav_datetime(end_time, timezone_name)
+                                location = event_data.get('location')
+                                if location:
+                                    component['location'] = location
+                                description = event_data.get('description')
+                                if description:
+                                    component['description'] = description
                         obj.data = ical.to_ical().decode('utf-8')
-                        print(f"[caldav update] saving obj at {getattr(obj, 'url', '?')}", flush=True)
-                        obj.save()
+                        print(f"[caldav update] saving obj at {obj.url}", flush=True)
+                        _ = obj.save()
                         print(f"[caldav update] save done", flush=True)
                         return True
             except Exception as exc:
@@ -187,40 +265,55 @@ class CalDAVService:
         print(f"[caldav update] target not found uid={uid} href={href}", flush=True)
         return False
 
-    def _delete_event_sync(self, caldav_url, username, password, uid, href):
+    def _delete_event_sync(self, caldav_url: str, username: str, password: str,
+                           uid: str | None, href: str | None) -> bool:
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
         calendars = client.get_calendars()
         for cal in calendars:
             try:
                 for obj in cal.objects():
-                    obj_url = getattr(obj, 'url', '')
-                    obj_uid = getattr(obj, 'id', '')
+                    obj_url = str(obj.url)
+                    obj_uid = str(obj.id)
                     if (href and obj_url == href) or (uid and obj_uid == uid):
-                        obj.delete()
+                        _ = obj.delete()
                         return True
             except Exception:
                 continue
         return False
 
 
-def _try_get_calendars(client, url):
+def _try_get_calendars(client: DAVClientProtocol, url: str) -> Sequence[CalendarProtocol]:
+    _ = url
     return client.get_calendars()
 
 
-def _try_principal_calendars(client, url):
+def _try_principal_calendars(client: DAVClientProtocol, url: str) -> Sequence[CalendarProtocol]:
+    _ = url
     return client.principal().calendars()
 
 
-def _try_propfind(client, url):
+def _try_propfind(client: DAVClientProtocol, url: str) -> Sequence[CalendarProtocol]:
     try:
-        client.principal()
+        _ = client.principal()
     except Exception:
         return []
     parts = url.strip("/").split("/")
     cal = client.calendar(url=url)
     cal.name = parts[-1] if parts else url
     return [cal]
+
+
+def _ical_add(component: object, name: str, value: object) -> None:
+    cast(ICalAddable, component).add(name, value)
+
+
+def _ical_components(calendar: object) -> Sequence[ICalComponentProtocol]:
+    from icalendar import Calendar as ICal
+
+    typed_calendar = cast(ICal, calendar)
+    walk = cast(Callable[[], Sequence[object]], typed_calendar.walk)
+    return cast(Sequence[ICalComponentProtocol], walk())
 
 
 def _parse_caldav_datetime(value: str, timezone_str: str | None) -> datetime:
