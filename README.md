@@ -74,6 +74,11 @@ Please change this password in System Settings.
 
 填写 Discord Bot Token，保存启动后在控制台手动授权用户。频道中需要 @Bot，私聊和 Thread 可直接对话。
 
+### 配置边界
+
+- Web 控制台是系统配置入口。
+- Telegram / Discord 只负责日程创建、查询、修改、删除和状态查看。
+
 ## 使用
 
 ### Telegram 对话

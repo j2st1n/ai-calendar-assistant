@@ -133,7 +133,7 @@ docker compose up -d
 
 ## 5. Web Console
 
-Web Console 只做配置、状态和记录查看，不承担日程交互入口。
+Web Console 是系统配置入口。Telegram / Discord 只负责日程创建、查询、修改、删除和状态查看。
 
 ### 页面
 
