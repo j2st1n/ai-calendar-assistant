@@ -3,9 +3,11 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import caldav
 from caldav.lib.error import AuthorizationError, DAVError
+from dateutil.parser import parse as parse_date
 from icalendar import Calendar, Event
 
 from app.calendar.recurrence import to_rrule
@@ -100,16 +102,16 @@ class CalDAVService:
         event.add("summary", title)
         event.add("uid", uid)
         event.add("dtstamp", datetime.now(timezone.utc))
-        from dateutil.parser import parse as parse_date
-
         if is_all_day:
             dt = parse_date(start_time)
             event.add("dtstart", dt.date())
             if end_time:
                 event.add("dtend", parse_date(end_time).date())
         else:
-            event.add("dtstart", parse_date(start_time))
-            event.add("dtend", parse_date(end_time) if end_time else parse_date(start_time) + timedelta(hours=1))
+            start_dt = _parse_caldav_datetime(start_time, timezone_str)
+            end_dt = _parse_caldav_datetime(end_time, timezone_str) if end_time else start_dt + timedelta(hours=1)
+            event.add("dtstart", start_dt)
+            event.add("dtend", end_dt)
         if description:
             event.add("description", description)
         if location:
@@ -146,7 +148,6 @@ class CalDAVService:
     def _update_event_sync(self, caldav_url, username, password, event_data, uid, href):
         from icalendar import Calendar as ICal, Event as ICalEvent
         from datetime import timedelta
-        from dateutil.parser import parse as parse_date
 
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                    ssl_verify_cert=False, timeout=120)
@@ -163,12 +164,14 @@ class CalDAVService:
                                 if event_data.get('title'):
                                     component['summary'] = event_data['title']
                                 if event_data.get('start_time'):
-                                    new_start = parse_date(event_data['start_time'])
+                                    new_start = _parse_caldav_datetime(
+                                        event_data['start_time'], event_data.get('timezone', 'Asia/Shanghai'))
                                     component['dtstart'].dt = new_start
                                     if not event_data.get('end_time') and 'dtend' in component:
                                         component['dtend'].dt = new_start + timedelta(hours=1)
                                 if event_data.get('end_time'):
-                                    component['dtend'].dt = parse_date(event_data['end_time'])
+                                    component['dtend'].dt = _parse_caldav_datetime(
+                                        event_data['end_time'], event_data.get('timezone', 'Asia/Shanghai'))
                                 if event_data.get('location'):
                                     component['location'] = event_data['location']
                                 if event_data.get('description'):
@@ -218,3 +221,18 @@ def _try_propfind(client, url):
     cal = client.calendar(url=url)
     cal.name = parts[-1] if parts else url
     return [cal]
+
+
+def _parse_caldav_datetime(value: str, timezone_str: str | None) -> datetime:
+    dt = parse_date(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_zoneinfo_or_default(timezone_str))
+    return dt.astimezone(timezone.utc)
+
+
+def _zoneinfo_or_default(timezone_str: str | None) -> ZoneInfo:
+    name = (timezone_str or "Asia/Shanghai").strip() or "Asia/Shanghai"
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("Asia/Shanghai")
