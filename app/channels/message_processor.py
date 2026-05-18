@@ -1,16 +1,18 @@
+from __future__ import annotations
+
 import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta, timezone
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.ai.extractor import EventExtractor
-from app.ai.schemas import Intent
+from datetime import datetime, timedelta, timezone
+from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
 from app.db.models import EventRecord
 from app.services.ai_provider_service import AIProviderConfig
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
@@ -74,7 +76,7 @@ def _caldav_config(svc: SettingsService) -> dict[str, Any]:
     }
 
 
-async def _route(session, ctx: ChannelContext, text, extractor, caldav, svc) -> list[tuple[str, int | None]]:
+async def _route(session: Session, ctx: ChannelContext, text: str, extractor: EventExtractor, caldav: dict[str, Any], svc: SettingsService) -> list[tuple[str, int | None]]:
     draft_key = f"draft_{ctx.source}:{ctx.source_user_id}:{ctx.conversation_id or ''}"
     draft = _pending_drafts.get(draft_key)
     if draft and (time.time() - draft.get("ts", 0)) < PENDING_DRAFT_TTL:
@@ -117,7 +119,7 @@ async def _route(session, ctx: ChannelContext, text, extractor, caldav, svc) -> 
     return await _handle_new(session, ctx, text, result, caldav, svc)
 
 
-async def _find_target(session, ctx: ChannelContext) -> EventRecord | None:
+async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | None:
     deleted_uids = select(EventRecord.caldav_uid).where(
         EventRecord.operation == "delete",
         EventRecord.caldav_uid.isnot(None),
@@ -142,7 +144,7 @@ async def _find_target(session, ctx: ChannelContext) -> EventRecord | None:
             ctx.source, ctx.source_user_id, ctx.conversation_id, ctx.reply_to_message_id,
         )
         return None
-    cutoff = int((time.time() - LAST_EVENT_WINDOW) * 1000)
+    _cutoff = int((time.time() - LAST_EVENT_WINDOW) * 1000)
     return session.execute(
         select(EventRecord)
         .where(
@@ -158,7 +160,7 @@ async def _find_target(session, ctx: ChannelContext) -> EventRecord | None:
     ).scalar()
 
 
-async def _do_delete_with(session, ctx: ChannelContext, target, caldav) -> str:
+async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRecord, caldav: dict[str, Any]) -> str:
     title = target.title or "日程"
     deleted = False
     if caldav["url"]:
@@ -173,7 +175,7 @@ async def _do_delete_with(session, ctx: ChannelContext, target, caldav) -> str:
     return f"🗑️ 已删除日程：{title}{status}"
 
 
-async def _do_modify_with(session, ctx: ChannelContext, text, target, new_event, caldav) -> int:
+async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, target: EventRecord, new_event: dict[str, Any], caldav: dict[str, Any]) -> int:
     title = _g(new_event, "title") or "日程"
     if caldav["url"] and target.caldav_uid:
         cal = CalDAVService()
@@ -192,13 +194,13 @@ async def _do_modify_with(session, ctx: ChannelContext, text, target, new_event,
              start_time=new_event.get("start_time", ""), event_id=target.event_id)
 
 
-def _g(obj, key, default=None):
+def _g(obj: object, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
 
 
-def _format_modify_result(event) -> str:
+def _format_modify_result(event: dict[str, Any]) -> str:
     return _format_event_result(event, "✅ 日程已更新！")
 
 
@@ -315,7 +317,7 @@ def _quick_modify_leftover(text: str, consumed: list[tuple[int, int]]) -> str:
     return leftover
 
 
-async def _do_delete(session, ctx: ChannelContext, caldav) -> str:
+async def _do_delete(session: Session, ctx: ChannelContext, caldav: dict[str, Any]) -> str:
     target = await _find_target(session, ctx)
     if target is None:
         return "🤔 没有找到要删除的日程。请回复某条日程消息，或最近 24 小时内创建过日程。"
@@ -333,7 +335,7 @@ async def _do_delete(session, ctx: ChannelContext, caldav) -> str:
     return f"🗑️ 已删除日程：{title}{status}"
 
 
-async def _handle_new(session, ctx: ChannelContext, text, result, caldav, svc) -> list[tuple[str, int | None]]:
+async def _handle_new(session: Session, ctx: ChannelContext, text: str, result: ExtractionResult, caldav: dict[str, Any], _svc: SettingsService) -> list[tuple[str, int | None]]:
     if result.intent == Intent.no_event:
         _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息")
         session.commit()
@@ -368,11 +370,11 @@ async def _handle_new(session, ctx: ChannelContext, text, result, caldav, svc) -
     return replies
 
 
-def _format_one(event) -> str:
+def _format_one(event: object) -> str:
     return _format_event_result(event, "✅ 日程已安排好啦！")
 
 
-def _format_event_result(event, header: str) -> str:
+def _format_event_result(event: object, header: str) -> str:
     title = _g(event, "title", "日程")
     st = _g(event, "start_time", "") or ""
     et = _g(event, "end_time", "") or ""
@@ -406,7 +408,7 @@ def _format_event_result(event, header: str) -> str:
     return "\n".join(lines)
 
 
-async def _write_one(session, ctx: ChannelContext, text, event, caldav) -> int:
+async def _write_one(session: Session, ctx: ChannelContext, text: str, event: CalendarEvent, caldav: dict[str, Any]) -> int:
     if not getattr(event, 'reminders', None):
         from app.ai.schemas import Reminder
         event.reminders = [Reminder(minutes_before=caldav["rem"])]
@@ -433,7 +435,7 @@ async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any])
     svc = CalDAVService()
     return await svc.create_event(
         caldav["url"], caldav["user"], caldav["pw"], caldav["cal"],
-        event_dict["title"], event_dict.get("start_time"), event_dict.get("end_time"),
+        event_dict["title"], cast(str, event_dict.get("start_time")), event_dict.get("end_time"),
         event_dict.get("timezone", "Asia/Shanghai"),
         event_dict.get("location"), event_dict.get("description"),
         event_dict.get("reminders"), event_dict.get("recurrence"),
@@ -441,7 +443,7 @@ async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any])
     )
 
 
-async def _write_caldav(event, caldav: dict[str, Any]) -> dict[str, Any] | None:
+async def _write_caldav(event: CalendarEvent, caldav: dict[str, Any]) -> dict[str, Any] | None:
     svc = CalDAVService()
     rec: dict[str, Any] = event.model_dump() if hasattr(event, 'model_dump') else {}
     return await svc.create_event(
@@ -454,7 +456,7 @@ async def _write_caldav(event, caldav: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
-def _record(session, ctx: ChannelContext, op, title, text, status, js, cr=None, err=None, start_time="", event_id=None) -> int:
+def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, text: str, status: str, js: str, cr: dict[str, Any] | None = None, err: str | None = None, start_time: str = "", event_id: str | None = None) -> int:
     rec = EventRecord(
         source=ctx.source, telegram_user_id=ctx.source_user_id, source_user_id=ctx.source_user_id,
         conversation_id=ctx.conversation_id, event_id=event_id or uuid.uuid4().hex, operation=op,

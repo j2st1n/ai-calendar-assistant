@@ -1,0 +1,8 @@
+[tool.basedpyright]
+include = ["app"]
+typeCheckingMode = "basic"
+reportCallInDefaultInitializer = "none"
+reportUnusedImport = "warning"
+reportUnusedVariable = "warning"
+reportUnusedParameter = "warning"
+reportUnusedCallResult = "warning"

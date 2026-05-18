@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
-from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
+from app.services.ai_provider_service import AIProviderConfig, AIProviderService
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,9 @@ Return a complete event with intent=create_event if all required fields are now 
 
 class EventExtractor:
     def __init__(self, config: AIProviderConfig, timezone: str = "Asia/Shanghai"):
-        self._config = config
-        self._timezone = timezone
-        self._service = AIProviderService()
+        self._config: AIProviderConfig = config
+        self._timezone: str = timezone
+        self._service: AIProviderService = AIProviderService()
 
     async def extract(self, text: str) -> ExtractionResult:
         prompt = EXTRACT_PROMPT.format(
@@ -105,14 +105,14 @@ class EventExtractor:
         )
         return await self._call(prompt, text)
 
-    async def modify(self, existing_event: dict[str, Any], instruction: str) -> ExtractionResult:
+    async def modify(self, existing_event: dict[str, object], instruction: str) -> ExtractionResult:
         prompt = MODIFY_PROMPT.format(
             existing_event=json.dumps(existing_event, ensure_ascii=False),
             instruction=instruction,
         )
         return await self._call(prompt, instruction)
 
-    async def merge_draft(self, draft: dict[str, Any], new_input: str) -> ExtractionResult:
+    async def merge_draft(self, draft: dict[str, object], new_input: str) -> ExtractionResult:
         prompt = MISSING_FIELDS_PROMPT.format(
             current_time=datetime.now(timezone.utc).isoformat(),
             draft=json.dumps(draft, ensure_ascii=False),
@@ -132,7 +132,7 @@ class EventExtractor:
 
 
 def _build_result(data: dict[str, Any]) -> ExtractionResult:
-    intent_str = data.get("intent", "no_event")
+    intent_str: object = data.get("intent", "no_event")
     try:
         intent = Intent(intent_str)
     except ValueError:
@@ -172,7 +172,7 @@ def _build_result(data: dict[str, Any]) -> ExtractionResult:
         return ExtractionResult(intent=intent, events=events, missing_fields=[str(exc)])
 
 
-def _build_event(data: dict[str, Any]):
+def _build_event(data: dict[str, Any]) -> CalendarEvent | None:
     from app.ai.schemas import CalendarEvent
     try:
         return CalendarEvent.model_validate(data)

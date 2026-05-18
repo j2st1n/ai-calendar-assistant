@@ -1,8 +1,8 @@
-from collections.abc import Generator
-from datetime import date, datetime as dt, timedelta
+from collections.abc import Generator, MutableMapping
+from datetime import date, timedelta
 import json
 from pathlib import Path
-from typing import Any
+from typing import cast
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -26,7 +26,7 @@ from app.services.telegram_service import TelegramService
 
 router = APIRouter(prefix="/console")
 templates = Jinja2Templates(directory="app/web/templates")
-template_globals: dict[str, Any] = templates.env.globals
+template_globals = cast(MutableMapping[str, object], templates.env.globals)
 template_globals["app_version"] = read_version
 
 
@@ -81,7 +81,7 @@ def dashboard_stats(session: Session) -> dict[str, int]:
     week_str = week_start.isoformat()
     month_str = month_start.strftime("%Y-%m")
 
-    def count_since(since_date):
+    def count_since(since_date: date) -> int:
         deleted_uids = select(EventRecord.caldav_uid).where(
             EventRecord.operation == "delete",
             EventRecord.caldav_uid.isnot(None),
@@ -106,7 +106,7 @@ def dashboard_stats(session: Session) -> dict[str, int]:
         ).order_by(EventRecord.created_at.desc())
     ).scalars().all()
 
-    seen_events = set()
+    seen_events: set[str] = set()
     today_events = week_events = month_events = 0
     for rec in all_records:
         event_key = _event_key(rec)
@@ -135,7 +135,7 @@ def dashboard_stats(session: Session) -> dict[str, int]:
     }
 
 
-def status_context(session: Session, request: Request) -> dict[str, Any]:
+def status_context(session: Session) -> dict[str, object]:
     settings_service = SettingsService(session)
     ai_name = settings_service.get("ai_provider_name") or ""
     ai_model = settings_service.get("ai_model") or ""
@@ -163,8 +163,8 @@ def status_context(session: Session, request: Request) -> dict[str, Any]:
         ).order_by(EventRecord.created_at.desc())
     ).scalars().all()
 
-    seen = set()
-    deduped = []
+    seen: set[str] = set()
+    deduped: list[EventRecord] = []
     for rec in recent:
         event_key = _event_key(rec)
         if event_key not in seen:
@@ -226,7 +226,7 @@ def _event_key(rec: EventRecord) -> str:
     return rec.event_id or rec.caldav_uid or f"_{rec.id}"
 
 
-def ai_settings_payload(settings_service: SettingsService) -> dict[str, Any]:
+def ai_settings_payload(settings_service: SettingsService) -> dict[str, object]:
     provider_name = settings_service.get("ai_provider_name") or "OpenAI"
     provider_type = settings_service.get("ai_provider_type") or "openai_compatible"
     base_url = settings_service.get("ai_base_url") or next(
@@ -255,7 +255,7 @@ def ai_settings_payload(settings_service: SettingsService) -> dict[str, Any]:
 @router.get("", response_class=HTMLResponse)
 async def dashboard(request: Request, session: Session = Depends(get_db), _: None = Depends(require_admin)) -> HTMLResponse:
     stats = dashboard_stats(session)
-    ctx = status_context(session, request)
+    ctx = status_context(session)
     ctx["stats"] = stats
     ctx["request"] = request
     ctx["message"] = get_flash(request) or request.query_params.get("message")
@@ -566,7 +566,7 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-def caldav_payload(settings_service: SettingsService) -> dict[str, Any]:
+def caldav_payload(settings_service: SettingsService) -> dict[str, object]:
     return {
         "caldav_url": settings_service.get("caldav_url") or "",
         "caldav_username": settings_service.get("caldav_username") or "",
@@ -886,7 +886,6 @@ async def event_records(
     if status_filter and status_filter != "all":
         query = select(EventRecord).where(EventRecord.status == status_filter).order_by(EventRecord.created_at.desc()).limit(100)
     if search:
-        pattern = f"%{search.strip()}%"
         query = select(EventRecord).where(
             EventRecord.original_text.contains(search.strip()) | EventRecord.title.contains(search.strip())
         ).order_by(EventRecord.created_at.desc()).limit(100)
@@ -897,7 +896,7 @@ async def event_records(
             ).order_by(EventRecord.created_at.desc()).limit(100)
 
     records = session.execute(query).scalars().all()
-    events = []
+    events: list[dict[str, object]] = []
     for rec in records:
         events.append({
             "id": rec.id,
@@ -989,7 +988,7 @@ async def clear_event_records(
 
 
 @router.get("/system/backup")
-async def download_backup(request: Request, _: None = Depends(require_admin)):
+async def download_backup(_request: Request, _: None = Depends(require_admin)):
     import io, zipfile
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
