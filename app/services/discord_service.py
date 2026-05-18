@@ -3,11 +3,10 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
-from typing import Any
+from typing import Protocol, cast
 
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
@@ -15,25 +14,59 @@ logger = logging.getLogger(__name__)
 _discord_runtime: "DiscordBotRuntime | None" = None
 
 
-def get_discord_bot_runtime():
+class DiscordIntentsProtocol(Protocol):
+    message_content: bool
+
+
+class DiscordIntentsFactory(Protocol):
+    def default(self) -> DiscordIntentsProtocol: ...
+
+
+class DiscordClientProtocol(Protocol):
+    async def start(self, token: str) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+class DiscordClientFactory(Protocol):
+    def __call__(self, *, intents: DiscordIntentsProtocol) -> DiscordClientProtocol: ...
+
+
+class DiscordIntegrationProtocol(Protocol):
+    def register_handlers(self, client: DiscordClientProtocol) -> None: ...
+
+
+def get_discord_bot_runtime() -> "DiscordBotRuntime | None":
     global _discord_runtime
     return _discord_runtime
 
 
 class DiscordBotRuntime:
+    _client: DiscordClientProtocol | None
+    _task: asyncio.Task[None] | None
+    running: bool
+    _last_error: str
+
     def __init__(self) -> None:
-        self._client: Any = None
-        self._task: asyncio.Task[None] | None = None
+        self._client = None
+        self._task = None
         self.running = False
         self._last_error = ""
 
+    @property
+    def last_error(self) -> str:
+        return self._last_error
+
     async def reload(self, token: str) -> str:
         discord = importlib.import_module("discord")
-        discord_integration = importlib.import_module("app.integrations.discord")
+        discord_integration = cast(
+            DiscordIntegrationProtocol,
+            cast(object, importlib.import_module("app.integrations.discord")),
+        )
 
         old_task = self._task
         if old_task is not None and not old_task.done():
-            old_task.cancel()
+            _ = old_task.cancel()
             await asyncio.sleep(1.5)
 
         self._task = None
@@ -41,9 +74,11 @@ class DiscordBotRuntime:
         self.running = False
         self._last_error = ""
 
-        intents = discord.Intents.default()
+        intents_factory = cast(DiscordIntentsFactory, getattr(discord, "Intents"))
+        client_factory = cast(DiscordClientFactory, getattr(discord, "Client"))
+        intents = intents_factory.default()
         intents.message_content = True
-        client = discord.Client(intents=intents)
+        client = client_factory(intents=intents)
         discord_integration.register_handlers(client)
         self._client = client
         self.running = True
@@ -53,14 +88,15 @@ class DiscordBotRuntime:
         logger.info("Discord bot start task created")
         return "started"
 
-    async def _start_client(self, client: Any, token: str) -> None:
+    async def _start_client(self, client: DiscordClientProtocol, token: str) -> None:
         discord = importlib.import_module("discord")
+        login_failure = cast(type[Exception], getattr(discord, "LoginFailure"))
 
         try:
             await client.start(token)
         except asyncio.CancelledError:
             self.running = False
-        except discord.LoginFailure as exc:
+        except login_failure as exc:
             self.running = False
             self._last_error = str(exc)
         except Exception as exc:
@@ -70,7 +106,7 @@ class DiscordBotRuntime:
     async def stop(self) -> None:
         self.running = False
         if self._task:
-            self._task.cancel()
+            _ = self._task.cancel()
             self._task = None
         if self._client:
             await self._client.close()
@@ -78,12 +114,12 @@ class DiscordBotRuntime:
 
 
 class DiscordService:
-    def config_summary(self, session: Session) -> dict[str, Any]:
+    def config_summary(self, session: Session) -> dict[str, object]:
         settings_service = SettingsService(session)
         token = settings_service.get("discord_bot_token")
         token_masked = settings_service.get_masked("discord_bot_token")
         bot_running = _discord_runtime is not None and _discord_runtime.running
-        bot_error = _discord_runtime._last_error if _discord_runtime else ""
+        bot_error = _discord_runtime.last_error if _discord_runtime else ""
         application_id = settings_service.get("discord_application_id") or ""
 
         from app.db.models import DiscordIdentity
