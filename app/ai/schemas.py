@@ -32,7 +32,7 @@ class CalendarEvent(BaseModel):
     timezone: str = "Asia/Shanghai"
     location: str | None = None
     description: str | None = None
-    reminders: list[Reminder] = Field(default_factory=lambda: [Reminder()])
+    reminders: list[Reminder] | None = None
     recurrence: Recurrence | None = None
     is_all_day: bool = False
 

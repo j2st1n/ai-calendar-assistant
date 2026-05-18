@@ -21,7 +21,7 @@ Rules:
 - Missing time → default: morning=09:00, noon=12:00, afternoon=14:00, evening=19:00, else 09:00.
 - Missing end_time → default 1 hour later.
 - All-day event → set is_all_day=true, only dates.
-- Reminders → minutes_before; default 30.
+- Reminders → minutes_before. Only include if user explicitly mentions reminders/alarms.
 - Recurrence → frequency=daily|weekly|monthly, interval, days_of_week=[MO,TU,...], day_of_month, until, count.
   Supported: daily, weekly days, weekdays (all 5), monthly-by-day. Unsupported → set unsupported_reason.
 - Past/started event → set intent=create_event normally; the caller will handle confirmation.
@@ -38,7 +38,7 @@ Return JSON:
     "timezone": "Asia/Shanghai",
     "location": "...",
     "description": "...",
-    "reminders": [{{"minutes_before": 30}}],
+    "reminders": null,
     "recurrence": null,
     "is_all_day": false
   }}],
