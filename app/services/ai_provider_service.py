@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Any
 
 from anthropic import APIError as AnthropicAPIError
 from anthropic import AsyncAnthropic
@@ -67,12 +66,12 @@ class AIProviderService:
             )
         except Exception as exc:
             raise AIProviderError(f"Anthropic 调用失败：{exc}") from exc
-        content = resp.content
-        if isinstance(content, list) and len(content) > 0:
-            block: Any = content[0]
-            text = getattr(block, "text", None)
-            return text if isinstance(text, str) else str(block)
-        return str(content) if content else ""
+        if not resp.content:
+            return ""
+        block = resp.content[0]
+        if block.type == "text":
+            return block.text
+        return str(block)
 
     async def vision_completion(self, config: AIProviderConfig, base64_image: str) -> str:
         prompt = "Extract all text from this image. Return ONLY the text content, no extra commentary."
@@ -127,7 +126,7 @@ class AIProviderService:
             base_url=config.base_url,
         )
         try:
-            await client.chat.completions.create(
+            _ = await client.chat.completions.create(
                 model=config.model or "",
                 messages=[{"role": "user", "content": "Reply with OK."}],
                 max_tokens=8,
@@ -143,7 +142,7 @@ class AIProviderService:
             raise AIProviderError("Anthropic Provider 需要 API Key。")
         client = AsyncAnthropic(api_key=config.api_key, base_url=config.base_url or None)
         try:
-            await client.messages.create(
+            _ = await client.messages.create(
                 model=config.model or "",
                 max_tokens=8,
                 messages=[{"role": "user", "content": "Reply with OK."}],

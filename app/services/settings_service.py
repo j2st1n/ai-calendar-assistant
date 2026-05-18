@@ -7,6 +7,8 @@ from app.db.models import Setting
 
 
 class SettingsService:
+    session: Session
+
     def __init__(self, session: Session) -> None:
         self.session = session
 
