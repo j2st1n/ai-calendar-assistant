@@ -577,6 +577,14 @@ def _normalize_caldav_int_setting(value: str, default: int, minimum: int, intege
     return parsed, None
 
 
+def _caldav_ssl_from_settings(settings_service: SettingsService) -> bool:
+    saved = settings_service.get("caldav_ssl_verify")
+    return saved != "false"
+
+
+def _caldav_ssl_from_form(value: str) -> bool:
+    return value.strip().lower() == "true"
+
 def caldav_payload(settings_service: SettingsService) -> dict[str, object]:
     return {
         "caldav_url": settings_service.get("caldav_url") or "",
@@ -587,6 +595,7 @@ def caldav_payload(settings_service: SettingsService) -> dict[str, object]:
         "caldav_timezone": settings_service.get("caldav_timezone") or "Asia/Shanghai",
         "caldav_reminder_minutes": settings_service.get("caldav_reminder_minutes") or "30",
         "caldav_default_duration": settings_service.get("caldav_default_duration") or "60",
+        "caldav_ssl_verify": "true" if _caldav_ssl_from_settings(settings_service) else "false",
     }
 
 
@@ -628,6 +637,7 @@ async def update_caldav_settings(
     caldav_timezone: str = Form("Asia/Shanghai"),
     caldav_reminder_minutes: str = Form("30"),
     caldav_default_duration: str = Form("60"),
+    caldav_ssl_verify: str = Form("false"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -655,6 +665,7 @@ async def update_caldav_settings(
     settings_service.set("caldav_timezone", caldav_timezone.strip())
     settings_service.set("caldav_reminder_minutes", str(reminder_val))
     settings_service.set("caldav_default_duration", str(duration_val))
+    settings_service.set("caldav_ssl_verify", "true" if _caldav_ssl_from_form(caldav_ssl_verify) else "false")
     settings_service.commit()
     set_flash(request, "CalDAV 设置已保存。")
     return redirect("/console/caldav")
@@ -666,6 +677,7 @@ async def test_caldav_connection(
     caldav_url: str = Form(""),
     caldav_username: str = Form(""),
     caldav_password: str = Form(""),
+    caldav_ssl_verify: str = Form("false"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -677,11 +689,12 @@ async def test_caldav_connection(
     url = url or settings_service.get("caldav_url") or ""
     username = username or settings_service.get("caldav_username") or ""
     password = password or settings_service.get("caldav_password") or ""
+    ssl_verify = _caldav_ssl_from_form(caldav_ssl_verify)
     if not url:
         set_error_flash(request, "请填写 CalDAV Server URL。")
         return redirect("/console/caldav")
     try:
-        await CalDAVService().test_connection(url, username, password)
+        await CalDAVService().test_connection(url, username, password, ssl_verify=ssl_verify)
     except CalDAVServiceError as exc:
         error_msg = str(exc)
         if "405" in error_msg or "Not Allowed" in error_msg or "nginx" in error_msg:
@@ -698,17 +711,19 @@ async def list_caldav_calendars(
     caldav_url: str = Form(""),
     caldav_username: str = Form(""),
     caldav_password: str = Form(""),
+    caldav_ssl_verify: str = Form("false"),
     session: Session = Depends(get_db),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
     url = caldav_url.strip() or settings_service.get("caldav_url") or ""
     username = caldav_username.strip() or settings_service.get("caldav_username") or ""
     password = caldav_password.strip() or settings_service.get("caldav_password") or ""
+    ssl_verify = _caldav_ssl_from_form(caldav_ssl_verify)
     if not url:
         set_error_flash(request, "请填写 CalDAV Server URL。")
         return redirect("/console/caldav")
     try:
-        calendars = await CalDAVService().list_calendars(url, username, password)
+        calendars = await CalDAVService().list_calendars(url, username, password, ssl_verify=ssl_verify)
     except CalDAVServiceError as exc:
         set_error_flash(request, str(exc))
         return redirect("/console/caldav")

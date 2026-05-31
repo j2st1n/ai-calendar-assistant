@@ -89,17 +89,17 @@ class CalDAVServiceError(Exception):
 
 
 class CalDAVService:
-    async def test_connection(self, url: str, username: str, password: str) -> None:
+    async def test_connection(self, url: str, username: str, password: str, ssl_verify: bool = True) -> None:
         try:
-            await asyncio.to_thread(self._test_connection_sync, url, username, password)
+            await asyncio.to_thread(self._test_connection_sync, url, username, password, ssl_verify)
         except CalDAVServiceError:
             raise
         except Exception as exc:
             raise CalDAVServiceError(f"连接测试失败：{exc}") from exc
 
-    def _test_connection_sync(self, url: str, username: str, password: str) -> None:
+    def _test_connection_sync(self, url: str, username: str, password: str, ssl_verify: bool) -> None:
         url = url.strip()
-        client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
+        client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=ssl_verify, timeout=120)
         try:
             principal = client.principal()
             if not principal:
@@ -109,17 +109,17 @@ class CalDAVService:
         except DAVError as exc:
             raise CalDAVServiceError(f"连接失败：{exc.reason if getattr(exc, 'reason', None) else exc}")
 
-    async def list_calendars(self, url: str, username: str, password: str) -> list[dict[str, str]]:
+    async def list_calendars(self, url: str, username: str, password: str, ssl_verify: bool = True) -> list[dict[str, str]]:
         try:
-            return await asyncio.to_thread(self._list_calendars_sync, url, username, password)
+            return await asyncio.to_thread(self._list_calendars_sync, url, username, password, ssl_verify)
         except CalDAVServiceError:
             raise
         except Exception as exc:
             raise CalDAVServiceError(f"拉取日历列表失败：{exc}") from exc
 
-    def _list_calendars_sync(self, url: str, username: str, password: str) -> list[dict[str, str]]:
+    def _list_calendars_sync(self, url: str, username: str, password: str, ssl_verify: bool) -> list[dict[str, str]]:
         url = url.strip()
-        client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=False, timeout=120)
+        client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=ssl_verify, timeout=120)
         errors: list[str] = []
         for method in [_try_get_calendars, _try_propfind, _try_principal_calendars]:
             try:
@@ -135,12 +135,12 @@ class CalDAVService:
                            title: str, start_time: str, end_time: str | None, timezone_str: str | None,
                            location: str | None, description: str | None,
                            reminders: Sequence[ReminderData] | None, recurrence: RecurrenceData,
-                           is_all_day: bool) -> CalDAVResult:
+                           is_all_day: bool, ssl_verify: bool = True) -> CalDAVResult:
         try:
             return await asyncio.to_thread(
                 self._create_event_sync, caldav_url, username, password, calendar_url,
                 title, start_time, end_time, timezone_str, location, description,
-                reminders, recurrence, is_all_day)
+                reminders, recurrence, is_all_day, ssl_verify)
         except CalDAVServiceError:
             raise
         except Exception as exc:
@@ -150,9 +150,9 @@ class CalDAVService:
                            title: str, start_time: str, end_time: str | None, timezone_str: str | None,
                            location: str | None, description: str | None,
                            reminders: Sequence[ReminderData] | None, recurrence: RecurrenceData,
-                           is_all_day: bool) -> CalDAVResult:
+                           is_all_day: bool, ssl_verify: bool) -> CalDAVResult:
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
-                                   ssl_verify_cert=False, timeout=120)
+                                    ssl_verify_cert=ssl_verify, timeout=120)
         calendars = client.get_calendars()
         target_cal = None
         calendar_url_str = calendar_url.strip() if calendar_url else ""
@@ -204,27 +204,27 @@ class CalDAVService:
         return {"uid": uid, "href": str(href)}
 
     async def delete_event(self, caldav_url: str, username: str, password: str,
-                           uid: str | None, href: str | None = None) -> bool:
+                           uid: str | None, href: str | None = None, ssl_verify: bool = True) -> bool:
         try:
-            return await asyncio.to_thread(self._delete_event_sync, caldav_url, username, password, uid, href)
+            return await asyncio.to_thread(self._delete_event_sync, caldav_url, username, password, uid, href, ssl_verify)
         except Exception:
             return False
 
     async def update_event(self, caldav_url: str, username: str, password: str,
                            event_data: EventDataPatch, uid: str | None = None,
-                           href: str | None = None) -> bool:
+                           href: str | None = None, ssl_verify: bool = True) -> bool:
         try:
-            return await asyncio.to_thread(self._update_event_sync, caldav_url, username, password, event_data, uid, href)
+            return await asyncio.to_thread(self._update_event_sync, caldav_url, username, password, event_data, uid, href, ssl_verify)
         except Exception:
             return False
 
     def _update_event_sync(self, caldav_url: str, username: str, password: str,
                            event_data: EventDataPatch, uid: str | None,
-                           href: str | None) -> bool:
+                           href: str | None, ssl_verify: bool) -> bool:
         from icalendar import Calendar as ICal
 
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
-                                   ssl_verify_cert=False, timeout=120)
+                                    ssl_verify_cert=ssl_verify, timeout=120)
         calendars = client.get_calendars()
         for cal in calendars:
             try:
@@ -266,9 +266,9 @@ class CalDAVService:
         return False
 
     def _delete_event_sync(self, caldav_url: str, username: str, password: str,
-                           uid: str | None, href: str | None) -> bool:
+                           uid: str | None, href: str | None, ssl_verify: bool) -> bool:
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
-                                   ssl_verify_cert=False, timeout=120)
+                                    ssl_verify_cert=ssl_verify, timeout=120)
         calendars = client.get_calendars()
         for cal in calendars:
             try:

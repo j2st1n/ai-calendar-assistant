@@ -21,7 +21,7 @@ def _ctx():
 
 
 def _caldav(**overrides):
-    cfg = {"url": "", "user": "", "pw": "", "cal": "", "rem": 15, "dur": 60}
+    cfg = {"url": "", "user": "", "pw": "", "cal": "", "rem": 15, "dur": 60, "ssl": True}
     cfg.update(overrides)
     return cfg
 
@@ -114,7 +114,7 @@ def test_do_modify_creates_new_before_deleting_old(monkeypatch):
             return {"uid": "new-uid", "href": "new-href"}
 
         class FakeCalDAVService:
-            async def delete_event(self, *_args):
+            async def delete_event(self, *_args, **_kwargs):
                 calls.append("delete")
                 return True
 
@@ -165,7 +165,7 @@ def test_do_modify_preserves_old_event_when_new_create_fails(monkeypatch):
             return None
 
         class FakeCalDAVService:
-            async def delete_event(self, *_args):
+            async def delete_event(self, *_args, **_kwargs):
                 calls.append("delete")
                 return True
 
@@ -218,7 +218,7 @@ def test_do_modify_preserves_old_event_when_new_create_raises(monkeypatch):
             raise CalDAVServiceError("创建事件失败")
 
         class FakeCalDAVService:
-            async def delete_event(self, *_args):
+            async def delete_event(self, *_args, **_kwargs):
                 calls.append("delete")
                 return True
 
@@ -271,7 +271,7 @@ def test_do_modify_warns_precisely_when_old_delete_fails(monkeypatch):
             return {"uid": "new-uid", "href": "new-href"}
 
         class FakeCalDAVService:
-            async def delete_event(self, *_args):
+            async def delete_event(self, *_args, **_kwargs):
                 calls.append("delete")
                 return False
 

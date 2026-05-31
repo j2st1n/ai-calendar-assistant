@@ -73,6 +73,7 @@ def _caldav_config(svc: SettingsService) -> dict[str, Any]:
         "cal": svc.get("caldav_calendar_url") or "",
         "rem": int(svc.get("caldav_reminder_minutes") or "30"),
         "dur": int(svc.get("caldav_default_duration") or "60"),
+        "ssl": svc.get("caldav_ssl_verify") != "false",
     }
 
 
@@ -169,7 +170,7 @@ async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRe
     if caldav["url"]:
         cal = CalDAVService()
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
-                                          target.caldav_uid, target.caldav_href)
+                                          target.caldav_uid, target.caldav_href, ssl_verify=caldav["ssl"])
     _ = _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
                 target.event_json or "", cr={"uid": target.caldav_uid},
                 start_time=target.start_time or "", event_id=target.event_id)
@@ -197,7 +198,7 @@ async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, targ
             target.start_time = new_event.get("start_time", "")
             target.event_json = json.dumps(new_event, ensure_ascii=False)
             cal = CalDAVService()
-            deleted_old = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], old_uid, old_href)
+            deleted_old = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], old_uid, old_href, ssl_verify=caldav["ssl"])
             if not deleted_old:
                 status = "failed"
                 error_msg = "旧日程删除失败，可能产生重复日程"
@@ -346,7 +347,7 @@ async def _do_delete(session: Session, ctx: ChannelContext, caldav: dict[str, An
     if caldav["url"]:
         cal = CalDAVService()
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
-                                          target.caldav_uid, target.caldav_href)
+                                          target.caldav_uid, target.caldav_href, ssl_verify=caldav["ssl"])
     _ = _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
                 target.event_json or "", cr={"uid": target.caldav_uid},
                 start_time=target.start_time or "", event_id=target.event_id)
@@ -474,6 +475,7 @@ async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any])
         event_dict.get("location"), event_dict.get("description"),
         event_dict.get("reminders"), event_dict.get("recurrence"),
         event_dict.get("is_all_day", False),
+        ssl_verify=caldav["ssl"],
     )
 
 
@@ -487,6 +489,7 @@ async def _write_caldav(event: CalendarEvent, caldav: dict[str, Any]) -> dict[st
         [{"minutes_before": r.minutes_before} for r in (event.reminders or [])],
         rec.get("recurrence"),
         event.is_all_day,
+        ssl_verify=caldav["ssl"],
     )
 
 

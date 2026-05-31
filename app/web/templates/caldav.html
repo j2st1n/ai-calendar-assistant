@@ -70,6 +70,12 @@ window.addEventListener('DOMContentLoaded', function(){ selectCalendar(); });
       </label>
     </div>
 
+    <label class="checkbox-wrap" style="margin-top:4px;">
+      <input type="checkbox" name="caldav_ssl_verify" value="true" {% if caldav_ssl_verify != 'false' %}checked{% endif %}>
+      <span>验证 SSL 证书</span>
+      <span class="help-text">默认开启。如果使用自签名证书的 NAS（如群晖），可以取消此选项。</span>
+    </label>
+
     <div class="row" style="margin-top:4px;">
       <button type="submit">保存 CalDAV 设置</button>
       <button type="submit" formaction="/console/caldav/test" class="secondary">测试连接</button>
