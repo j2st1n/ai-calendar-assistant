@@ -1,5 +1,61 @@
 # Changelog
 
+## [v1.2.0] - 2026-05-31
+
+
+### Bug Fixes
+
+- log CalDAV update diagnostics — 记录CalDAV更新诊断
+
+- validate CalDAV numeric settings — 校验CalDAV数值设置
+
+- restore draft timing import — 恢复草稿计时依赖
+
+- improve terse event extraction prompt — 优化短输入日程识别
+
+- enforce recent-event modify window — 限制非回复修改窗口
+
+- preserve old event on modify sync failure — 修改同步失败时保留旧日程
+
+- surface calendar sync failures — 区分日历同步失败提示
+
+- distinguish AI extraction errors — 区分AI解析错误
+
+- normalize AI reminder output — 归一化AI提醒字段
+
+
+
+### Documentation
+
+- 明确配置与渠道边界 — 文档边界说明
+
+- 更新需求文档和 README — 修复过期内容
+
+
+
+### Features
+
+- configure CalDAV SSL verification — 配置CalDAV证书校验
+
+
+
+### Maintenance
+
+- clear route LSP warnings — 清理路由LSP告警
+
+- ignore opencode metadata — 忽略opencode元数据
+
+- LSP 清理 — routes/extractor/message_processor 类型注解 + pyright 配置
+
+- bump version to 1.1.7 [skip ci]
+
+
+
+### Other
+
+- cover recent-event modify window — 覆盖非回复修改窗口
+
+
 ## [v1.1.7] - 2026-05-18
 
 
