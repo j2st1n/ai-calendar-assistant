@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol, cast, runtime_checkable
@@ -146,13 +145,14 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
             ctx.source, ctx.source_user_id, ctx.conversation_id, ctx.reply_to_message_id,
         )
         return None
-    _cutoff = int((time.time() - LAST_EVENT_WINDOW) * 1000)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=LAST_EVENT_WINDOW)
     return session.execute(
         select(EventRecord)
         .where(
             EventRecord.source == ctx.source,
             EventRecord.conversation_id == ctx.conversation_id,
             EventRecord.operation.in_(["create", "update"]),
+            EventRecord.created_at >= cutoff,
             or_(
                 EventRecord.caldav_uid.is_(None),
                 ~EventRecord.caldav_uid.in_(deleted_uids),
