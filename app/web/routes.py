@@ -1,8 +1,11 @@
 from collections.abc import Generator, MutableMapping
 from datetime import date, timedelta
+import base64
+import importlib
+from io import BytesIO
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -20,6 +23,7 @@ from app.db.models import EventRecord
 from app.db.session import SessionLocal
 from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
+from app.integrations.ilink import ILinkClient, ILinkError
 from app.services.settings_service import SettingsService
 from app.services.telegram_service import TelegramService
 
@@ -71,6 +75,20 @@ def get_error_flash(request: Request) -> str | None:
     if msg:
         del request.session["error_flash"]
     return msg
+
+
+def _qr_image_data_url(payload: str) -> str | None:
+    try:
+        qrcode_module = importlib.import_module("qrcode")
+    except ImportError:
+        return None
+    make_qr = cast(Any, qrcode_module).make
+    image = make_qr(payload)
+    buffer = BytesIO()
+    save_image = getattr(image, "save")
+    save_image(buffer, "PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode()
+    return f"data:image/png;base64,{encoded}"
 
 
 def dashboard_stats(session: Session) -> dict[str, int]:
@@ -914,6 +932,106 @@ async def remove_discord_user(
         session.commit()
     set_flash(request, f"已移除用户 {user_id}。")
     return redirect("/console/discord")
+
+
+@router.get("/wechat", response_class=HTMLResponse)
+async def wechat_settings(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    settings_service = SettingsService(session)
+    wechat_configured = bool(settings_service.get("wechat_bot_token"))
+    return templates.TemplateResponse(
+        request,
+        "wechat.html",
+        {
+            "wechat_configured": wechat_configured,
+            "message": get_flash(request) or request.query_params.get("message"),
+            "error": get_error_flash(request) or request.query_params.get("error"),
+        },
+    )
+
+
+@router.post("/wechat/qr")
+async def fetch_wechat_qr(
+    _: None = Depends(require_admin),
+) -> dict[str, object]:
+    try:
+        client = ILinkClient()
+        detail = await client.get_qrcode_detail()
+        qr_token = detail.get("qrcode")
+        qr_payload = detail.get("qrcode_img_content") or detail.get("qrcode_url") or detail.get("url")
+        if not isinstance(qr_token, str) or not qr_token:
+            return {"error": "iLink 未返回 qrcode 轮询标识"}
+        if not isinstance(qr_payload, str) or not qr_payload:
+            qr_payload = qr_token
+        return {"qr_payload": qr_payload, "qrcode": qr_token, "qr_image": _qr_image_data_url(qr_payload)}
+    except ILinkError as exc:
+        return {"error": str(exc)}
+
+
+@router.get("/wechat/qr/status")
+async def wechat_qr_status(
+    qrcode: str = "",
+    _: None = Depends(require_admin),
+) -> dict[str, object]:
+    if not qrcode:
+        return {"status": "expired"}
+    try:
+        client = ILinkClient()
+        detail = await client.get_qrcode_status_detail(qrcode)
+        status = detail.get("status") or detail.get("qrcode_status") or detail.get("state") or "unknown"
+        if isinstance(status, str):
+            status_str = status
+        elif status is not None:
+            status_str = str(status)
+        else:
+            status_str = "unknown"
+        has_token = bool(detail.get("bot_token") or detail.get("token"))
+        return {"status": status_str, "has_token": has_token, "qrcode": qrcode}
+    except ILinkError:
+        return {"status": "unknown", "qrcode": qrcode}
+
+
+@router.post("/wechat/save")
+async def save_wechat_token(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> dict[str, object]:
+    try:
+        body = await request.json()
+    except Exception:
+        return {"error": "无效的请求"}
+    qrcode = body.get("qrcode", "")
+    if not qrcode:
+        return {"error": "缺少 qrcode 参数"}
+    try:
+        client = ILinkClient()
+        detail = await client.get_qrcode_status_detail(qrcode)
+        token = detail.get("bot_token") or detail.get("token") or ""
+        if not token:
+            return {"error": "未获取到 Bot Token"}
+        settings_service = SettingsService(session)
+        settings_service.set("wechat_bot_token", token, encrypted=True)
+        settings_service.commit()
+        return {"ok": True}
+    except ILinkError as exc:
+        return {"error": str(exc)}
+
+
+@router.post("/wechat/clear")
+async def clear_wechat_token(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    settings_service.set("wechat_bot_token", None)
+    settings_service.commit()
+    set_flash(request, "WeChat Bot Token 已清除。")
+    return redirect("/console/wechat")
 
 
 @router.get("/events", response_class=HTMLResponse)
