@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.ai.extractor import EventExtractor
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
 from app.db.models import EventRecord
 from app.services.ai_provider_service import AIProviderConfig
@@ -98,16 +98,16 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
         existing = json.loads(target.event_json)
         quick = _try_quick_modify(text, existing, caldav["dur"])
         if quick:
-            rec_id = await _do_modify_with(session, ctx, text, target, quick, caldav)
+            rec_id, warning = await _do_modify_with(session, ctx, text, target, quick, caldav)
             session.commit()
-            return [(_format_modify_result(quick), rec_id)]
+            return [(_format_modify_result(quick, warning), rec_id)]
         mod_result = await extractor.modify(existing, text)
         if mod_result.intent == Intent.delete_event:
             return [(await _do_delete_with(session, ctx, target, caldav), None)]
         merged = _merge_event(existing, mod_result.event, caldav["dur"])
-        rec_id = await _do_modify_with(session, ctx, text, target, merged, caldav)
+        rec_id, warning = await _do_modify_with(session, ctx, text, target, merged, caldav)
         session.commit()
-        return [(_format_modify_result(merged), rec_id)]
+        return [(_format_modify_result(merged, warning), rec_id)]
 
     result = await extractor.extract(text)
     if result.intent == Intent.delete_event:
@@ -115,9 +115,9 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
     if result.intent == Intent.update_event and target and result.event:
         existing = json.loads(target.event_json) if target.event_json else {}
         merged = _merge_event(existing, result.event, caldav["dur"])
-        rec_id = await _do_modify_with(session, ctx, text, target, merged, caldav)
+        rec_id, warning = await _do_modify_with(session, ctx, text, target, merged, caldav)
         session.commit()
-        return [(_format_modify_result(merged), rec_id)]
+        return [(_format_modify_result(merged, warning), rec_id)]
     return await _handle_new(session, ctx, text, result, caldav, svc)
 
 
@@ -177,23 +177,40 @@ async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRe
     return f"🗑️ 已删除日程：{title}{status}"
 
 
-async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, target: EventRecord, new_event: dict[str, Any], caldav: dict[str, Any]) -> int:
+async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, target: EventRecord, new_event: dict[str, Any], caldav: dict[str, Any]) -> tuple[int, str | None]:
     title = _g(new_event, "title") or "日程"
+    status = "success"
+    error_msg = None
+    warning = None
     if caldav["url"] and target.caldav_uid:
-        cal = CalDAVService()
-        _ = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
-                                   target.caldav_uid, target.caldav_href)
-        result = await _write_caldav_dict(new_event, caldav)
+        old_uid = target.caldav_uid
+        old_href = target.caldav_href
+        try:
+            result = await _write_caldav_dict(new_event, caldav)
+        except CalDAVServiceError as exc:
+            result = None
+            error_msg = f"CalDAV 新日程创建失败，原日程已保留：{exc}"
         if result:
             target.caldav_href = result.get("href")
             target.caldav_uid = result.get("uid")
             target.start_time = new_event.get("start_time", "")
             target.event_json = json.dumps(new_event, ensure_ascii=False)
+            cal = CalDAVService()
+            deleted_old = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], old_uid, old_href)
+            if not deleted_old:
+                status = "failed"
+                error_msg = "旧日程删除失败，可能产生重复日程"
+                warning = "⚠️ 日程已更新，但旧日程删除失败，可能出现重复日程"
+        else:
+            status = "failed"
+            error_msg = error_msg or "CalDAV 新日程创建失败，原日程已保留"
+            warning = "⚠️ 日程已记录到本地，但日历同步可能失败"
         session.commit()
-    return _record(session, ctx, "update", title, text, "success",
+    rec_id = _record(session, ctx, "update", title, text, status,
              json.dumps(new_event, ensure_ascii=False),
-             cr={"href": target.caldav_href, "uid": target.caldav_uid},
+             cr={"href": target.caldav_href, "uid": target.caldav_uid}, err=error_msg,
              start_time=new_event.get("start_time", ""), event_id=target.event_id)
+    return rec_id, warning
 
 
 def _g(obj: object, key: str, default: Any = None) -> Any:
@@ -202,8 +219,8 @@ def _g(obj: object, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def _format_modify_result(event: dict[str, Any]) -> str:
-    return _format_event_result(event, "✅ 日程已更新！")
+def _format_modify_result(event: dict[str, Any], warning: str | None = None) -> str:
+    return _format_event_result(event, warning or "✅ 日程已更新！")
 
 
 def _merge_event(existing: dict[str, Any], ai_event: object, dur_minutes: int = 60) -> dict[str, Any]:
