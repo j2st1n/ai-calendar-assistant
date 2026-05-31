@@ -124,11 +124,17 @@ class EventExtractor:
         try:
             raw = await self._service.chat_completion(self._config, system_prompt, user_message)
             if not raw:
-                return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"], confidence=0.0)
-            data = _parse_json(raw)
+                return ExtractionResult(intent=Intent.no_event, missing_fields=["empty_response"],
+                                        error_type="empty_response", confidence=0.0)
+            try:
+                data = _parse_json(raw)
+            except ValueError as exc:
+                return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)],
+                                        error_type="parse_error", confidence=0.0)
             return _build_result(data)
         except Exception as exc:
-            return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)], confidence=0.0)
+            return ExtractionResult(intent=Intent.no_event, missing_fields=[str(exc)],
+                                    error_type="system_error", confidence=0.0)
 
 
 def _build_result(data: dict[str, Any]) -> ExtractionResult:
@@ -170,7 +176,8 @@ def _build_result(data: dict[str, Any]) -> ExtractionResult:
                 if ev:
                     events.append(ev)
 
-        return ExtractionResult(intent=intent, events=events, missing_fields=[str(exc)])
+        return ExtractionResult(intent=intent, events=events,
+                                missing_fields=[str(exc)], error_type="schema_error")
 
 
 def _build_event(data: dict[str, Any]) -> CalendarEvent | None:

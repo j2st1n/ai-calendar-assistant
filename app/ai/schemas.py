@@ -44,3 +44,4 @@ class ExtractionResult(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     unsupported_reason: str | None = None
     confidence: float = 0.0
+    error_type: str | None = None
