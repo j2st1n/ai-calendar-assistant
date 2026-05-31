@@ -132,6 +132,7 @@ class EventExtractor:
 
 
 def _build_result(data: dict[str, Any]) -> ExtractionResult:
+    data = _normalize_reminders_in_data(data)
     intent_str: object = data.get("intent", "no_event")
     try:
         intent = Intent(intent_str)
@@ -174,6 +175,7 @@ def _build_result(data: dict[str, Any]) -> ExtractionResult:
 
 def _build_event(data: dict[str, Any]) -> CalendarEvent | None:
     from app.ai.schemas import CalendarEvent
+    _normalize_reminders(data)
     try:
         return CalendarEvent.model_validate(data)
     except Exception:
@@ -186,6 +188,46 @@ def _build_event(data: dict[str, Any]) -> CalendarEvent | None:
             return CalendarEvent.model_validate(filled)
         except Exception:
             return None
+
+
+def _normalize_reminders(ev_data: dict[str, Any]) -> None:
+    """Normalize reminders field in a single event dict before Pydantic validation.
+
+    Accepts: 0, 30, [0], [15], null, [{"minutes_before": n}] and converts to
+    the canonical list[dict] form. Does NOT drop a minutes_before=0 value when
+    the caller/model explicitly provides one.
+    """
+    if "reminders" not in ev_data:
+        return
+    reminders = ev_data["reminders"]
+    if reminders is None:
+        return
+    if isinstance(reminders, int):
+        ev_data["reminders"] = [{"minutes_before": reminders}]
+    elif isinstance(reminders, list):
+        normalized: list[dict[str, object]] = []
+        for r in reminders:
+            if isinstance(r, int):
+                normalized.append({"minutes_before": r})
+            elif isinstance(r, dict):
+                normalized.append(r)
+        ev_data["reminders"] = normalized
+
+
+def _normalize_reminders_in_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize reminders in the top-level data dict returned by the LLM.
+
+    Handles both the "event" key (update_event) and the "events" list
+    (create_event / provide_missing_fields).
+    """
+    if "event" in data and isinstance(data["event"], dict):
+        _normalize_reminders(data["event"])
+    events = data.get("events")
+    if isinstance(events, list):
+        for ev in events:
+            if isinstance(ev, dict):
+                _normalize_reminders(ev)
+    return data
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
