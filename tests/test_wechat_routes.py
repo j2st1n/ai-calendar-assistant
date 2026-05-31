@@ -224,3 +224,123 @@ class TestClearToken:
         assert resp.headers["location"] == "/console/wechat"
         svc.set.assert_called_once_with("wechat_bot_token", None)
         svc.commit.assert_called_once()
+
+
+class TestWechatProbe:
+    @pytest.mark.anyio
+    @patch("app.web.routes.SettingsService")
+    @patch("app.web.routes.ILinkClient")
+    async def test_probe_returns_messages_and_saves_cursor(self, MockClient, MockSettings):
+        mock_inst = MockClient.return_value
+        mock_inst.get_updates = AsyncMock(return_value=([{"text": "hello"}], "next-cursor"))
+        svc = _mock_settings({"wechat_bot_token": "tok", "wechat_updates_buf": "old-cursor"})
+        MockSettings.return_value = svc
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe", {})
+        data = resp.json()
+
+        assert data["count"] == 1
+        assert data["cursor"] == "next-cursor"
+        assert data["messages"] == [{"text": "hello"}]
+        MockClient.assert_called_once_with("tok")
+        mock_inst.get_updates.assert_awaited_once_with("old-cursor")
+        svc.set.assert_called_once_with("wechat_updates_buf", "next-cursor")
+        svc.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.SettingsService")
+    async def test_probe_fails_without_token(self, MockSettings):
+        MockSettings.return_value = _mock_settings({})
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe", {})
+        data = resp.json()
+
+        assert "error" in data
+        assert "Token 未配置" in data["error"]
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.SettingsService")
+    @patch("app.web.routes.ILinkClient")
+    async def test_probe_auth_error_prompts_rescan(self, MockClient, MockSettings):
+        from app.integrations.ilink import ILinkAuthError
+
+        mock_inst = MockClient.return_value
+        mock_inst.get_updates = AsyncMock(side_effect=ILinkAuthError("expired"))
+        MockSettings.return_value = _mock_settings({"wechat_bot_token": "tok"})
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe", {})
+        data = resp.json()
+
+        assert data["error"] == "Token 无效或已过期，请重新扫码。"
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.SettingsService")
+    @patch("app.web.routes.ILinkClient")
+    async def test_probe_sanitizes_html_in_messages(self, MockClient, MockSettings):
+        mock_inst = MockClient.return_value
+        mock_inst.get_updates = AsyncMock(return_value=([{"text": "<script>alert('x')</script>hello"}], "next"))
+        MockSettings.return_value = _mock_settings({"wechat_bot_token": "tok"})
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe", {})
+        message = resp.json()["messages"][0]
+
+        assert message["text"] == "scriptalert(x)/scripthello"
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.SettingsService")
+    async def test_clear_probe_cursor(self, MockSettings):
+        svc = _mock_settings({"wechat_updates_buf": "old"})
+        MockSettings.return_value = svc
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe/clear-cursor", {})
+        data = resp.json()
+
+        assert data["ok"] is True
+        svc.set.assert_called_once_with("wechat_updates_buf", None)
+        svc.commit.assert_called_once()
+
+
+class TestWechatProbeProcess:
+    @pytest.mark.anyio
+    @patch("app.web.routes.dispatch_wechat_message")
+    @patch("app.web.routes.SettingsService")
+    @patch("app.web.routes.ILinkClient")
+    async def test_process_probe_dispatches_messages_and_saves_cursor(self, MockClient, MockSettings, mock_dispatch):
+        mock_inst = MockClient.return_value
+        message = {"message_id": 1, "from_user_id": "u", "context_token": "ctx", "item_list": []}
+        mock_inst.get_updates = AsyncMock(return_value=([message], "next"))
+        mock_dispatch.return_value = [{"text": "ok", "record_id": None, "bot_message_id": "bot"}]
+        svc = _mock_settings({"wechat_bot_token": "tok", "wechat_updates_buf": "old"})
+        MockSettings.return_value = svc
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe/process", {})
+        data = resp.json()
+
+        assert data["count"] == 1
+        assert data["processed"][0]["message_id"] == "1"
+        MockClient.assert_called_once_with("tok")
+        mock_inst.get_updates.assert_awaited_once_with("old")
+        mock_dispatch.assert_awaited_once()
+        assert mock_dispatch.await_args is not None
+        assert mock_dispatch.await_args.args[0] == message
+        assert mock_dispatch.await_args.args[2] == mock_inst
+        svc.set.assert_called_once_with("wechat_updates_buf", "next")
+        svc.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.SettingsService")
+    async def test_process_probe_fails_without_token(self, MockSettings):
+        MockSettings.return_value = _mock_settings({})
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe/process", {})
+        data = resp.json()
+
+        assert "error" in data
+        assert "Token 未配置" in data["error"]

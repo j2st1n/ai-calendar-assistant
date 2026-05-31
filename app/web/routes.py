@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.channels.wechat_handler import dispatch_wechat_message
 from app.core.bootstrap import read_changes, read_version
 from app.core.security import hash_password, verify_password
 from app.services.telegram_service import get_telegram_bot_runtime
@@ -23,7 +24,7 @@ from app.db.models import EventRecord
 from app.db.session import SessionLocal
 from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
-from app.integrations.ilink import ILinkClient, ILinkError
+from app.integrations.ilink import ILinkAuthError, ILinkClient, ILinkError
 from app.services.settings_service import SettingsService
 from app.services.telegram_service import TelegramService
 
@@ -75,6 +76,20 @@ def get_error_flash(request: Request) -> str | None:
     if msg:
         del request.session["error_flash"]
     return msg
+
+
+def _sanitize_probe_value(value: object) -> object:
+    if isinstance(value, str):
+        return value.replace("<", "").replace(">", "").replace('"', "").replace("'", "")[:500]
+    if isinstance(value, list):
+        return [_sanitize_probe_value(item) for item in value[:50]]
+    if isinstance(value, dict):
+        return {str(key)[:80]: _sanitize_probe_value(item) for key, item in list(value.items())[:80]}
+    return value
+
+
+def _sanitize_probe_messages(messages: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [cast(dict[str, object], _sanitize_probe_value(message)) for message in messages[:50]]
 
 
 def _qr_image_data_url(payload: str) -> str | None:
@@ -1032,6 +1047,75 @@ async def clear_wechat_token(
     settings_service.commit()
     set_flash(request, "WeChat Bot Token 已清除。")
     return redirect("/console/wechat")
+
+
+@router.post("/wechat/probe")
+async def probe_wechat_messages(
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> dict[str, object]:
+    settings_service = SettingsService(session)
+    token = settings_service.get("wechat_bot_token") or ""
+    if not token:
+        return {"error": "WeChat Bot Token 未配置，请先扫码登录。"}
+    cursor = settings_service.get("wechat_updates_buf") or ""
+    try:
+        messages, new_cursor = await ILinkClient(token).get_updates(cursor)
+    except ILinkAuthError:
+        return {"error": "Token 无效或已过期，请重新扫码。"}
+    except ILinkError as exc:
+        return {"error": str(exc)}
+    settings_service.set("wechat_updates_buf", new_cursor)
+    settings_service.commit()
+    return {
+        "messages": _sanitize_probe_messages(cast(list[dict[str, object]], messages)),
+        "cursor": new_cursor,
+        "count": len(messages),
+    }
+
+
+@router.post("/wechat/probe/process")
+async def probe_and_process_wechat_messages(
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> dict[str, object]:
+    settings_service = SettingsService(session)
+    token = settings_service.get("wechat_bot_token") or ""
+    if not token:
+        return {"error": "WeChat Bot Token 未配置，请先扫码登录。"}
+    cursor = settings_service.get("wechat_updates_buf") or ""
+    client = ILinkClient(token)
+    try:
+        messages, new_cursor = await client.get_updates(cursor)
+    except ILinkAuthError:
+        return {"error": "Token 无效或已过期，请重新扫码。"}
+    except ILinkError as exc:
+        return {"error": str(exc)}
+
+    processed: list[dict[str, object]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        replies = await dispatch_wechat_message(cast(dict[str, object], message), session, client)
+        processed.append({
+            "message_id": str(message.get("message_id") or ""),
+            "from_user_id": str(message.get("from_user_id") or ""),
+            "replies": replies,
+        })
+    settings_service.set("wechat_updates_buf", new_cursor)
+    settings_service.commit()
+    return {"processed": processed, "cursor": new_cursor, "count": len(processed)}
+
+
+@router.post("/wechat/probe/clear-cursor")
+async def clear_wechat_probe_cursor(
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> dict[str, object]:
+    settings_service = SettingsService(session)
+    settings_service.set("wechat_updates_buf", None)
+    settings_service.commit()
+    return {"ok": True}
 
 
 @router.get("/events", response_class=HTMLResponse)

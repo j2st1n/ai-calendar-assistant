@@ -50,6 +50,22 @@
   </div>
 </div>
 
+
+{% if wechat_configured %}
+<div class="card">
+  <h2>消息探测</h2>
+  <p class="muted" style="margin-bottom:16px;">手动触发一次 getupdates，查看 WeChat Bot 收到的原始消息。此功能只用于协议验证，不会创建或修改日程。</p>
+  <div class="row" style="gap:8px;margin-bottom:12px;">
+    <button type="button" id="btn-probe" onclick="probeMessages()">探测消息</button>
+    <button type="button" id="btn-process" class="secondary" onclick="processProbeMessages()">处理文本消息</button>
+    <button type="button" class="secondary" onclick="clearProbeCursor()">清除游标</button>
+    <span id="probe-summary" class="muted" style="font-size:12px;"></span>
+  </div>
+  <div id="probe-error" style="display:none;"><p class="alert error" id="probe-error-msg"></p></div>
+  <pre id="probe-results" class="mono" style="display:none;white-space:pre-wrap;word-break:break-word;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:14px;font-size:12px;max-height:420px;overflow:auto;"></pre>
+</div>
+{% endif %}
+
 {% if wechat_configured %}
 <div class="card danger-zone">
   <h2>清除 Token</h2>
@@ -147,6 +163,85 @@
     })
     .catch(function(){ showError('保存 Token 时网络错误。'); });
   }
+
+  window.probeMessages = function() {
+    var btn = document.getElementById('btn-probe');
+    var summary = document.getElementById('probe-summary');
+    var results = document.getElementById('probe-results');
+    var error = document.getElementById('probe-error');
+    btn.disabled = true;
+    btn.textContent = '探测中...';
+    summary.textContent = '';
+    error.style.display = 'none';
+    fetch('/console/wechat/probe', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.error) {
+          document.getElementById('probe-error-msg').textContent = d.error;
+          error.style.display = '';
+          results.style.display = 'none';
+          return;
+        }
+        summary.textContent = '收到 ' + d.count + ' 条消息，cursor 长度 ' + (d.cursor || '').length;
+        results.textContent = JSON.stringify(d.messages || [], null, 2);
+        results.style.display = '';
+        results.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      })
+      .catch(function(){
+        document.getElementById('probe-error-msg').textContent = '探测请求失败，请重试。';
+        error.style.display = '';
+      })
+      .finally(function(){
+        btn.disabled = false;
+        btn.textContent = '探测消息';
+      });
+  };
+
+  window.processProbeMessages = function() {
+    var btn = document.getElementById('btn-process');
+    var summary = document.getElementById('probe-summary');
+    var results = document.getElementById('probe-results');
+    var error = document.getElementById('probe-error');
+    btn.disabled = true;
+    btn.textContent = '处理中...';
+    error.style.display = 'none';
+    fetch('/console/wechat/probe/process', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.error) {
+          document.getElementById('probe-error-msg').textContent = d.error;
+          error.style.display = '';
+          return;
+        }
+        summary.textContent = '处理 ' + d.count + ' 条消息，cursor 长度 ' + (d.cursor || '').length;
+        results.textContent = JSON.stringify(d.processed || [], null, 2);
+        results.style.display = '';
+        results.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      })
+      .catch(function(){
+        document.getElementById('probe-error-msg').textContent = '处理请求失败，请重试。';
+        error.style.display = '';
+      })
+      .finally(function(){
+        btn.disabled = false;
+        btn.textContent = '处理文本消息';
+      });
+  };
+
+
+  window.clearProbeCursor = function() {
+    fetch('/console/wechat/probe/clear-cursor', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) {
+          document.getElementById('probe-summary').textContent = '游标已清除';
+          var results = document.getElementById('probe-results');
+          results.textContent = '';
+          results.style.display = 'none';
+        }
+      });
+  };
+
 
   function showError(msg) {
     var el = document.getElementById('qr-error');
