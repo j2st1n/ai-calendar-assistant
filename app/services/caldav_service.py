@@ -255,14 +255,14 @@ class CalDAVService:
                                 if description:
                                     component['description'] = description
                         obj.data = ical.to_ical().decode('utf-8')
-                        print(f"[caldav update] saving obj at {obj.url}", flush=True)
+                        logger.debug("Saving CalDAV event object url=%s uid=%s href=%s", obj.url, uid, href)
                         _ = obj.save()
-                        print(f"[caldav update] save done", flush=True)
+                        logger.debug("Saved CalDAV event object url=%s uid=%s href=%s", obj.url, uid, href)
                         return True
-            except Exception as exc:
-                print(f"[caldav update] error: {exc}", flush=True)
+            except Exception:
+                logger.exception("CalDAV update failed while scanning calendar uid=%s href=%s", uid, href)
                 continue
-        print(f"[caldav update] target not found uid={uid} href={href}", flush=True)
+        logger.warning("CalDAV update target not found uid=%s href=%s", uid, href)
         return False
 
     def _delete_event_sync(self, caldav_url: str, username: str, password: str,
