@@ -780,7 +780,8 @@ async def update_telegram_settings(
     if token:
         service = TelegramService()
         service.save_token(session, token, username)
-        await service.reload_bot(token)
+        if await service.reload_bot(token):
+            pass
         target = redirect_path or "/console/telegram"
         set_flash(request, "Telegram Bot 已保存并重载。")
         return redirect(target)
@@ -870,7 +871,8 @@ async def update_discord_settings(
         return redirect("/console/discord")
     service = DiscordService()
     service.save_token(session, token, application_id.strip())
-    await service.reload_bot(token)
+    if await service.reload_bot(token):
+        pass
     set_flash(request, "Discord Bot 已保存并重载。")
     return redirect("/console/discord")
 
@@ -1021,7 +1023,8 @@ async def clear_event_records(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    session.execute(delete(EventRecord))
+    result = session.execute(delete(EventRecord))
+    result.close()
     session.commit()
     set_flash(request, "事件记录已清空。")
     return redirect("/console/events")
@@ -1036,7 +1039,8 @@ async def download_backup(_request: Request, _: None = Depends(require_admin)):
             path = Path("data") / fn
             if path.exists():
                 zf.write(path, fn)
-    buf.seek(0)
+    if buf.seek(0) != 0:
+        raise RuntimeError("failed to rewind backup buffer")
     from datetime import date
     from starlette.responses import StreamingResponse
     return StreamingResponse(buf, media_type="application/zip",
@@ -1045,5 +1049,6 @@ async def download_backup(_request: Request, _: None = Depends(require_admin)):
 
 def prune_event_records(session: Session, limit: int) -> None:
     ids_to_keep = select(EventRecord.id).order_by(EventRecord.created_at.desc()).limit(limit).subquery()
-    session.execute(delete(EventRecord).where(EventRecord.id.not_in(select(ids_to_keep.c.id))))
+    result = session.execute(delete(EventRecord).where(EventRecord.id.not_in(select(ids_to_keep.c.id))))
+    result.close()
     session.commit()
