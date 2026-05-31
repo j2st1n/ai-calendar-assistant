@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.ai.extractor import EventExtractor
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
 from app.db.models import EventRecord
 from app.services.ai_provider_service import AIProviderConfig
@@ -80,11 +80,13 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
     draft_key = f"draft_{ctx.source}:{ctx.source_user_id}:{ctx.conversation_id or ''}"
     draft = _pending_drafts.get(draft_key)
     if draft and (time.time() - draft.get("ts", 0)) < PENDING_DRAFT_TTL:
-        _pending_drafts.pop(draft_key, None)
+        _ = _pending_drafts.pop(draft_key, None)
         result = await extractor.merge_draft(draft.get("event", {}), text)
         if result.event and not result.missing_fields:
-            r = await _write_one(session, ctx, text, result.event, caldav)
+            r, caldav_ok = await _write_one(session, ctx, text, result.event, caldav)
             session.commit()
+            if caldav_ok is False:
+                return [(_format_one(result.event, "⚠️ 日程已记录到本地，但日历同步失败"), r)]
             return [(_format_one(result.event), r)]
         return [("🤔 仍缺少信息，请重新描述。", None)]
 
@@ -167,9 +169,9 @@ async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRe
         cal = CalDAVService()
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                           target.caldav_uid, target.caldav_href)
-    _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
-            target.event_json or "", cr={"uid": target.caldav_uid},
-            start_time=target.start_time or "", event_id=target.event_id)
+    _ = _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
+                target.event_json or "", cr={"uid": target.caldav_uid},
+                start_time=target.start_time or "", event_id=target.event_id)
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
@@ -179,8 +181,8 @@ async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, targ
     title = _g(new_event, "title") or "日程"
     if caldav["url"] and target.caldav_uid:
         cal = CalDAVService()
-        await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
-                               target.caldav_uid, target.caldav_href)
+        _ = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
+                                   target.caldav_uid, target.caldav_href)
         result = await _write_caldav_dict(new_event, caldav)
         if result:
             target.caldav_href = result.get("href")
@@ -327,17 +329,23 @@ async def _do_delete(session: Session, ctx: ChannelContext, caldav: dict[str, An
         cal = CalDAVService()
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                           target.caldav_uid, target.caldav_href)
-    _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
-            target.event_json or "", cr={"uid": target.caldav_uid},
-            start_time=target.start_time or "", event_id=target.event_id)
+    _ = _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
+                target.event_json or "", cr={"uid": target.caldav_uid},
+                start_time=target.start_time or "", event_id=target.event_id)
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
 
 
 async def _handle_new(session: Session, ctx: ChannelContext, text: str, result: ExtractionResult, caldav: dict[str, Any], _svc: SettingsService) -> list[tuple[str, int | None]]:
+    if result.error_type:
+        _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
+                    err=f"{'、'.join(result.missing_fields)}" if result.missing_fields else result.error_type)
+        session.commit()
+        return [("⚠️ 系统处理失败，请稍后重试。", None)]
+
     if result.intent == Intent.no_event:
-        _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息")
+        _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息")
         session.commit()
         return [("🤔 未识别到日程信息，请补充时间和事件内容。", None)]
 
@@ -347,13 +355,14 @@ async def _handle_new(session: Session, ctx: ChannelContext, text: str, result: 
             "event": result.event.model_dump() if result.event else {},
             "missing": result.missing_fields,
         }
-        _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
-                err=f"缺少字段：{'、'.join(result.missing_fields)}")
+        _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
+                    err=f"缺少字段：{'、'.join(result.missing_fields)}")
+        session.commit()
         return [(f"🤔 未识别到{'、'.join(result.missing_fields)}，请补充。", None)]
 
     if result.unsupported_reason:
-        _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
-                err=f"不支持：{result.unsupported_reason}")
+        _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
+                    err=f"不支持：{result.unsupported_reason}")
         session.commit()
         return [(f"🔁 {result.unsupported_reason}", None)]
 
@@ -361,17 +370,20 @@ async def _handle_new(session: Session, ctx: ChannelContext, text: str, result: 
     if not events:
         return [("🤔 未识别到日程信息，请补充时间和事件内容。", None)]
 
-    replies = []
+    replies: list[tuple[str, int | None]] = []
     for event in events:
-        rec_id = await _write_one(session, ctx, text, event, caldav)
-        line = _format_one(event)
+        rec_id, caldav_ok = await _write_one(session, ctx, text, event, caldav)
+        if caldav_ok is False:
+            line = _format_one(event, "⚠️ 日程已记录到本地，但日历同步失败")
+        else:
+            line = _format_one(event)
         replies.append((line, rec_id))
     session.commit()
     return replies
 
 
-def _format_one(event: object) -> str:
-    return _format_event_result(event, "✅ 日程已安排好啦！")
+def _format_one(event: object, header: str = "✅ 日程已安排好啦！") -> str:
+    return _format_event_result(event, header)
 
 
 def _format_event_result(event: object, header: str) -> str:
@@ -408,7 +420,7 @@ def _format_event_result(event: object, header: str) -> str:
     return "\n".join(lines)
 
 
-async def _write_one(session: Session, ctx: ChannelContext, text: str, event: CalendarEvent, caldav: dict[str, Any]) -> int:
+async def _write_one(session: Session, ctx: ChannelContext, text: str, event: CalendarEvent, caldav: dict[str, Any]) -> tuple[int, bool | None]:
     if not getattr(event, 'reminders', None):
         from app.ai.schemas import Reminder
         event.reminders = [Reminder(minutes_before=caldav["rem"])]
@@ -425,10 +437,14 @@ async def _write_one(session: Session, ctx: ChannelContext, text: str, event: Ca
         except CalDAVServiceError as exc:
             error_msg = str(exc)
 
-    return _record(session, ctx, "create", event.title, text,
-            "success" if caldav_result else "failed",
-            event.model_dump_json(), caldav_result, error_msg,
+    caldav_enabled = bool(caldav["url"] and caldav["user"])
+    caldav_ok: bool | None = caldav_result is not None if caldav_enabled else None
+    status = "success" if (caldav_result or not caldav_enabled) else "failed"
+
+    rec_id = _record(session, ctx, "create", event.title, text,
+            status, event.model_dump_json(), caldav_result, error_msg,
             start_time=getattr(event, "start_time", ""))
+    return rec_id, caldav_ok
 
 
 async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any]) -> dict[str, Any] | None:
