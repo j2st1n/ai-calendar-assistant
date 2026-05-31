@@ -566,6 +566,17 @@ def _normalize_url(url: str) -> str:
     return url
 
 
+def _normalize_caldav_int_setting(value: str, default: int, minimum: int, integer_error: str, minimum_error: str) -> tuple[int | None, str | None]:
+    raw = value.strip() or str(default)
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return None, integer_error
+    if parsed < minimum:
+        return None, minimum_error
+    return parsed, None
+
+
 def caldav_payload(settings_service: SettingsService) -> dict[str, object]:
     return {
         "caldav_url": settings_service.get("caldav_url") or "",
@@ -620,6 +631,20 @@ async def update_caldav_settings(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
+    reminder_val, error = _normalize_caldav_int_setting(
+        caldav_reminder_minutes, 30, 0, "提醒分钟数必须是整数。", "提醒分钟数不能为负数。"
+    )
+    if error is not None or reminder_val is None:
+        set_error_flash(request, error or "提醒分钟数无效。")
+        return redirect("/console/caldav")
+
+    duration_val, error = _normalize_caldav_int_setting(
+        caldav_default_duration, 60, 5, "默认持续时间必须是整数。", "默认持续时间不能少于 5 分钟。"
+    )
+    if error is not None or duration_val is None:
+        set_error_flash(request, error or "默认持续时间无效。")
+        return redirect("/console/caldav")
+
     settings_service = SettingsService(session)
     settings_service.set("caldav_url", caldav_url.strip())
     settings_service.set("caldav_username", caldav_username.strip())
@@ -628,8 +653,8 @@ async def update_caldav_settings(
     settings_service.set("caldav_calendar_url", caldav_calendar_url.strip())
     settings_service.set("caldav_calendar_name", caldav_calendar_name.strip())
     settings_service.set("caldav_timezone", caldav_timezone.strip())
-    settings_service.set("caldav_reminder_minutes", caldav_reminder_minutes.strip())
-    settings_service.set("caldav_default_duration", caldav_default_duration.strip())
+    settings_service.set("caldav_reminder_minutes", str(reminder_val))
+    settings_service.set("caldav_default_duration", str(duration_val))
     settings_service.commit()
     set_flash(request, "CalDAV 设置已保存。")
     return redirect("/console/caldav")
