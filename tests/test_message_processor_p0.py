@@ -1,10 +1,11 @@
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
-from app.channels.message_processor import ChannelContext, _do_modify_with, _format_modify_result, _handle_new
+from app.channels.message_processor import ChannelContext, _do_modify_with, _find_target, _format_modify_result, _handle_new
 from app.db.models import Base, EventRecord
 from app.services.settings_service import SettingsService
 
@@ -308,5 +309,52 @@ def test_do_modify_warns_precisely_when_old_delete_fails(monkeypatch):
         assert record is not None
         assert record.status == "failed"
         assert record.error_message == "旧日程删除失败，可能产生重复日程"
+
+    asyncio.run(run())
+
+
+def test_find_target_ignores_non_reply_events_older_than_24h():
+    async def run():
+        session = _session()
+        old = EventRecord(
+            source="telegram",
+            source_user_id="u1",
+            conversation_id="c1",
+            operation="create",
+            title="旧日程",
+            start_time="2026-06-01T12:00:00+08:00",
+            status="success",
+            event_json="{}",
+            created_at=datetime.now(timezone.utc) - timedelta(days=2),
+        )
+        session.add(old)
+        session.commit()
+
+        assert await _find_target(session, _ctx()) is None
+
+    asyncio.run(run())
+
+
+def test_find_target_keeps_recent_non_reply_event():
+    async def run():
+        session = _session()
+        recent = EventRecord(
+            source="telegram",
+            source_user_id="u1",
+            conversation_id="c1",
+            operation="create",
+            title="近日程",
+            start_time="2026-06-01T12:00:00+08:00",
+            status="success",
+            event_json="{}",
+            created_at=datetime.now(timezone.utc),
+        )
+        session.add(recent)
+        session.commit()
+
+        found = await _find_target(session, _ctx())
+
+        assert found is not None
+        assert found.title == "近日程"
 
     asyncio.run(run())
