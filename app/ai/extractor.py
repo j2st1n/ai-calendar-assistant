@@ -19,6 +19,8 @@ Rules:
 - Use ISO 8601 format: "2026-05-15T14:30:00+08:00".
 - Missing year → use nearest future date.
 - Missing time → default: morning=09:00, noon=12:00, afternoon=14:00, evening=19:00, else 09:00.
+- Terse time/date + action inputs are events. If a clear action follows the time/date, use that action as title; do not require a separate title.
+  Examples: "下午3点开会" → title "开会"; "明天吃饭" → title "吃饭"; "周五晚上健身" → title "健身".
 - Missing end_time → set to null. Do not invent end_time.
 - All-day event → set is_all_day=true, only dates.
 - Reminders → minutes_before. Only include if user explicitly mentions reminders/alarms.

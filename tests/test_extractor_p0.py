@@ -106,3 +106,12 @@ def test_call_marks_system_error():
         assert result.missing_fields == ["boom"]
 
     asyncio.run(run())
+
+
+def test_extract_prompt_documents_terse_time_action_inputs():
+    from app.ai.extractor import EXTRACT_PROMPT
+
+    assert "Terse time/date + action inputs are events" in EXTRACT_PROMPT
+    assert "下午3点开会" in EXTRACT_PROMPT
+    assert "明天吃饭" in EXTRACT_PROMPT
+    assert "周五晚上健身" in EXTRACT_PROMPT
