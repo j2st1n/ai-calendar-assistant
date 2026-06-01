@@ -110,6 +110,42 @@ class ILinkClient:
             },
         )
 
+    async def get_typing_ticket(self, ilink_user_id: str) -> str:
+        self._require_token("get_typing_ticket")
+        if not ilink_user_id:
+            raise ILinkError("ilink_user_id is required")
+        data = await self._request(
+            "POST",
+            "/ilink/bot/getconfig",
+            json={
+                "ilink_user_id": ilink_user_id,
+                "base_info": {"channel_version": CHANNEL_VERSION},
+            },
+        )
+        ticket = data.get("typing_ticket")
+        if not isinstance(ticket, str) or not ticket:
+            raise ILinkError("iLink response did not include a valid typing_ticket")
+        return ticket
+
+    async def send_typing(
+        self, ilink_user_id: str, typing_ticket: str, status: int
+    ) -> dict[str, Any]:
+        self._require_token("send_typing")
+        if not ilink_user_id:
+            raise ILinkError("ilink_user_id is required")
+        if not typing_ticket:
+            raise ILinkError("typing_ticket is required")
+        return await self._request(
+            "POST",
+            "/ilink/bot/sendtyping",
+            json={
+                "ilink_user_id": ilink_user_id,
+                "typing_ticket": typing_ticket,
+                "status": status,
+                "base_info": {"channel_version": CHANNEL_VERSION},
+            },
+        )
+
     def _require_token(self, operation: str) -> None:
         if not self.bot_token:
             raise ILinkAuthError(f"Bot token is required for {operation}")

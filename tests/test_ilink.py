@@ -227,6 +227,90 @@ def test_send_message_requires_token():
     asyncio.run(run())
 
 
+def test_get_typing_ticket_posts_expected_body_and_returns_ticket(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"typing_ticket": "ticket-abc"}))
+        ticket = await ILinkClient("token", base_url="https://example.test").get_typing_ticket("u@im.wechat")
+        req = FakeAsyncClient.requests[0]
+        assert ticket == "ticket-abc"
+        assert req["method"] == "POST"
+        assert req["url"].endswith("/ilink/bot/getconfig")
+        assert req["kwargs"]["json"] == {
+            "ilink_user_id": "u@im.wechat",
+            "base_info": {"channel_version": CHANNEL_VERSION},
+        }
+
+    asyncio.run(run())
+
+
+def test_get_typing_ticket_missing_ticket_raises_error(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={}))
+        with pytest.raises(ILinkError, match="typing_ticket"):
+            _ = await ILinkClient("token", base_url="https://example.test").get_typing_ticket("u@im.wechat")
+
+    asyncio.run(run())
+
+
+def test_get_typing_ticket_non_string_ticket_raises_error(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"typing_ticket": 123}))
+        with pytest.raises(ILinkError, match="typing_ticket"):
+            _ = await ILinkClient("token", base_url="https://example.test").get_typing_ticket("u@im.wechat")
+
+    asyncio.run(run())
+
+
+def test_get_typing_ticket_requires_token():
+    async def run():
+        with pytest.raises(ILinkAuthError, match="Bot token is required for get_typing_ticket"):
+            _ = await ILinkClient(base_url="https://example.test").get_typing_ticket("u@im.wechat")
+
+    asyncio.run(run())
+
+
+def test_send_typing_posts_expected_body(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"ok": True}))
+        response = await ILinkClient("token", base_url="https://example.test").send_typing("u@im.wechat", "ticket-abc", 1)
+        req = FakeAsyncClient.requests[0]
+        assert response == {"ok": True}
+        assert req["method"] == "POST"
+        assert req["url"].endswith("/ilink/bot/sendtyping")
+        assert req["kwargs"]["json"] == {
+            "ilink_user_id": "u@im.wechat",
+            "typing_ticket": "ticket-abc",
+            "status": 1,
+            "base_info": {"channel_version": CHANNEL_VERSION},
+        }
+
+    asyncio.run(run())
+
+
+def test_send_typing_requires_user_id():
+    async def run():
+        with pytest.raises(ILinkError, match="ilink_user_id is required"):
+            _ = await ILinkClient("token", base_url="https://example.test").send_typing("", "ticket-abc", 1)
+
+    asyncio.run(run())
+
+
+def test_send_typing_requires_ticket():
+    async def run():
+        with pytest.raises(ILinkError, match="typing_ticket is required"):
+            _ = await ILinkClient("token", base_url="https://example.test").send_typing("u@im.wechat", "", 1)
+
+    asyncio.run(run())
+
+
+def test_send_typing_requires_token():
+    async def run():
+        with pytest.raises(ILinkAuthError, match="Bot token is required for send_typing"):
+            _ = await ILinkClient(base_url="https://example.test").send_typing("u@im.wechat", "ticket-abc", 1)
+
+    asyncio.run(run())
+
+
 def test_headers_omit_authorization_when_no_token():
     client = ILinkClient(base_url="https://example.test")
     headers = client._headers()
