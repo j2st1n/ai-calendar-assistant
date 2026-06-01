@@ -83,22 +83,6 @@
   </div>
 </div>
 
-
-{% if wechat_configured %}
-<div class="card">
-  <h2>消息探测</h2>
-  <p class="muted" style="margin-bottom:16px;">手动触发一次 getupdates，查看 WeChat Bot 收到的原始消息。此功能只用于协议验证，不会创建或修改日程。</p>
-  <div class="row" style="gap:8px;margin-bottom:12px;">
-    <button type="button" id="btn-probe" onclick="probeMessages()">探测消息</button>
-    <button type="button" id="btn-process" class="secondary" onclick="processProbeMessages()">处理文本消息</button>
-    <button type="button" class="secondary" onclick="clearProbeCursor()">清除游标</button>
-    <span id="probe-summary" class="muted" style="font-size:12px;"></span>
-  </div>
-  <div id="probe-error" style="display:none;"><p class="alert error" id="probe-error-msg"></p></div>
-  <pre id="probe-results" class="mono" style="display:none;white-space:pre-wrap;word-break:break-word;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:14px;font-size:12px;max-height:420px;overflow:auto;"></pre>
-</div>
-{% endif %}
-
 {% if wechat_configured %}
 <div class="card danger-zone">
   <h2>清除 Token</h2>
