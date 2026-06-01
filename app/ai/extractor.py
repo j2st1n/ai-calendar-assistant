@@ -1,8 +1,10 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from zoneinfo import ZoneInfo
 
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
 from app.services.ai_provider_service import AIProviderConfig, AIProviderService
@@ -105,7 +107,10 @@ class EventExtractor:
             current_time=datetime.now(timezone.utc).isoformat(),
             default_timezone=self._timezone,
         )
-        return await self._call(prompt, text)
+        result = await self._call(prompt, text)
+        if result.intent == Intent.create_event:
+            result = _ensure_hour_only_is_future(result, text, self._timezone)
+        return result
 
     async def modify(self, existing_event: dict[str, object], instruction: str) -> ExtractionResult:
         prompt = MODIFY_PROMPT.format(
@@ -221,6 +226,110 @@ def _normalize_reminders(ev_data: dict[str, Any]) -> None:
             elif isinstance(r, dict):
                 normalized.append(r)
         ev_data["reminders"] = normalized
+
+
+def _is_ambiguous_hour_only(text: str) -> bool:
+    """Check if text contains a bare hour-only reference without explicit date/period words.
+
+    Returns True for inputs like "10点测试" or "3:00pm" (without 上午/下午/今天/明天 etc.)
+    so the caller can detect when the AI might have interpreted a past time as today.
+    """
+    if not re.search(r"\d+\u70b9", text) and not re.search(r"(?<!\d)\d{1,2}:\d{2}(?!\d)", text):
+        return False
+
+    # Explicit date words — these scope the hour to a specific day
+    _DATE_WORDS = frozenset({
+        "今天", "明天", "昨天", "后天", "前天",
+        "今晚", "昨晚", "明晚",
+        "这周", "下周", "上周",
+        "这个月", "下个月", "上个月", "本月", "下月", "上月",
+    })
+    for w in _DATE_WORDS:
+        if w in text:
+            return False
+
+    # Period words — these scope the hour to a specific part of today
+    _PERIOD_WORDS = frozenset({
+        "上午", "早上", "凌晨", "中午", "下午", "晚上",
+        "今早", "明早", "今晨", "明晨", "今晚上", "明晚上",
+    })
+    for w in _PERIOD_WORDS:
+        if w in text:
+            return False
+
+    if re.search(r"周[一二三四五六日天末]|星期[一二三四五六日天]|礼拜[一二三四五六日天]", text):
+        return False
+    if re.search(r"\d+\u6708\d+\u65e5", text):
+        return False
+
+    return True
+
+
+def _ensure_hour_only_is_future(
+    result: ExtractionResult, text: str, timezone_str: str,
+) -> ExtractionResult:
+    """Post-processing: roll past start_times forward for ambiguous hour-only inputs.
+
+    When the user says "10点测试" (bare hour, no date/period qualifier) and it's
+    already past 10:00 in the user's timezone, advance the event by whole days
+    until it falls in the future.  Preserves original duration when end_time is set.
+    """
+    if result.intent != Intent.create_event or not result.events:
+        return result
+    if not _is_ambiguous_hour_only(text):
+        return result
+
+    try:
+        now_local = datetime.now(timezone.utc).replace(tzinfo=timezone.utc)
+        now_local = now_local.astimezone(ZoneInfo(timezone_str))
+    except Exception:
+        return result
+
+    rolled: list[CalendarEvent] = []
+    for event in result.events:
+        if not event.start_time:
+            rolled.append(event)
+            continue
+
+        try:
+            st = datetime.fromisoformat(event.start_time)
+        except (ValueError, TypeError):
+            rolled.append(event)
+            continue
+
+        # Make st offset-aware for comparison if it's naive
+        if st.tzinfo is None:
+            st = st.replace(tzinfo=ZoneInfo(timezone_str))
+
+        if st > now_local:
+            rolled.append(event)
+            continue
+
+        duration: timedelta | None = None
+        if event.end_time:
+            try:
+                et = datetime.fromisoformat(event.end_time)
+                if et.tzinfo is None:
+                    et = et.replace(tzinfo=ZoneInfo(timezone_str))
+                duration = et - st
+            except (ValueError, TypeError):
+                pass
+
+        days = 1
+        while True:
+            candidate = st + timedelta(days=days)
+            if candidate > now_local:
+                break
+            days += 1
+
+        event.start_time = candidate.isoformat()
+        if duration is not None and event.end_time:
+            event.end_time = (candidate + duration).isoformat()
+
+        rolled.append(event)
+
+    result.events = rolled
+    return result
 
 
 def _normalize_reminders_in_data(data: dict[str, Any]) -> dict[str, Any]:
