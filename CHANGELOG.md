@@ -1,5 +1,61 @@
 # Changelog
 
+## [v1.11.0] - 2026-06-01
+
+
+### Bug Fixes
+
+- hide WeChat message probe UI — 隐藏微信消息探测入口
+
+- harden WeChat quoted deletion — 加固微信引用删除
+
+- target WeChat quoted events — 定位微信引用日程
+
+- avoid past ambiguous event times — 避免模糊时间落到过去
+
+
+
+### Documentation
+
+- document WeChat iLink spike — 记录微信iLink探针
+
+
+
+### Features
+
+- add WeChat typing indicator API — 添加微信输入状态接口
+
+- auto-start WeChat runtime — 自动启动微信运行时
+
+- show WeChat runtime on dashboard — 展示微信运行状态
+
+- add WeChat runtime controls — 添加微信运行控制
+
+- add WeChat background runtime — 添加微信后台运行时
+
+- add WeChat manual message processing — 添加微信手动消息处理
+
+- handle WeChat text messages — 处理微信文本消息
+
+- add WeChat QR login console — 添加微信扫码登录控制台
+
+- add iLink QR login client — 添加iLink扫码登录客户端
+
+
+
+### Maintenance
+
+- keep Docker app running — 保持Docker应用常驻
+
+- bump version to 1.2.0 [skip ci]
+
+
+
+### Other
+
+- cover WeChat QR login flow — 覆盖微信扫码登录流程
+
+
 ## [v1.2.0] - 2026-05-31
 
 
