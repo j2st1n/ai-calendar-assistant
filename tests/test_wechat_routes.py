@@ -68,9 +68,15 @@ def test_qr_image_data_url_returns_png_when_dependency_available():
 
 class TestWechatPage:
     @pytest.mark.anyio
-    @patch("app.web.routes.SettingsService")
-    async def test_get_renders_when_configured(self, MockSettings):
-        MockSettings.return_value = _mock_settings({"wechat_bot_token": "encrypted-tok"})
+    @patch("app.web.routes.WechatService")
+    async def test_get_renders_when_configured(self, MockWxService):
+        MockWxService.return_value.config_summary = MagicMock(return_value={
+            "wechat_token_set": True,
+            "wechat_token_masked": "tok-***",
+            "wechat_running": False,
+            "wechat_error": "",
+            "wechat_cursor_length": 0,
+        })
         app = _make_app()
         resp = await _get(app, "/console/wechat")
         assert resp.status_code == 200
@@ -78,9 +84,15 @@ class TestWechatPage:
         assert "扫码登录" in resp.text
 
     @pytest.mark.anyio
-    @patch("app.web.routes.SettingsService")
-    async def test_get_renders_when_not_configured(self, MockSettings):
-        MockSettings.return_value = _mock_settings({})
+    @patch("app.web.routes.WechatService")
+    async def test_get_renders_when_not_configured(self, MockWxService):
+        MockWxService.return_value.config_summary = MagicMock(return_value={
+            "wechat_token_set": False,
+            "wechat_token_masked": "",
+            "wechat_running": False,
+            "wechat_error": "",
+            "wechat_cursor_length": 0,
+        })
         app = _make_app()
         resp = await _get(app, "/console/wechat")
         assert resp.status_code == 200
@@ -344,3 +356,120 @@ class TestWechatProbeProcess:
 
         assert "error" in data
         assert "Token 未配置" in data["error"]
+
+
+# ---------------------------------------------------------------------------
+# Runtime status on page
+# ---------------------------------------------------------------------------
+
+class TestWechatPageRuntime:
+    @pytest.mark.anyio
+    @patch("app.web.routes.get_wechat_bot_runtime")
+    @patch("app.web.routes.WechatService")
+    async def test_page_shows_running_when_runtime_active(self, MockWxService, mock_get_rt):
+        mock_rt = MagicMock()
+        mock_rt.running = True
+        mock_rt.last_error = ""
+        mock_get_rt.return_value = mock_rt
+        MockWxService.return_value.config_summary = MagicMock(return_value={
+            "wechat_token_set": True,
+            "wechat_token_masked": "tok-***",
+            "wechat_running": True,
+            "wechat_error": "",
+            "wechat_cursor_length": 42,
+        })
+        app = _make_app()
+        resp = await _get(app, "/console/wechat")
+        assert resp.status_code == 200
+        assert "运行中" in resp.text
+        assert "已停止" not in resp.text
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.get_wechat_bot_runtime")
+    @patch("app.web.routes.WechatService")
+    async def test_page_shows_stopped_when_runtime_inactive(self, MockWxService, mock_get_rt):
+        mock_rt = MagicMock()
+        mock_rt.running = False
+        mock_get_rt.return_value = mock_rt
+        MockWxService.return_value.config_summary = MagicMock(return_value={
+            "wechat_token_set": True,
+            "wechat_token_masked": "tok-***",
+            "wechat_running": False,
+            "wechat_error": "auth failed",
+            "wechat_cursor_length": 0,
+        })
+        app = _make_app()
+        resp = await _get(app, "/console/wechat")
+        assert resp.status_code == 200
+        assert "已停止" in resp.text
+        assert "auth failed" in resp.text
+        assert "启动 Bot" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# POST /wechat/start
+# ---------------------------------------------------------------------------
+
+class TestStartWechat:
+    @pytest.mark.anyio
+    @patch("app.web.routes.SettingsService")
+    async def test_start_without_token_flashes_error(self, MockSettings):
+        MockSettings.return_value = _mock_settings({})
+        app = _make_app()
+        resp = await _post_form(app, "/console/wechat/start")
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/console/wechat"
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.WechatService")
+    @patch("app.web.routes.SettingsService")
+    async def test_start_with_token_calls_reload(self, MockSettings, MockWxService):
+        MockSettings.return_value = _mock_settings({"wechat_bot_token": "tok-abc"})
+        mock_svc = MockWxService.return_value
+        mock_svc.reload_bot = AsyncMock(return_value="started")
+        app = _make_app()
+        resp = await _post_form(app, "/console/wechat/start")
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/console/wechat"
+        mock_svc.reload_bot.assert_awaited_once_with("tok-abc")
+
+
+# ---------------------------------------------------------------------------
+# POST /wechat/stop
+# ---------------------------------------------------------------------------
+
+class TestStopWechat:
+    @pytest.mark.anyio
+    @patch("app.web.routes.WechatService")
+    async def test_stop_calls_stop_bot(self, MockWxService):
+        mock_svc = MockWxService.return_value
+        mock_svc.stop_bot = AsyncMock()
+        app = _make_app()
+        resp = await _post_form(app, "/console/wechat/stop")
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/console/wechat"
+        mock_svc.stop_bot.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# GET /wechat/status
+# ---------------------------------------------------------------------------
+
+class TestWechatStatusJSON:
+    @pytest.mark.anyio
+    @patch("app.web.routes.WechatService")
+    async def test_status_returns_json_with_runtime_fields(self, MockWxService):
+        MockWxService.return_value.config_summary = MagicMock(return_value={
+            "wechat_token_set": True,
+            "wechat_token_masked": "tok-***",
+            "wechat_running": True,
+            "wechat_error": "some error",
+            "wechat_cursor_length": 99,
+        })
+        app = _make_app()
+        resp = await _get(app, "/console/wechat/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["running"] is True
+        assert data["last_error"] == "some error"
+        assert data["cursor_length"] == 99

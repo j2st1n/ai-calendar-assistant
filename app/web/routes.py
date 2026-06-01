@@ -27,6 +27,7 @@ from app.services.caldav_service import CalDAVService, CalDAVServiceError
 from app.integrations.ilink import ILinkAuthError, ILinkClient, ILinkError
 from app.services.settings_service import SettingsService
 from app.services.telegram_service import TelegramService
+from app.services.wechat_service import WechatService, get_wechat_bot_runtime
 
 
 router = APIRouter(prefix="/console")
@@ -249,6 +250,7 @@ def status_context(session: Session) -> dict[str, object]:
         "caldav_source": caldav_source,
         "tg_running": (tg_runtime := get_telegram_bot_runtime()) is not None and tg_runtime.running,
         "dc_running": (dc_runtime := get_discord_bot_runtime()) is not None and dc_runtime.running,
+        "wechat_running": (wechat_runtime := get_wechat_bot_runtime()) is not None and wechat_runtime.running,
         "recent_events": events,
         "version": read_version(),
         "changes": read_changes(),
@@ -955,17 +957,55 @@ async def wechat_settings(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> HTMLResponse:
+    service = WechatService()
+    payload = service.config_summary(session)
+    payload["wechat_configured"] = payload["wechat_token_set"]
+    payload["request"] = request
+    payload["message"] = get_flash(request) or request.query_params.get("message")
+    payload["error"] = get_error_flash(request) or request.query_params.get("error")
+    return templates.TemplateResponse(request, "wechat.html", payload)
+
+
+@router.get("/wechat/status")
+async def wechat_status_json(
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> dict[str, object]:
+    service = WechatService()
+    summary = service.config_summary(session)
+    return {
+        "running": summary["wechat_running"],
+        "last_error": summary["wechat_error"],
+        "cursor_length": summary["wechat_cursor_length"],
+    }
+
+
+@router.post("/wechat/start")
+async def start_wechat_runtime(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
     settings_service = SettingsService(session)
-    wechat_configured = bool(settings_service.get("wechat_bot_token"))
-    return templates.TemplateResponse(
-        request,
-        "wechat.html",
-        {
-            "wechat_configured": wechat_configured,
-            "message": get_flash(request) or request.query_params.get("message"),
-            "error": get_error_flash(request) or request.query_params.get("error"),
-        },
-    )
+    token = settings_service.get("wechat_bot_token")
+    if not token:
+        set_error_flash(request, "WeChat Bot Token 未配置，请先扫码登录。")
+        return redirect("/console/wechat")
+    service = WechatService()
+    __ = await service.reload_bot(token)
+    set_flash(request, "WeChat Bot 已启动。")
+    return redirect("/console/wechat")
+
+
+@router.post("/wechat/stop")
+async def stop_wechat_runtime(
+    request: Request,
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    service = WechatService()
+    await service.stop_bot()
+    set_flash(request, "WeChat Bot 已停止。")
+    return redirect("/console/wechat")
 
 
 @router.post("/wechat/qr")
