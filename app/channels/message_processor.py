@@ -97,8 +97,12 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
     target = await _find_target(session, ctx)
     if ctx.reply_to_message_id and target is None:
         return [("🤔 没有找到这条回复对应的日程。请回复我发送的某条日程消息，或重新描述要修改的日程。", None)]
-    if reply_to and target and target.event_json:
+    if ctx.quoted_text and target is None:
+        return [("🤔 没有找到引用消息对应的日程。请引用我发送的日程确认消息，或说“删除xx日程”。", None)]
+    if target and target.event_json and (reply_to or ctx.quoted_text):
         existing = json.loads(target.event_json)
+        if _is_delete_command(text):
+            return [(await _do_delete_with(session, ctx, target, caldav), None)]
         quick = _try_quick_modify(text, existing, caldav["dur"])
         if quick:
             rec_id, warning = await _do_modify_with(session, ctx, text, target, quick, caldav)
@@ -162,6 +166,10 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
         match = await _match_by_quoted_text(session, base_filter, ctx.quoted_text)
         if match:
             return match
+        logger.warning(
+            "Quoted target not found: source=%s user_id=%s conversation_id=%s quote=%s",
+            ctx.source, ctx.source_user_id, ctx.conversation_id, ctx.quoted_text[:120],
+        )
         return None
 
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=LAST_EVENT_WINDOW)
@@ -350,7 +358,7 @@ def _try_quick_modify(text: str, existing: dict[str, Any], dur_minutes: int = 60
 
     # time (always checked, even if date changed)
     h = mi = 0
-    tm = re.search(r"(\d{1,2}):(\d{2})", text)
+    tm = re.search(r"(\d{1,2})[:：](\d{2})", text)
     if tm:
         consumed.append(tm.span())
         h, mi = int(tm.group(1)), int(tm.group(2))
@@ -378,6 +386,12 @@ def _try_quick_modify(text: str, existing: dict[str, Any], dur_minutes: int = 60
     result["start_time"] = new_st
     result["end_time"] = new_et
     return result
+
+
+def _is_delete_command(text: str) -> bool:
+    import re
+    normalized = re.sub(r"[\s,，。.!！?？、]+", "", text)
+    return normalized in {"删", "删除", "删掉", "取消", "取消日程", "删除日程", "删掉日程"}
 
 
 def _quick_modify_leftover(text: str, consumed: list[tuple[int, int]]) -> str:

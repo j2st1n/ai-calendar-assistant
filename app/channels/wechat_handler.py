@@ -32,12 +32,30 @@ def quoted_text_from_message(message: dict[str, Any]) -> str | None:
         msg_item = ref_msg.get("message_item")
         if not isinstance(msg_item, dict):
             continue
-        text_item = msg_item.get("text_item")
-        if not isinstance(text_item, dict):
-            continue
+        text = _text_from_message_item(msg_item)
+        if text:
+            return text
+    return None
+
+
+def _text_from_message_item(message_item: dict[str, Any]) -> str | None:
+    text_item = message_item.get("text_item")
+    if isinstance(text_item, dict):
         text = text_item.get("text")
         if isinstance(text, str) and text.strip():
             return text.strip()
+
+    item_list = message_item.get("item_list")
+    if isinstance(item_list, list):
+        for item in item_list:
+            if not isinstance(item, dict):
+                continue
+            text_item = item.get("text_item")
+            if not isinstance(text_item, dict):
+                continue
+            text = text_item.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
     return None
 
 

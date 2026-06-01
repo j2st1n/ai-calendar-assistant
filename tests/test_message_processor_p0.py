@@ -467,6 +467,27 @@ def test_find_target_by_quoted_text_returns_none_when_no_match():
     asyncio.run(run())
 
 
+def test_route_with_unmatched_quoted_text_does_not_extract_as_new_input():
+    async def run():
+        session = _session()
+        _ = _seed_event(session, title="其他", start_time="2026-06-02T16:00:00+08:00")
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        svc = SettingsService(session)
+        with patch.object(svc, "get", return_value=""):
+            replies = await _route(
+                session, ctx, "删除",
+                extractor=_FakeExtractor(intent=Intent.no_event),
+                caldav={"url": "", "user": "", "pw": "", "cal": "",
+                        "rem": 15, "dur": 60, "ssl": True},
+                svc=svc,
+            )
+        assert replies == [("🤔 没有找到引用消息对应的日程。请引用我发送的日程确认消息，或说“删除xx日程”。", None)]
+        records = session.query(EventRecord).filter(EventRecord.operation == "delete").all()
+        assert records == []
+    asyncio.run(run())
+
+
 def test_find_target_quoted_text_does_not_fall_back_to_recent():
     async def run():
         session = _session()
@@ -509,6 +530,11 @@ class _FakeExtractor(EventExtractor):
 
     async def merge_draft(self, _draft: dict, _new_input: str) -> ExtractionResult:
         return ExtractionResult(intent=self._intent, event=self._event)
+
+
+class _FailingModifyExtractor(_FakeExtractor):
+    async def modify(self, _existing_event: dict, _instruction: str) -> ExtractionResult:
+        raise AssertionError("quoted quick modify should not call AI modify")
 
 
 def test_route_with_quoted_text_modifies_quoted_event():
@@ -564,4 +590,57 @@ def test_route_with_quoted_text_deletes_quoted_event():
             EventRecord.title == "测试",
         ).all()
         assert len(del_recs) == 1
+    asyncio.run(run())
+
+
+def test_route_with_quoted_text_deletes_on_bare_delete_word():
+    async def run():
+        session = _session()
+        _ = _seed_event(session)
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        svc = SettingsService(session)
+        with patch.object(svc, "get", return_value=""):
+            replies = await _route(
+                session, ctx, "删除",
+                extractor=_FakeExtractor(intent=Intent.no_event),
+                caldav={"url": "", "user": "", "pw": "", "cal": "",
+                        "rem": 15, "dur": 60, "ssl": True},
+                svc=svc,
+            )
+        assert len(replies) == 1
+        text, _rid = replies[0]
+        assert "已删除" in text
+        del_recs = session.query(EventRecord).filter(
+            EventRecord.operation == "delete",
+            EventRecord.title == "测试",
+        ).all()
+        assert len(del_recs) == 1
+    asyncio.run(run())
+
+
+def test_route_with_quoted_text_quick_modifies_full_width_colon_time():
+    async def run():
+        session = _session()
+        _ = _seed_event(session)
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        svc = SettingsService(session)
+        with patch.object(svc, "get", return_value=""):
+            replies = await _route(
+                session, ctx, "改成10：30",
+                extractor=_FailingModifyExtractor(),
+                caldav={"url": "", "user": "", "pw": "", "cal": "",
+                        "rem": 15, "dur": 60, "ssl": True},
+                svc=svc,
+            )
+        assert len(replies) == 1
+        text, _rid = replies[0]
+        assert "已更新" in text
+        update_records = session.query(EventRecord).filter(
+            EventRecord.operation == "update",
+        ).all()
+        assert len(update_records) == 1
+        updated_start = update_records[0].start_time
+        assert updated_start is not None and "22:30" in updated_start
     asyncio.run(run())
