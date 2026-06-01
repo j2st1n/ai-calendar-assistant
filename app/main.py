@@ -9,6 +9,7 @@ from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 from app.services.telegram_service import TelegramService
 from app.services.discord_service import DiscordService
+from app.services.wechat_service import WechatService
 from app.web.routes import router as web_router
 
 
@@ -31,10 +32,13 @@ def create_app() -> FastAPI:
             s = SettingsService(session)
             tg_token = s.get("telegram_bot_token")
             dc_token = s.get("discord_bot_token")
+            wx_token = s.get("wechat_bot_token")
         if tg_token:
-            await TelegramService().reload_bot(tg_token)
+            _ = await TelegramService().reload_bot(tg_token)
         if dc_token:
-            await DiscordService().reload_bot(dc_token)
+            _ = await DiscordService().reload_bot(dc_token)
+        if wx_token:
+            _ = await WechatService().reload_bot(wx_token)
 
     return app
 
