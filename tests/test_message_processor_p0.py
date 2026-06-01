@@ -1,11 +1,22 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.ai.extractor import EventExtractor
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
-from app.channels.message_processor import ChannelContext, _do_modify_with, _find_target, _format_modify_result, _handle_new
+from app.channels.message_processor import (
+    ChannelContext,
+    _do_modify_with,
+    _find_target,
+    _format_modify_result,
+    _handle_new,
+    _parse_title_and_start_from_quote,
+    _route,
+)
 from app.db.models import Base, EventRecord
 from app.services.settings_service import SettingsService
 
@@ -357,4 +368,200 @@ def test_find_target_keeps_recent_non_reply_event():
         assert found is not None
         assert found.title == "近日程"
 
+    asyncio.run(run())
+
+
+# ── _parse_title_and_start_from_quote ──────────────────────────
+
+def test_parse_title_and_start_from_quote_success():
+    text = "✅ 日程已安排好啦！\n\n📌 标题：测试\n🕒 时间：2026-06-02 15:00 - 16:00\n⏰ 提醒：提前 15 分钟"
+    title, start = _parse_title_and_start_from_quote(text)
+    assert title == "测试"
+    assert start == "2026-06-02T15:00"
+
+
+def test_parse_title_and_start_from_quote_missing_title_returns_none():
+    text = "✅ 日程已安排好啦！\n\n🕒 时间：2026-06-02 15:00 - 16:00"
+    title, start = _parse_title_and_start_from_quote(text)
+    assert title is None
+    assert start == "2026-06-02T15:00"
+
+
+def test_parse_title_and_start_from_quote_missing_time_returns_none():
+    text = "✅ 日程已安排好啦！\n\n📌 标题：测试"
+    title, start = _parse_title_and_start_from_quote(text)
+    assert title == "测试"
+    assert start is None
+
+
+def test_parse_title_and_start_from_quote_garbage_returns_nones():
+    title, start = _parse_title_and_start_from_quote("一些无关文本")
+    assert title is None
+    assert start is None
+
+
+# ── _find_target with quoted_text ───────────────────────────────
+
+def _wechat_ctx(**overrides):
+    return ChannelContext(
+        source="wechat",
+        source_user_id="u1",
+        conversation_id="u1",
+        **overrides,
+    )
+
+
+def _seed_event(session, title="测试", start_time="2026-06-02T15:00:00+08:00", **kw):
+    rec = EventRecord(
+        source="wechat",
+        source_user_id="u1",
+        conversation_id="u1",
+        operation="create",
+        title=title,
+        start_time=start_time,
+        status="success",
+        event_json=json.dumps({"title": title, "start_time": start_time}),
+        **kw,
+    )
+    session.add(rec)
+    session.flush()
+    return rec
+
+
+QUOTE_TEXT = "✅ 日程已安排好啦！\n\n📌 标题：测试\n🕒 时间：2026-06-02 15:00 - 16:00\n⏰ 提醒：提前 15 分钟"
+QUOTE_TEXT_OTHER = "✅ 日程已安排好啦！\n\n📌 标题：其他\n🕒 时间：2026-06-02 16:00 - 17:00\n⏰ 提醒：提前 15 分钟"
+
+
+def test_find_target_by_quoted_text_finds_matching_event():
+    async def run():
+        session = _session()
+        _ = _seed_event(session)
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        found = await _find_target(session, ctx)
+        assert found is not None
+        assert found.title == "测试"
+    asyncio.run(run())
+
+
+def test_find_target_by_quoted_text_returns_none_when_two_match():
+    async def run():
+        session = _session()
+        _ = _seed_event(session)
+        _ = _seed_event(session)  # same title & same start_time → both match
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        found = await _find_target(session, ctx)
+        assert found is None
+    asyncio.run(run())
+
+
+def test_find_target_by_quoted_text_returns_none_when_no_match():
+    async def run():
+        session = _session()
+        _ = _seed_event(session, title="其他", start_time="2026-06-02T16:00:00+08:00")
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        found = await _find_target(session, ctx)
+        assert found is None
+    asyncio.run(run())
+
+
+def test_find_target_quoted_text_does_not_fall_back_to_recent():
+    async def run():
+        session = _session()
+        _ = _seed_event(session, title="近日程",
+                     start_time=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT_OTHER)
+        found = await _find_target(session, ctx)
+        assert found is None
+    asyncio.run(run())
+
+
+def test_find_target_reply_to_still_works_for_telegram():
+    async def run():
+        session = _session()
+        _ = _seed_event(session)
+        session.commit()
+        ctx = ChannelContext(source="telegram", source_user_id="u1", conversation_id="c1",
+                             reply_to_message_id="some-bot-msg-id")
+        with patch.object(session, "execute") as mock_exec:
+            mock_exec.return_value.scalar.return_value = None
+            found = await _find_target(session, ctx)
+            assert found is None
+    asyncio.run(run())
+
+
+# ── _route with quoted_text (end-to-end-ish) ────────────────────
+
+
+class _FakeExtractor(EventExtractor):
+    def __init__(self, intent=Intent.update_event, event=None):
+        self._intent = intent
+        self._event = event
+
+    async def extract(self, _text: str) -> ExtractionResult:
+        return ExtractionResult(intent=self._intent, event=self._event)
+
+    async def modify(self, _existing_event: dict, _instruction: str) -> ExtractionResult:
+        return ExtractionResult(intent=self._intent, event=self._event)
+
+    async def merge_draft(self, _draft: dict, _new_input: str) -> ExtractionResult:
+        return ExtractionResult(intent=self._intent, event=self._event)
+
+
+def test_route_with_quoted_text_modifies_quoted_event():
+    async def run():
+        session = _session()
+        _ = _seed_event(session)
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        svc = SettingsService(session)
+        with patch.object(svc, "get", return_value=""):
+            new_event = CalendarEvent(title="测试", start_time="2026-06-02T16:00:00+08:00")
+            extractor = _FakeExtractor(intent=Intent.update_event, event=new_event)
+            replies = await _route(
+                session, ctx, "改成4点",
+                extractor=extractor,
+                caldav={"url": "", "user": "", "pw": "", "cal": "",
+                        "rem": 15, "dur": 60, "ssl": True},
+                svc=svc,
+            )
+        assert len(replies) == 1
+        text, _rid = replies[0]
+        assert "已更新" in text
+        update_records = session.query(EventRecord).filter(
+            EventRecord.operation == "update",
+        ).all()
+        assert len(update_records) == 1
+        updated_start = update_records[0].start_time
+        assert updated_start is not None and "16:00" in updated_start
+    asyncio.run(run())
+
+
+def test_route_with_quoted_text_deletes_quoted_event():
+    async def run():
+        session = _session()
+        _ = _seed_event(session)
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        svc = SettingsService(session)
+        with patch.object(svc, "get", return_value=""):
+            extractor = _FakeExtractor(intent=Intent.delete_event)
+            replies = await _route(
+                session, ctx, "删掉日程",
+                extractor=extractor,
+                caldav={"url": "", "user": "", "pw": "", "cal": "",
+                        "rem": 15, "dur": 60, "ssl": True},
+                svc=svc,
+            )
+        assert len(replies) == 1
+        text, _rid = replies[0]
+        assert "已删除" in text
+        del_recs = session.query(EventRecord).filter(
+            EventRecord.operation == "delete",
+            EventRecord.title == "测试",
+        ).all()
+        assert len(del_recs) == 1
     asyncio.run(run())

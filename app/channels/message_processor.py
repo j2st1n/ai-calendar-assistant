@@ -33,6 +33,7 @@ class ChannelContext:
     conversation_id: str | None = None
     source_message_id: str | None = None
     reply_to_message_id: str | None = None
+    quoted_text: str | None = None
 
 
 @runtime_checkable
@@ -49,8 +50,9 @@ class MessageProcessor:
     async def process(
         self, session: Session, user_id: str, text: str, reply_to_message_id: str | None = None,
         source: str = "telegram", conversation_id: str | None = None, source_message_id: str | None = None,
+        quoted_text: str | None = None,
     ) -> list[tuple[str, int | None]]:
-        ctx = ChannelContext(source, user_id, conversation_id, source_message_id, reply_to_message_id)
+        ctx = ChannelContext(source, user_id, conversation_id, source_message_id, reply_to_message_id, quoted_text)
         svc = SettingsService(session)
         config = AIProviderConfig(
             provider_type=svc.get("ai_provider_type") or "openai_compatible",
@@ -127,41 +129,94 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
         EventRecord.operation == "delete",
         EventRecord.caldav_uid.isnot(None),
     )
+    base_filter = [
+        EventRecord.source == ctx.source,
+        EventRecord.conversation_id == ctx.conversation_id,
+        EventRecord.operation.in_(["create", "update"]),
+        or_(
+            EventRecord.caldav_uid.is_(None),
+            ~EventRecord.caldav_uid.in_(deleted_uids),
+        ),
+    ]
+
     if ctx.reply_to_message_id:
         rec = session.execute(
             select(EventRecord).where(
-                EventRecord.source == ctx.source,
-                EventRecord.conversation_id == ctx.conversation_id,
+                *base_filter,
                 EventRecord.bot_message_id == ctx.reply_to_message_id,
-                EventRecord.operation.in_(["create", "update"]),
-                or_(
-                    EventRecord.caldav_uid.is_(None),
-                    ~EventRecord.caldav_uid.in_(deleted_uids),
-                ),
             ).order_by(EventRecord.created_at.desc())
         ).scalar()
         if rec:
             return rec
+        if ctx.quoted_text:
+            match = await _match_by_quoted_text(session, base_filter, ctx.quoted_text)
+            if match:
+                return match
         logger.warning(
             "Reply target not found: source=%s user_id=%s conversation_id=%s reply_to=%s",
             ctx.source, ctx.source_user_id, ctx.conversation_id, ctx.reply_to_message_id,
         )
         return None
+
+    if ctx.quoted_text:
+        match = await _match_by_quoted_text(session, base_filter, ctx.quoted_text)
+        if match:
+            return match
+        return None
+
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=LAST_EVENT_WINDOW)
     return session.execute(
         select(EventRecord)
-        .where(
-            EventRecord.source == ctx.source,
-            EventRecord.conversation_id == ctx.conversation_id,
-            EventRecord.operation.in_(["create", "update"]),
-            EventRecord.created_at >= cutoff,
-            or_(
-                EventRecord.caldav_uid.is_(None),
-                ~EventRecord.caldav_uid.in_(deleted_uids),
-            ),
-        )
+        .where(*base_filter, EventRecord.created_at >= cutoff)
         .order_by(EventRecord.created_at.desc())
     ).scalar()
+
+
+def _parse_title_and_start_from_quote(quoted_text: str) -> tuple[str | None, str | None]:
+    """Parse title and start_time prefix from a formatted bot reply quote.
+
+    Returns (title, start_time_prefix) where start_time_prefix is like '2026-06-02T15:00'.
+    Returns (None, None) if not parseable.
+    """
+    import re
+    title = None
+    start_prefix = None
+
+    m = re.search(r"📌\s*标题[：:]\s*(.+)", quoted_text)
+    if m:
+        title = m.group(1).strip()
+
+    m = re.search(r"🕒\s*时间[：:]\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})", quoted_text)
+    if m:
+        start_prefix = f"{m.group(1)}T{m.group(2)}"
+
+    return title, start_prefix
+
+
+async def _match_by_quoted_text(
+    session: Session, base_filter: list, quoted_text: str,
+) -> EventRecord | None:
+    title, start_prefix = _parse_title_and_start_from_quote(quoted_text)
+    if not title or not start_prefix:
+        logger.debug("Could not parse title/start from quoted text: %s", quoted_text[:80])
+        return None
+
+    candidates = session.execute(
+        select(EventRecord).where(
+            *base_filter,
+            EventRecord.title == title,
+            EventRecord.start_time.startswith(start_prefix),
+        ).order_by(EventRecord.created_at.desc())
+    ).scalars().all()
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        logger.debug(
+            "Quote match ambiguous: %d candidates for title=%s start_prefix=%s",
+            len(candidates), title, start_prefix,
+        )
+    return None
 
 
 async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRecord, caldav: dict[str, Any]) -> str:
