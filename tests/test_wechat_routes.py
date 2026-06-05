@@ -178,21 +178,26 @@ class TestQRStatus:
 
 class TestSaveToken:
     @pytest.mark.anyio
+    @patch("app.web.routes.WechatService")
     @patch("app.web.routes.SettingsService")
     @patch("app.web.routes.ILinkClient")
-    async def test_saves_token_encrypted(self, MockClient, MockSettings):
+    async def test_saves_token_encrypted_and_reloads_runtime(self, MockClient, MockSettings, MockWxService):
         mock_inst = MockClient.return_value
         mock_inst.get_qrcode_status_detail = AsyncMock(
             return_value={"status": "confirmed", "bot_token": "tok-abc"}
         )
         svc = _mock_settings({})
         MockSettings.return_value = svc
+        mock_wx = MockWxService.return_value
+        mock_wx.reload_bot = AsyncMock(return_value="started")
         app = _make_app()
         resp = await _post_json(app, "/console/wechat/save", {"qrcode": "qr-1"})
         data = resp.json()
         assert data["ok"] is True
-        svc.set.assert_called_once_with("wechat_bot_token", "tok-abc", encrypted=True)
+        svc.set.assert_any_call("wechat_bot_token", "tok-abc", encrypted=True)
+        svc.set.assert_any_call("wechat_updates_buf", None)
         svc.commit.assert_called_once()
+        mock_wx.reload_bot.assert_awaited_once_with("tok-abc")
 
     @pytest.mark.anyio
     @patch("app.web.routes.ILinkClient")
@@ -226,15 +231,20 @@ class TestSaveToken:
 
 class TestClearToken:
     @pytest.mark.anyio
+    @patch("app.web.routes.WechatService")
     @patch("app.web.routes.SettingsService")
-    async def test_clears_token(self, MockSettings):
+    async def test_clears_token_stops_runtime_and_cursor(self, MockSettings, MockWxService):
         svc = _mock_settings({"wechat_bot_token": "encrypted"})
         MockSettings.return_value = svc
+        mock_wx = MockWxService.return_value
+        mock_wx.stop_bot = AsyncMock()
         app = _make_app()
         resp = await _post_form(app, "/console/wechat/clear")
         assert resp.status_code == 303
         assert resp.headers["location"] == "/console/wechat"
-        svc.set.assert_called_once_with("wechat_bot_token", None)
+        mock_wx.stop_bot.assert_awaited_once()
+        svc.set.assert_any_call("wechat_bot_token", None)
+        svc.set.assert_any_call("wechat_updates_buf", None)
         svc.commit.assert_called_once()
 
 

@@ -1070,7 +1070,9 @@ async def save_wechat_token(
             return {"error": "未获取到 Bot Token"}
         settings_service = SettingsService(session)
         settings_service.set("wechat_bot_token", token, encrypted=True)
+        settings_service.set("wechat_updates_buf", None)
         settings_service.commit()
+        __ = await WechatService().reload_bot(token)
         return {"ok": True}
     except ILinkError as exc:
         return {"error": str(exc)}
@@ -1082,8 +1084,10 @@ async def clear_wechat_token(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
+    await WechatService().stop_bot()
     settings_service = SettingsService(session)
     settings_service.set("wechat_bot_token", None)
+    settings_service.set("wechat_updates_buf", None)
     settings_service.commit()
     set_flash(request, "WeChat Bot Token 已清除。")
     return redirect("/console/wechat")
