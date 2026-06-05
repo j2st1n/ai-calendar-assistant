@@ -146,8 +146,12 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
     if ctx.reply_to_message_id:
         rec = session.execute(
             select(EventRecord).where(
-                *base_filter,
+                EventRecord.operation.in_(["create", "update"]),
                 EventRecord.bot_message_id == ctx.reply_to_message_id,
+                or_(
+                    EventRecord.caldav_uid.is_(None),
+                    ~EventRecord.caldav_uid.in_(deleted_uids),
+                ),
             ).order_by(EventRecord.created_at.desc())
         ).scalar()
         if rec:

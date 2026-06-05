@@ -514,6 +514,37 @@ def test_find_target_reply_to_still_works_for_telegram():
     asyncio.run(run())
 
 
+def test_find_target_reply_to_list_item_works_across_source_and_conversation():
+    async def run():
+        session = _session()
+        target = EventRecord(
+            source="discord",
+            source_user_id="u1",
+            conversation_id="discord-channel",
+            operation="create",
+            title="测试",
+            start_time="2026-06-02T15:00:00+08:00",
+            status="success",
+            event_json=json.dumps({"title": "测试", "start_time": "2026-06-02T15:00:00+08:00"}),
+            bot_message_id="list-item-msg",
+        )
+        session.add(target)
+        session.commit()
+        ctx = ChannelContext(
+            source="telegram",
+            source_user_id="u1",
+            conversation_id="telegram-chat",
+            reply_to_message_id="list-item-msg",
+        )
+
+        found = await _find_target(session, ctx)
+
+        assert found is not None
+        assert found.id == target.id
+
+    asyncio.run(run())
+
+
 # ── _route with quoted_text (end-to-end-ish) ────────────────────
 
 
