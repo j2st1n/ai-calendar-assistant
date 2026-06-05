@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.12.0] - 2026-06-05
+
+
+### Bug Fixes
+
+- target cross-platform list replies — 定位跨平台列表回复
+
+
+
+### Features
+
+- add cross-platform list command — 添加跨平台列表命令
+
+
+
+### Maintenance
+
+- bump version to 1.11.2 [skip ci]
+
+
 ## [v1.11.2] - 2026-06-05
 
 
