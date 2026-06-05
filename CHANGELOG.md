@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.11.1] - 2026-06-05
+
+
+### Bug Fixes
+
+- reload WeChat runtime on token changes — 微信Token变更时重载运行时
+
+
+
+### Documentation
+
+- update README for WeChat — 更新README微信说明
+
+
+
+### Maintenance
+
+- bump version to 1.11.0 [skip ci]
+
+
 ## [v1.11.0] - 2026-06-01
 
 
