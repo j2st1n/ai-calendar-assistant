@@ -129,10 +129,10 @@ def register_handlers(client: DiscordClientProtocol) -> None:
     async def slash_help(interaction: DiscordInteractionProtocol) -> None:
         await _handle_slash_command(interaction, "/help")
 
-    @tree.command(name="upcoming", description="查看未来日程")
+    @tree.command(name="list", description="查看未来日程")
     @discord.app_commands.describe(days="未来天数，最多 14 天")
-    async def slash_upcoming(interaction: DiscordInteractionProtocol, days: int = 7) -> None:
-        await _handle_slash_command(interaction, f"/upcoming {days}")
+    async def slash_list(interaction: DiscordInteractionProtocol, days: int = 7) -> None:
+        await _handle_slash_command(interaction, f"/list {days}")
 
     @tree.command(name="latest", description="查看最近一条日程")
     async def slash_latest(interaction: DiscordInteractionProtocol) -> None:
@@ -212,7 +212,7 @@ def register_handlers(client: DiscordClientProtocol) -> None:
 
     # Decorator-registered handlers are live-used by discord.py at runtime;
     # suppress static-analysis "unused function" diagnostics.
-    _ = (slash_help, slash_upcoming, slash_latest, slash_status, on_ready, on_message)
+    _ = (slash_help, slash_list, slash_latest, slash_status, on_ready, on_message)
 
 
 async def _send_discord_replies(message: DiscordMessageProtocol, session: Session,

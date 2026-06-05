@@ -203,7 +203,7 @@ class TelegramBotRuntime:
 
         app.add_handler(CommandHandler("start", _handle_start))
         app.add_handler(CommandHandler("help", _handle_help))
-        app.add_handler(CommandHandler("upcoming", _handle_upcoming))
+        app.add_handler(CommandHandler("list", _handle_list))
         app.add_handler(CommandHandler("latest", _handle_latest))
         app.add_handler(CommandHandler("status", _handle_status))
         app.add_handler(MessageHandler(ptb_filters.PHOTO, _handle_photo))
@@ -224,7 +224,7 @@ class TelegramBotRuntime:
             _ = await typed_app.bot.set_my_commands([
                 BotCommand("start", "开始使用"),
                 BotCommand("help", "使用帮助"),
-                BotCommand("upcoming", "未来日程"),
+                BotCommand("list", "未来日程"),
                 BotCommand("latest", "最近一条"),
                 BotCommand("status", "配置状态"),
             ])
@@ -411,7 +411,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         session.commit()
 
 
-async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
@@ -421,7 +421,7 @@ async def _handle_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if not service.is_user_allowed(session, user_id):
             _ = await update.effective_message.reply_text("你没有权限使用此 Bot。")
             return
-        text = "/upcoming" + (" " + " ".join(context.args) if context.args else "")
+        text = "/list" + (" " + " ".join(context.args) if context.args else "")
         replies = await handle_command(session, _telegram_context(update, user_id), text)
         await _send_telegram_replies(update, session, replies or [])
 
