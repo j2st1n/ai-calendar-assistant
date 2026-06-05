@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.11.2] - 2026-06-05
+
+
+### Bug Fixes
+
+- resolve bare evening hours — 修正晚间裸时间
+
+
+
+### Maintenance
+
+- bump version to 1.11.1 [skip ci]
+
+
 ## [v1.11.1] - 2026-06-05
 
 
