@@ -265,14 +265,34 @@ def _is_ambiguous_hour_only(text: str) -> bool:
     return True
 
 
+def _bare_hour_minute(text: str) -> tuple[int, int] | None:
+    m = re.search(r"(\d{1,2})\u70b9(?:半|(\d{1,2})分?)?", text)
+    if m:
+        hour = int(m.group(1))
+        if not 0 <= hour <= 23:
+            return None
+        minute = 30 if "半" in m.group(0) else int(m.group(2) or 0)
+        if not 0 <= minute <= 59:
+            return None
+        return hour, minute
+
+    m = re.search(r"(?<!\d)(\d{1,2})[:：](\d{2})(?!\d)", text)
+    if m:
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return hour, minute
+    return None
+
+
 def _ensure_hour_only_is_future(
-    result: ExtractionResult, text: str, timezone_str: str,
+    result: ExtractionResult, text: str, timezone_str: str, now: datetime | None = None,
 ) -> ExtractionResult:
     """Post-processing: roll past start_times forward for ambiguous hour-only inputs.
 
-    When the user says "10点测试" (bare hour, no date/period qualifier) and it's
-    already past 10:00 in the user's timezone, advance the event by whole days
-    until it falls in the future.  Preserves original duration when end_time is set.
+    When the user says "10点测试" (bare hour, no date/period qualifier) and the
+    model returns a past morning time, first try the same-day PM interpretation
+    (10:00 -> 22:00). If that is also past, advance by whole days until future.
+    Preserves original duration when end_time is set.
     """
     if result.intent != Intent.create_event or not result.events:
         return result
@@ -280,10 +300,13 @@ def _ensure_hour_only_is_future(
         return result
 
     try:
-        now_local = datetime.now(timezone.utc).replace(tzinfo=timezone.utc)
+        now_local = now or datetime.now(timezone.utc)
+        if now_local.tzinfo is None:
+            now_local = now_local.replace(tzinfo=timezone.utc)
         now_local = now_local.astimezone(ZoneInfo(timezone_str))
     except Exception:
         return result
+    bare_time = _bare_hour_minute(text)
 
     rolled: list[CalendarEvent] = []
     for event in result.events:
@@ -301,19 +324,35 @@ def _ensure_hour_only_is_future(
         if st.tzinfo is None:
             st = st.replace(tzinfo=ZoneInfo(timezone_str))
 
+        if bare_time and 1 <= bare_time[0] <= 11:
+            same_day_pm = now_local.replace(
+                hour=bare_time[0] + 12,
+                minute=bare_time[1],
+                second=0,
+                microsecond=0,
+            )
+            if same_day_pm > now_local and st != same_day_pm:
+                duration = _event_duration(event, st, timezone_str)
+                event.start_time = same_day_pm.isoformat()
+                if duration is not None and event.end_time:
+                    event.end_time = (same_day_pm + duration).isoformat()
+                rolled.append(event)
+                continue
+
         if st > now_local:
             rolled.append(event)
             continue
 
-        duration: timedelta | None = None
-        if event.end_time:
-            try:
-                et = datetime.fromisoformat(event.end_time)
-                if et.tzinfo is None:
-                    et = et.replace(tzinfo=ZoneInfo(timezone_str))
-                duration = et - st
-            except (ValueError, TypeError):
-                pass
+        duration = _event_duration(event, st, timezone_str)
+
+        if 1 <= st.hour <= 11:
+            pm_candidate = st + timedelta(hours=12)
+            if pm_candidate > now_local:
+                event.start_time = pm_candidate.isoformat()
+                if duration is not None and event.end_time:
+                    event.end_time = (pm_candidate + duration).isoformat()
+                rolled.append(event)
+                continue
 
         days = 1
         while True:
@@ -330,6 +369,18 @@ def _ensure_hour_only_is_future(
 
     result.events = rolled
     return result
+
+
+def _event_duration(event: CalendarEvent, start_time: datetime, timezone_str: str) -> timedelta | None:
+    if not event.end_time:
+        return None
+    try:
+        et = datetime.fromisoformat(event.end_time)
+        if et.tzinfo is None:
+            et = et.replace(tzinfo=ZoneInfo(timezone_str))
+        return et - start_time
+    except (ValueError, TypeError):
+        return None
 
 
 def _normalize_reminders_in_data(data: dict[str, Any]) -> dict[str, Any]:

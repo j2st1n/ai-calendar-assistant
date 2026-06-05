@@ -5,7 +5,7 @@ from typing import cast
 
 from zoneinfo import ZoneInfo
 
-from app.ai.extractor import EventExtractor, _build_result, _ensure_hour_only_is_future, _is_ambiguous_hour_only
+from app.ai.extractor import EventExtractor, _bare_hour_minute, _build_result, _ensure_hour_only_is_future, _is_ambiguous_hour_only
 from app.ai.schemas import Intent
 from app.services.ai_provider_service import AIProviderConfig, AIProviderService
 
@@ -159,6 +159,13 @@ def test_is_ambiguous_hour_only_rejects_null():
     assert _is_ambiguous_hour_only("没有时间信息") is False
 
 
+def test_bare_hour_minute_extracts_hour_and_half_hour():
+    assert _bare_hour_minute("10点测试") == (10, 0)
+    assert _bare_hour_minute("10点半测试") == (10, 30)
+    assert _bare_hour_minute("10点45分测试") == (10, 45)
+    assert _bare_hour_minute("10：30测试") == (10, 30)
+
+
 def _past_payload(hours_ago: int = 2, end_delta_hours: int | None = None) -> dict:
     now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
     st = now - timedelta(hours=hours_ago)
@@ -225,6 +232,136 @@ def test_ensure_hour_only_rolls_past_time_forward():
     assert (new_st - original_st).days == 1
     assert new_st.hour == original_st.hour
     assert new_st.minute == original_st.minute
+
+
+def test_ensure_hour_only_uses_same_day_pm_when_still_future():
+    now = datetime(2026, 6, 1, 21, 50, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = {
+        "intent": "create_event",
+        "events": [{
+            "title": "测试",
+            "start_time": "2026-06-01T10:00:00+08:00",
+            "end_time": "2026-06-01T11:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "location": None,
+            "description": None,
+            "reminders": None,
+            "recurrence": None,
+            "is_all_day": False,
+        }],
+        "missing_fields": [],
+        "confidence": 0.9,
+    }
+    result = _build_result(payload)
+
+    result = _ensure_hour_only_is_future(result, "10点测试", "Asia/Shanghai", now=now)
+
+    assert result.events[0].start_time == "2026-06-01T22:00:00+08:00"
+    assert result.events[0].end_time == "2026-06-01T23:00:00+08:00"
+
+
+def test_ensure_hour_only_rolls_to_tomorrow_when_same_day_pm_is_past():
+    now = datetime(2026, 6, 1, 22, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = {
+        "intent": "create_event",
+        "events": [{
+            "title": "测试",
+            "start_time": "2026-06-01T10:00:00+08:00",
+            "end_time": "2026-06-01T11:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "location": None,
+            "description": None,
+            "reminders": None,
+            "recurrence": None,
+            "is_all_day": False,
+        }],
+        "missing_fields": [],
+        "confidence": 0.9,
+    }
+    result = _build_result(payload)
+
+    result = _ensure_hour_only_is_future(result, "10点测试", "Asia/Shanghai", now=now)
+
+    assert result.events[0].start_time == "2026-06-02T10:00:00+08:00"
+    assert result.events[0].end_time == "2026-06-02T11:00:00+08:00"
+
+
+def test_ensure_hour_only_overrides_tomorrow_morning_with_same_day_pm():
+    now = datetime(2026, 6, 1, 21, 50, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = {
+        "intent": "create_event",
+        "events": [{
+            "title": "测试",
+            "start_time": "2026-06-02T10:00:00+08:00",
+            "end_time": "2026-06-02T11:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "location": None,
+            "description": None,
+            "reminders": None,
+            "recurrence": None,
+            "is_all_day": False,
+        }],
+        "missing_fields": [],
+        "confidence": 0.9,
+    }
+    result = _build_result(payload)
+
+    result = _ensure_hour_only_is_future(result, "10点测试", "Asia/Shanghai", now=now)
+
+    assert result.events[0].start_time == "2026-06-01T22:00:00+08:00"
+    assert result.events[0].end_time == "2026-06-01T23:00:00+08:00"
+
+
+def test_ensure_hour_only_overrides_tomorrow_half_hour_with_same_day_pm():
+    now = datetime(2026, 6, 1, 22, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = {
+        "intent": "create_event",
+        "events": [{
+            "title": "测试",
+            "start_time": "2026-06-02T10:30:00+08:00",
+            "end_time": "2026-06-02T11:30:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "location": None,
+            "description": None,
+            "reminders": None,
+            "recurrence": None,
+            "is_all_day": False,
+        }],
+        "missing_fields": [],
+        "confidence": 0.9,
+    }
+    result = _build_result(payload)
+
+    result = _ensure_hour_only_is_future(result, "10点半测试", "Asia/Shanghai", now=now)
+
+    assert result.events[0].start_time == "2026-06-01T22:30:00+08:00"
+    assert result.events[0].end_time == "2026-06-01T23:30:00+08:00"
+
+
+def test_ensure_hour_only_does_not_pm_shift_noon_or_later():
+    now = datetime(2026, 6, 1, 13, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = {
+        "intent": "create_event",
+        "events": [{
+            "title": "测试",
+            "start_time": "2026-06-01T14:00:00+08:00",
+            "end_time": "2026-06-01T15:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "location": None,
+            "description": None,
+            "reminders": None,
+            "recurrence": None,
+            "is_all_day": False,
+        }],
+        "missing_fields": [],
+        "confidence": 0.9,
+    }
+    result = _build_result(payload)
+
+    result = _ensure_hour_only_is_future(result, "14:00测试", "Asia/Shanghai", now=now)
+
+    assert result.events[0].start_time == "2026-06-01T14:00:00+08:00"
+    assert result.events[0].end_time == "2026-06-01T15:00:00+08:00"
 
 
 def test_ensure_hour_only_preserves_duration():
