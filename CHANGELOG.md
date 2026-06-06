@@ -1,5 +1,27 @@
 # Changelog
 
+## [v1.13.0] - 2026-06-06
+
+
+### Bug Fixes
+
+- delete modified quoted events — 删除修改后的引用日程
+
+- preserve future bare hours — 保留未来裸时间
+
+
+
+### Features
+
+- recognize WeChat image messages — 识别微信图片消息
+
+
+
+### Maintenance
+
+- bump version to 1.12.0 [skip ci]
+
+
 ## [v1.12.0] - 2026-06-05
 
 
