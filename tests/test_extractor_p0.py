@@ -221,12 +221,54 @@ def test_ensure_hour_only_does_not_modify_future_time():
     assert result.events[0].start_time == original
 
 
+def test_ensure_hour_only_keeps_same_day_morning_when_future():
+    now = datetime(2026, 6, 1, 8, 55, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = {
+        "intent": "create_event",
+        "events": [{
+            "title": "测试",
+            "start_time": "2026-06-01T09:00:00+08:00",
+            "end_time": "2026-06-01T10:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+            "location": None,
+            "description": None,
+            "reminders": None,
+            "recurrence": None,
+            "is_all_day": False,
+        }],
+        "missing_fields": [],
+        "confidence": 0.9,
+    }
+    result = _build_result(payload)
+
+    result = _ensure_hour_only_is_future(result, "9点测试", "Asia/Shanghai", now=now)
+
+    assert result.events[0].start_time == "2026-06-01T09:00:00+08:00"
+    assert result.events[0].end_time == "2026-06-01T10:00:00+08:00"
+
+
 def test_ensure_hour_only_rolls_past_time_forward():
-    payload = _past_payload(2)
+    now = datetime(2026, 6, 1, 22, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = {
+        "intent": "create_event",
+        "events": [{
+            "title": "测试",
+            "start_time": "2026-06-01T10:00:00+08:00",
+            "end_time": None,
+            "timezone": "Asia/Shanghai",
+            "location": None,
+            "description": None,
+            "reminders": None,
+            "recurrence": None,
+            "is_all_day": False,
+        }],
+        "missing_fields": [],
+        "confidence": 0.9,
+    }
     result = _build_result(payload)
     original_st = datetime.fromisoformat(result.events[0].start_time)
 
-    result = _ensure_hour_only_is_future(result, "10点测试", "Asia/Shanghai")
+    result = _ensure_hour_only_is_future(result, "10点测试", "Asia/Shanghai", now=now)
     new_st = datetime.fromisoformat(result.events[0].start_time)
 
     assert (new_st - original_st).days == 1

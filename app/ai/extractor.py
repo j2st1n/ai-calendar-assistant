@@ -324,6 +324,10 @@ def _ensure_hour_only_is_future(
         if st.tzinfo is None:
             st = st.replace(tzinfo=ZoneInfo(timezone_str))
 
+        if st > now_local and st.date() == now_local.date():
+            rolled.append(event)
+            continue
+
         if bare_time and 1 <= bare_time[0] <= 11:
             same_day_pm = now_local.replace(
                 hour=bare_time[0] + 12,
@@ -338,10 +342,6 @@ def _ensure_hour_only_is_future(
                     event.end_time = (same_day_pm + duration).isoformat()
                 rolled.append(event)
                 continue
-
-        if st > now_local:
-            rolled.append(event)
-            continue
 
         duration = _event_duration(event, st, timezone_str)
 
