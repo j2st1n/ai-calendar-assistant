@@ -1,5 +1,6 @@
 from collections.abc import Generator, MutableMapping
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import base64
 import importlib
 from io import BytesIO
@@ -107,13 +108,43 @@ def _qr_image_data_url(payload: str) -> str | None:
     return f"data:image/png;base64,{encoded}"
 
 
-def dashboard_stats(session: Session) -> dict[str, int]:
-    today = date.today()
-    week_start = today - timedelta(days=today.weekday())
+def _parse_event_date(start_time: str | None, tz: ZoneInfo) -> date | None:
+    """Parse event start_time ISO string and return its date in the configured tz."""
+    if not start_time:
+        return None
+    try:
+        dt = datetime.fromisoformat(start_time)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=tz)
+    return dt.astimezone(tz).date()
+
+
+def _parse_week_start(val: str) -> int:
+    """Parse week_start_day setting: 0=Sunday, 1=Monday (default)."""
+    return 0 if val == "0" else 1
+
+
+def dashboard_stats(session: Session, settings_service: SettingsService) -> dict[str, int]:
+    tz_name = (settings_service.get("caldav_timezone") or "Asia/Shanghai").strip() or "Asia/Shanghai"
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, KeyError):
+        tz = ZoneInfo("Asia/Shanghai")
+
+    now = datetime.now(tz)
+    today = now.date()
+
+    week_start_day = _parse_week_start(settings_service.get("week_start_day") or "1")
+    if week_start_day == 0:  # Sunday
+        days_since_start = (today.weekday() + 1) % 7
+    else:  # Monday
+        days_since_start = today.weekday()
+
+    week_start = today - timedelta(days=days_since_start)
+    week_end = week_start + timedelta(days=6)
     month_start = today.replace(day=1)
-    today_str = today.isoformat()
-    week_str = week_start.isoformat()
-    month_str = month_start.strftime("%Y-%m")
 
     def count_since(since_date: date) -> int:
         deleted_uids = select(EventRecord.caldav_uid).where(
@@ -149,14 +180,14 @@ def dashboard_stats(session: Session) -> dict[str, int]:
         seen_events.add(event_key)
         if rec.operation == "delete":
             continue
-        st = rec.start_time
-        if not st:
+        event_date = _parse_event_date(rec.start_time, tz)
+        if event_date is None:
             continue
-        if st.startswith(today_str):
+        if event_date == today:
             today_events += 1
-        if st >= week_str:
+        if week_start <= event_date <= week_end:
             week_events += 1
-        if st.startswith(month_str):
+        if event_date.year == month_start.year and event_date.month == month_start.month:
             month_events += 1
 
     return {
@@ -289,7 +320,8 @@ def ai_settings_payload(settings_service: SettingsService) -> dict[str, object]:
 
 @router.get("", response_class=HTMLResponse)
 async def dashboard(request: Request, session: Session = Depends(get_db), _: None = Depends(require_admin)) -> HTMLResponse:
-    stats = dashboard_stats(session)
+    settings_service = SettingsService(session)
+    stats = dashboard_stats(session, settings_service)
     ctx = status_context(session)
     ctx["stats"] = stats
     ctx["request"] = request
@@ -350,6 +382,7 @@ async def system_settings(
             "username": settings_service.get("admin_username") or "admin",
             "session_days": settings_service.get("session_days") or "7",
             "event_record_limit": settings_service.get("event_record_limit") or "500",
+            "week_start_day": settings_service.get("week_start_day") or "1",
             "message": get_flash(request) or request.query_params.get("message"),
             "error": get_error_flash(request) or request.query_params.get("error"),
         },
@@ -1249,6 +1282,7 @@ async def update_admin_settings(
 async def update_data_settings(
     request: Request,
     event_record_limit: int = Form(...),
+    week_start_day: str = Form("1"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -1256,8 +1290,14 @@ async def update_data_settings(
         set_error_flash(request, "记录保留数量必须在 1 到 100000 之间。")
         return redirect("/console/system")
 
+    if week_start_day not in ("0", "1"):
+        set_error_flash(request, "每周起始日必须是周日或周一。")
+        return redirect("/console/system")
+
     settings_service = SettingsService(session)
+    settings_service.set("week_start_day", week_start_day)
     settings_service.set("event_record_limit", str(event_record_limit))
+    settings_service.commit()
     prune_event_records(session, event_record_limit)
     set_flash(request, "系统设置已保存。")
     return redirect("/console/system")

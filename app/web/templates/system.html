@@ -39,6 +39,13 @@
         <span>事件记录保留数量</span>
         <input name="event_record_limit" type="number" min="1" max="100000" value="{{ event_record_limit }}" required>
       </label>
+      <label>
+        <span>每周起始日</span>
+        <select name="week_start_day">
+          <option value="0" {% if week_start_day == "0" %}selected{% endif %}>周日</option>
+          <option value="1" {% if week_start_day == "1" %}selected{% endif %}>周一</option>
+        </select>
+      </label>
       <div>
         <button type="submit">保存</button>
       </div>
