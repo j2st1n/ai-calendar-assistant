@@ -155,7 +155,7 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
             ).order_by(EventRecord.created_at.desc())
         ).scalar()
         if rec:
-            return rec
+            return _latest_record_for_event(session, base_filter, rec)
         if ctx.quoted_text:
             match = await _match_by_quoted_text(session, base_filter, ctx.quoted_text)
             if match:
@@ -221,14 +221,28 @@ async def _match_by_quoted_text(
         ).order_by(EventRecord.created_at.desc())
     ).scalars().all()
 
-    if len(candidates) == 1:
-        return candidates[0]
+    event_ids = {candidate.event_id for candidate in candidates if candidate.event_id}
+    if len(candidates) == 1 or len(event_ids) == 1:
+        return _latest_record_for_event(session, base_filter, candidates[0])
     if len(candidates) > 1:
         logger.debug(
             "Quote match ambiguous: %d candidates for title=%s start_prefix=%s",
             len(candidates), title, start_prefix,
         )
     return None
+
+
+def _latest_record_for_event(session: Session, base_filter: list, rec: EventRecord) -> EventRecord:
+    event_key = rec.event_id
+    if not event_key:
+        return rec
+    latest = session.execute(
+        select(EventRecord).where(
+            *base_filter,
+            EventRecord.event_id == event_key,
+        ).order_by(EventRecord.created_at.desc())
+    ).scalar()
+    return latest or rec
 
 
 async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRecord, caldav: dict[str, Any]) -> str:
@@ -251,6 +265,7 @@ async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, targ
     status = "success"
     error_msg = None
     warning = None
+    result = None
     if caldav["url"] and target.caldav_uid:
         old_uid = target.caldav_uid
         old_href = target.caldav_href
@@ -260,10 +275,6 @@ async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, targ
             result = None
             error_msg = f"CalDAV 新日程创建失败，原日程已保留：{exc}"
         if result:
-            target.caldav_href = result.get("href")
-            target.caldav_uid = result.get("uid")
-            target.start_time = new_event.get("start_time", "")
-            target.event_json = json.dumps(new_event, ensure_ascii=False)
             cal = CalDAVService()
             deleted_old = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"], old_uid, old_href, ssl_verify=caldav["ssl"])
             if not deleted_old:
@@ -277,7 +288,7 @@ async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, targ
         session.commit()
     rec_id = _record(session, ctx, "update", title, text, status,
              json.dumps(new_event, ensure_ascii=False),
-             cr={"href": target.caldav_href, "uid": target.caldav_uid}, err=error_msg,
+             cr={"href": result.get("href"), "uid": result.get("uid")} if result else {"href": target.caldav_href, "uid": target.caldav_uid}, err=error_msg,
              start_time=new_event.get("start_time", ""), event_id=target.event_id)
     return rec_id, warning
 

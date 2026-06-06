@@ -158,11 +158,13 @@ def test_do_modify_creates_new_before_deleting_old(monkeypatch):
 
         assert warning is None
         assert calls == ["create", "delete"]
-        assert target.caldav_uid == "new-uid"
-        assert target.caldav_href == "new-href"
+        assert target.caldav_uid == "old-uid"
+        assert target.caldav_href == "old-href"
         record = session.get(EventRecord, rec_id)
         assert record is not None
         assert record.status == "success"
+        assert record.caldav_uid == "new-uid"
+        assert record.caldav_href == "new-href"
 
     asyncio.run(run())
 
@@ -411,12 +413,12 @@ def _wechat_ctx(**overrides):
     )
 
 
-def _seed_event(session, title="测试", start_time="2026-06-02T15:00:00+08:00", **kw):
+def _seed_event(session, title="测试", start_time="2026-06-02T15:00:00+08:00", operation="create", **kw):
     rec = EventRecord(
         source="wechat",
         source_user_id="u1",
         conversation_id="u1",
-        operation="create",
+        operation=operation,
         title=title,
         start_time=start_time,
         status="success",
@@ -541,6 +543,97 @@ def test_find_target_reply_to_list_item_works_across_source_and_conversation():
 
         assert found is not None
         assert found.id == target.id
+
+    asyncio.run(run())
+
+
+def test_find_target_by_old_quote_after_modify_returns_latest_event():
+    async def run():
+        session = _session()
+        _ = _seed_event(
+            session,
+            title="测试",
+            start_time="2026-06-02T15:00:00+08:00",
+            event_id="event-1",
+            caldav_uid="old-uid",
+        )
+        latest = _seed_event(
+            session,
+            title="测试",
+            start_time="2026-06-02T16:00:00+08:00",
+            operation="update",
+            event_id="event-1",
+            caldav_uid="new-uid",
+        )
+        session.commit()
+        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+
+        found = await _find_target(session, ctx)
+
+        assert found is not None
+        assert found.id == latest.id
+
+    asyncio.run(run())
+
+
+def test_find_target_by_new_quote_after_modify_returns_latest_event_without_ambiguity():
+    async def run():
+        session = _session()
+        _ = _seed_event(
+            session,
+            title="测试",
+            start_time="2026-06-02T16:00:00+08:00",
+            event_id="event-1",
+            caldav_uid="old-uid",
+        )
+        latest = _seed_event(
+            session,
+            title="测试",
+            start_time="2026-06-02T16:00:00+08:00",
+            operation="update",
+            event_id="event-1",
+            caldav_uid="new-uid",
+        )
+        session.commit()
+        quote = "✅ 日程已更新！\n\n📌 标题：测试\n🕒 时间：2026-06-02 16:00 - 17:00"
+        ctx = _wechat_ctx(quoted_text=quote)
+
+        found = await _find_target(session, ctx)
+
+        assert found is not None
+        assert found.id == latest.id
+
+    asyncio.run(run())
+
+
+def test_find_target_by_old_reply_after_modify_returns_latest_event():
+    async def run():
+        session = _session()
+        old = _seed_event(
+            session,
+            title="测试",
+            start_time="2026-06-02T15:00:00+08:00",
+            event_id="event-1",
+            caldav_uid="old-uid",
+            bot_message_id="old-bot-msg",
+        )
+        latest = _seed_event(
+            session,
+            title="测试",
+            start_time="2026-06-02T16:00:00+08:00",
+            operation="update",
+            event_id="event-1",
+            caldav_uid="new-uid",
+            bot_message_id="new-bot-msg",
+        )
+        session.commit()
+        ctx = ChannelContext(source="wechat", source_user_id="u1", conversation_id="u1", reply_to_message_id="old-bot-msg")
+
+        found = await _find_target(session, ctx)
+
+        assert old.id != latest.id
+        assert found is not None
+        assert found.id == latest.id
 
     asyncio.run(run())
 
