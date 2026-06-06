@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.13.1] - 2026-06-06
+
+
+### Bug Fixes
+
+- respect dashboard week settings — 修正概览周统计设置
+
+
+
+### Documentation
+
+- refresh README and remove stale docs — 更新README并移除过期文档
+
+
+
+### Maintenance
+
+- bump version to 1.13.0 [skip ci]
+
+
 ## [v1.13.0] - 2026-06-06
 
 
