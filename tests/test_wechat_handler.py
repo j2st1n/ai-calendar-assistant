@@ -2,17 +2,25 @@ import asyncio
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.channels.wechat_handler import (
+    WECHAT_CDN_BASE_URL,
+    _decrypt_wechat_image,
     dispatch_wechat_message,
+    has_image_items,
+    image_sources_from_message,
+    image_urls_from_message,
     quoted_text_from_message,
     text_items_from_message,
     wechat_context_from_message,
 )
 from app.db.models import Base
+from app.services.settings_service import SettingsService
 
 
 def _session():
@@ -53,6 +61,58 @@ def test_text_items_from_message_extracts_text_only():
     assert text_items_from_message(msg) == ["hello"]
 
 
+def test_image_urls_from_message_extracts_image_urls():
+    msg = _message("hello")
+    msg["item_list"].append({"type": 2, "image_item": {"url": " https://example.test/a.jpg "}})
+    msg["item_list"].append({"type": 2, "image_item": {"cdn_url": "https://example.test/b.jpg"}})
+    msg["item_list"].append({"type": 2, "image_item": {"file": {"download_url": "https://example.test/c.jpg"}}})
+
+    assert image_urls_from_message(msg) == [
+        "https://example.test/a.jpg",
+        "https://example.test/b.jpg",
+        "https://example.test/c.jpg",
+    ]
+
+
+def test_image_sources_from_message_extracts_encrypted_media_source():
+    msg = _message("hello")
+    msg["item_list"].append({
+        "type": 2,
+        "image_item": {
+            "aeskey": "00112233445566778899aabbccddeeff",
+            "media": {"encrypt_query_param": "abc+/="},
+        },
+    })
+
+    sources = image_sources_from_message(msg)
+
+    assert len(sources) == 1
+    assert sources[0].encrypted_query_param == "abc+/="
+    assert sources[0].aes_key == bytes.fromhex("00112233445566778899aabbccddeeff")
+
+
+def test_image_urls_from_message_skips_invalid_items():
+    assert image_urls_from_message({}) == []
+    msg = _message("hello")
+    msg["item_list"].extend([
+        {"type": 1, "text_item": {"text": "x"}},
+        {"type": 2},
+        {"type": 2, "image_item": {}},
+        {"type": 2, "image_item": {"url": ""}},
+        {"type": 3, "image_item": {"url": "https://example.test/c.jpg"}},
+    ])
+
+    assert image_urls_from_message(msg) == []
+
+
+def test_has_image_items_detects_type_two_items():
+    assert has_image_items({}) is False
+    assert has_image_items(_message("hello")) is False
+    msg = _message("hello")
+    msg["item_list"].append({"type": 2, "image_item": {}})
+    assert has_image_items(msg) is True
+
+
 def test_dispatch_handles_command_and_sends_reply():
     async def run():
         client = AsyncMock()
@@ -90,6 +150,205 @@ def test_dispatch_uses_message_processor_for_plain_text():
         assert kwargs["source"] == "wechat"
         assert kwargs["conversation_id"] == "u@im.wechat"
         assert kwargs["source_message_id"] == "7466869436612690000"
+
+    asyncio.run(run())
+
+
+def _image_message(url="https://example.test/a.jpg", text: str | None = None):
+    msg = _message(text or "")
+    msg["item_list"] = [{"type": 2, "image_item": {"url": url}}]
+    if text is not None:
+        msg["item_list"].append({"type": 1, "text_item": {"text": text}})
+    return msg
+
+
+def _encrypted_image_message(encrypt_query_param="abc+/="):
+    msg = _message("")
+    msg["item_list"] = [{
+        "type": 2,
+        "image_item": {
+            "aeskey": "00112233445566778899aabbccddeeff",
+            "media": {"encrypt_query_param": encrypt_query_param},
+        },
+    }]
+    return msg
+
+
+def _encrypt_image_bytes(data: bytes, aes_key: bytes) -> bytes:
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(data) + padder.finalize()
+    encryptor = Cipher(algorithms.AES(aes_key), modes.ECB()).encryptor()
+    return encryptor.update(padded) + encryptor.finalize()
+
+
+def test_decrypt_wechat_image_decrypts_aes_ecb_payload():
+    key = bytes.fromhex("00112233445566778899aabbccddeeff")
+    encrypted = _encrypt_image_bytes(b"image-bytes", key)
+
+    assert _decrypt_wechat_image(encrypted, key) == b"image-bytes"
+
+
+def test_dispatch_handles_image_with_main_model():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+        settings = SettingsService(session)
+        settings.set("ai_model", "main-model")
+        settings.commit()
+
+        with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")) as mock_download:
+            with patch("app.channels.wechat_handler.AIProviderService") as MockAISvc:
+                MockAISvc.return_value.vision_completion = AsyncMock(return_value="明天三点开会")
+                with patch("app.channels.wechat_handler.MessageProcessor") as MockProcessor:
+                    MockProcessor.return_value.process = AsyncMock(return_value=[("ok", None)])
+                    replies = await dispatch_wechat_message(_image_message(), session, client)
+
+        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "bot-img"}]
+        mock_download.assert_awaited_once_with("https://example.test/a.jpg")
+        MockAISvc.return_value.vision_completion.assert_awaited_once()
+        assert MockAISvc.return_value.vision_completion.await_args is not None
+        config = MockAISvc.return_value.vision_completion.await_args.args[0]
+        assert config.model == "main-model"
+        MockProcessor.return_value.process.assert_awaited_once()
+        assert MockProcessor.return_value.process.await_args is not None
+        assert MockProcessor.return_value.process.await_args.args[2] == "明天三点开会"
+
+    asyncio.run(run())
+
+
+def test_dispatch_handles_encrypted_wechat_image_media():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+        settings = SettingsService(session)
+        settings.set("ai_model", "main-model")
+        settings.commit()
+        encrypted = _encrypt_image_bytes(b"real-image", bytes.fromhex("00112233445566778899aabbccddeeff"))
+
+        with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=encrypted)) as mock_download:
+            with patch("app.channels.wechat_handler.AIProviderService") as MockAISvc:
+                MockAISvc.return_value.vision_completion = AsyncMock(return_value="明天三点开会")
+                with patch("app.channels.wechat_handler.MessageProcessor") as MockProcessor:
+                    MockProcessor.return_value.process = AsyncMock(return_value=[("ok", None)])
+                    replies = await dispatch_wechat_message(_encrypted_image_message(), session, client)
+
+        expected_url = f"{WECHAT_CDN_BASE_URL}/download?encrypted_query_param=abc%2B%2F%3D"
+        mock_download.assert_awaited_once_with(expected_url)
+        assert MockAISvc.return_value.vision_completion.await_args is not None
+        assert MockAISvc.return_value.vision_completion.await_args.args[1] == "cmVhbC1pbWFnZQ=="
+        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "bot-img"}]
+
+    asyncio.run(run())
+
+
+def test_dispatch_handles_image_with_separate_vision_model():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+        svc = SettingsService(session)
+        svc.set("ai_vision_use_main", "false")
+        svc.set("ai_vision_provider_type", "openai_compatible")
+        svc.set("ai_vision_base_url", "https://vision.example/v1")
+        svc.set("ai_vision_model", "vision-model")
+        svc.commit()
+
+        with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")):
+            with patch("app.channels.wechat_handler.AIProviderService") as MockAISvc:
+                MockAISvc.return_value.vision_completion = AsyncMock(return_value="明天三点开会")
+                with patch("app.channels.wechat_handler.MessageProcessor") as MockProcessor:
+                    MockProcessor.return_value.process = AsyncMock(return_value=[("ok", None)])
+                    _ = await dispatch_wechat_message(_image_message(), session, client)
+
+        assert MockAISvc.return_value.vision_completion.await_args is not None
+        config = MockAISvc.return_value.vision_completion.await_args.args[0]
+        assert config.base_url == "https://vision.example/v1"
+        assert config.model == "vision-model"
+
+    asyncio.run(run())
+
+
+def test_dispatch_image_without_vision_model_sends_error():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+        settings = SettingsService(session)
+        settings.set("ai_vision_use_main", "false")
+        settings.commit()
+
+        with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")) as mock_download:
+            replies = await dispatch_wechat_message(_image_message(), session, client)
+
+        assert replies == [{"text": "📸 未配置识图模型，请先在控制台 AI 设置中配置。", "record_id": None, "bot_message_id": "bot-img"}]
+        mock_download.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+def test_dispatch_image_download_failure_sends_error():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+
+        with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=None)):
+            replies = await dispatch_wechat_message(_image_message(), session, client)
+
+        assert replies == [{"text": "图片下载失败，请稍后重试。", "record_id": None, "bot_message_id": "bot-img"}]
+
+    asyncio.run(run())
+
+
+def test_dispatch_image_without_supported_url_sends_error():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+        msg = _message("")
+        msg["item_list"] = [{"type": 2, "image_item": {"file_id": "file-1"}}]
+
+        replies = await dispatch_wechat_message(msg, session, client)
+
+        assert replies == [{"text": "收到图片，但消息里没有可下载的图片地址，暂时无法识别。", "record_id": None, "bot_message_id": "bot-img"}]
+
+    asyncio.run(run())
+
+
+def test_dispatch_image_vision_failure_sends_error():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+
+        with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")):
+            with patch("app.channels.wechat_handler.AIProviderService") as MockAISvc:
+                MockAISvc.return_value.vision_completion = AsyncMock(side_effect=RuntimeError("bad vision"))
+                replies = await dispatch_wechat_message(_image_message(), session, client)
+
+        assert replies == [{"text": "图片识别失败：bad vision", "record_id": None, "bot_message_id": "bot-img"}]
+
+    asyncio.run(run())
+
+
+def test_dispatch_image_and_text_processes_both_inputs():
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        session = _session()
+
+        with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")):
+            with patch("app.channels.wechat_handler.AIProviderService") as MockAISvc:
+                MockAISvc.return_value.vision_completion = AsyncMock(return_value="图片里的日程")
+                with patch("app.channels.wechat_handler.MessageProcessor") as MockProcessor:
+                    MockProcessor.return_value.process = AsyncMock(side_effect=[[("img ok", None)], [("text ok", None)]])
+                    replies = await dispatch_wechat_message(_image_message(text="文字里的日程"), session, client)
+
+        assert [reply["text"] for reply in replies] == ["img ok", "text ok"]
+        processed_texts = [await_call.args[2] for await_call in MockProcessor.return_value.process.await_args_list]
+        assert processed_texts == ["图片里的日程", "文字里的日程"]
 
     asyncio.run(run())
 
