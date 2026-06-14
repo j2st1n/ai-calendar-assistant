@@ -1,5 +1,6 @@
 import asyncio
 
+from fastapi.routing import APIRoute
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
@@ -11,6 +12,8 @@ from app.web.routes import (
     _caldav_ssl_from_settings,
     _normalize_caldav_int_setting,
     caldav_payload,
+    require_admin,
+    router,
     update_caldav_settings,
 )
 
@@ -23,6 +26,20 @@ def _session():
 
 def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/console/caldav", "headers": [], "session": {}})
+
+
+def test_list_caldav_calendars_requires_admin():
+    route = next(
+        route
+        for route in router.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/console/caldav/calendars"
+        and route.methods
+        and "POST" in route.methods
+    )
+
+    dependency_calls = [dep.call for dep in route.dependant.dependencies]
+    assert require_admin in dependency_calls
 
 
 def test_normalize_caldav_int_setting_accepts_valid_and_empty_values():

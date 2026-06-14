@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/github/v/tag/j2st1n/ai-calendar-assistant)](https://github.com/j2st1n/ai-calendar-assistant/tags)
 
+License: MIT. See [LICENSE](LICENSE).
+
 ## 功能
 
 - 📅 **自然语言提取** — Telegram / Discord / WeChat 里说一句「明天下午 3 点和张三开会」，自动创建日程

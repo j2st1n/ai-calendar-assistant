@@ -781,6 +781,7 @@ async def list_caldav_calendars(
     caldav_password: str = Form(""),
     caldav_ssl_verify: str = Form("false"),
     session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
     url = caldav_url.strip() or settings_service.get("caldav_url") or ""
