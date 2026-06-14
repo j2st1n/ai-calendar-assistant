@@ -876,7 +876,7 @@ async def generate_bind_link(
 
 
 @router.get("/telegram/bind/status")
-async def check_bind_status(token: str = ""):
+async def check_bind_status(token: str = "", _: None = Depends(require_admin)):
     if not token:
         return {"status": "expired"}
     service = TelegramService()
