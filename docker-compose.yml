@@ -2,6 +2,11 @@ services:
   app:
     network_mode: host
     image: ghcr.io/j2st1n/ai-calendar-assistant:${APP_VERSION:-latest}
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-127.0.0.1,localhost}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
     user: "1000:1000"
     restart: unless-stopped
     volumes:

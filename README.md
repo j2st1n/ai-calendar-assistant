@@ -17,6 +17,7 @@ License: MIT. See [LICENSE](LICENSE).
 - 🔐 **自部署、单用户** — 数据全在本地，不上传第三方
 - 📸 **图片识别日程** — 发送照片自动识别文字后提取日程
 - 🎛️ **Web 控制台** — 概览状态、配置 AI/日历/Telegram/Discord/WeChat、查看事件记录
+- 🛡️ **公网登录防护** — 支持 Cloudflare Turnstile、TOTP 两步验证、恢复码和 WebAuthn 通行密钥
 - 🐳 **零配置 Docker 部署** — 不强制 `.env`，首次启动自动生成管理员密码
 - 🔄 **一键升级** — `docker compose pull && docker compose up -d`
 
@@ -135,10 +136,62 @@ WeChat 后台运行时会自动轮询新消息；控制台可查看运行状态�
 - 日程记录和配置存储在本地 SQLite / 本地文件中
 - 自然语言输入、图片内容和必要的日程上下文会发送给你配置的 AI 模型服务用于识别与修改
 - 管理员密码使用 bcrypt 哈希存储
-- AI API Key、Telegram Token、WeChat Token、CalDAV 密码使用 `APP_SECRET_KEY` 加密存储
+- AI API Key、Telegram Token、WeChat Token、CalDAV 密码、Turnstile Secret Key 和 TOTP 种子使用 `APP_SECRET_KEY` 加密存储
 - Web 控制台默认只绑定 `127.0.0.1`，不暴露公网
-- 公网部署建议配置 Nginx / Caddy 反代 + HTTPS
+- 公网模式提供可信 Host、同源写请求校验、安全 Cookie、登录限流、HSTS、CSP 和禁止后台缓存等保护
 - 备份时需同时保存 `data/app.db` 和 `data/secrets.json`
+
+### 公网域名与通行密钥
+
+通行密钥必须绑定具体的 HTTPS Origin 和 RP ID。源码没有写死项目维护者的域名，每个自部署实例都可以使用自己的域名。
+
+在 `docker-compose.yml` 同目录创建 `.env`：
+
+```env
+APP_VERSION=v1.15.0
+PUBLIC_ORIGIN=https://calendar.example.com
+WEBAUTHN_RP_ID=calendar.example.com
+TRUSTED_HOSTS=calendar.example.com,127.0.0.1,localhost
+SECURE_COOKIES=true
+```
+
+各项含义：
+
+| 变量 | 示例 | 说明 |
+|---|---|---|
+| `PUBLIC_ORIGIN` | `https://calendar.example.com` | 浏览器访问控制台的完整 Origin，不要添加末尾 `/` |
+| `WEBAUTHN_RP_ID` | `calendar.example.com` | 通行密钥 RP ID，只填写域名，不包含协议、端口或路径 |
+| `TRUSTED_HOSTS` | `calendar.example.com,127.0.0.1,localhost` | 允许访问应用的 Host 列表 |
+| `SECURE_COOKIES` | `true` | 只通过 HTTPS 发送会话 Cookie；公网部署必须启用 |
+
+修改后启动或重建容器：
+
+```bash
+docker compose up -d
+```
+
+以 Caddy 为例，应用仍只监听本机端口：
+
+```caddyfile
+calendar.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:9527
+}
+```
+
+确认 `https://calendar.example.com/console/login` 可以正常访问后，登录控制台并进入“登录安全”：
+
+1. 可选：填写该域名对应的 Cloudflare Turnstile Site Key 和 Secret Key。
+2. 启用 TOTP 两步验证，并立即离线保存只显示一次的恢复码。
+3. 添加通行密钥；注册时需要再次输入当前管理员密码。
+
+Turnstile Site Key 和域名是公开信息；Turnstile Secret Key、TOTP 种子、恢复码及
+`data/secrets.json` 必须保密，不应提交到 Git。通行密钥私钥始终保留在用户设备，
+服务器只保存公钥。
+
+不要在已有通行密钥后随意修改 `PUBLIC_ORIGIN` 或 `WEBAUTHN_RP_ID`。更换域名后，
+旧域名注册的通行密钥通常不能继续使用，需要在新域名重新注册。域名与安全 Cookie
+属于启动级安全边界，因此通过部署环境变量管理，不允许在 Web 页面中修改。
 
 ## 升级
 
@@ -151,8 +204,8 @@ docker compose pull && docker compose up -d
 生产环境可固定到版本标签，避免 `latest` 变化：
 
 ```bash
-APP_VERSION=v1.14.0 docker compose pull app
-APP_VERSION=v1.14.0 docker compose up -d --force-recreate app
+APP_VERSION=v1.15.0 docker compose pull app
+APP_VERSION=v1.15.0 docker compose up -d --force-recreate app
 ```
 
 回滚时把 `APP_VERSION` 改为上一个版本并重复以上两条命令。容器可通过

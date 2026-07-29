@@ -2,29 +2,34 @@ from collections.abc import Generator, MutableMapping
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import base64
+import hashlib
 import importlib
 from io import BytesIO
 import json
 from pathlib import Path
+import secrets
 import sqlite3
 import tempfile
+import time
 from typing import Any, cast
 from urllib.parse import urlencode
+from urllib.parse import urlsplit
 import zipfile
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.channels.wechat_handler import dispatch_wechat_message
 from app.core.bootstrap import read_changes, read_version
+from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.services.telegram_service import get_telegram_bot_runtime
 from app.services.discord_service import get_discord_bot_runtime, DiscordService
 from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
-from app.db.models import EventRecord
+from app.db.models import EventRecord, PasskeyCredential
 from app.db.session import SessionLocal
 from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
@@ -32,6 +37,7 @@ from app.integrations.ilink import ILinkAuthError, ILinkClient, ILinkError
 from app.services.settings_service import SettingsService
 from app.services.telegram_service import TelegramService
 from app.services.wechat_service import WechatService, get_wechat_bot_runtime
+from app.web.security import login_rate_limiter, verify_turnstile
 
 
 router = APIRouter(prefix="/console")
@@ -81,6 +87,51 @@ def get_error_flash(request: Request) -> str | None:
     if msg:
         del request.session["error_flash"]
     return msg
+
+
+def _verify_totp(settings_service: SettingsService, code: str) -> bool:
+    secret = settings_service.get("admin_totp_secret")
+    if not secret or not code.isdigit():
+        return False
+    pyotp = importlib.import_module("pyotp")
+    totp = pyotp.TOTP(secret)
+    current_counter = int(time.time()) // 30
+    last_counter = int(settings_service.get("admin_totp_last_counter") or "-1")
+    for offset in (-1, 0, 1):
+        counter = current_counter + offset
+        if counter > last_counter and secrets.compare_digest(totp.at(counter * 30), code):
+            settings_service.set("admin_totp_last_counter", str(counter))
+            settings_service.commit()
+            return True
+    return False
+
+
+def _consume_recovery_code(settings_service: SettingsService, code: str) -> bool:
+    normalized = code.strip().lower().replace(" ", "")
+    digest = hashlib.sha256(normalized.encode()).hexdigest()
+    try:
+        stored = json.loads(settings_service.get("admin_recovery_code_hashes") or "[]")
+    except json.JSONDecodeError:
+        return False
+    matched = next((item for item in stored if secrets.compare_digest(item, digest)), None)
+    if matched is None:
+        return False
+    stored.remove(matched)
+    settings_service.set("admin_recovery_code_hashes", json.dumps(stored))
+    settings_service.commit()
+    return True
+
+
+def _generate_recovery_codes() -> list[str]:
+    return [f"{secrets.token_hex(4)}-{secrets.token_hex(4)}" for _ in range(8)]
+
+
+def _passkey_config() -> tuple[str, str]:
+    rp_id = settings.webauthn_rp_id.strip()
+    origin = settings.public_origin.rstrip("/")
+    if not rp_id or not origin:
+        raise HTTPException(status_code=503, detail="通行密钥尚未配置公网域名。")
+    return rp_id, origin
 
 
 def _sanitize_probe_value(value: object) -> object:
@@ -355,7 +406,15 @@ async def dashboard(request: Request, session: Session = Depends(get_db), _: Non
 async def login_page(request: Request) -> Response:
     if request.session.get("admin_authenticated"):
         return redirect("/console")
-    return templates.TemplateResponse(request, "login.html", {"error": None})
+    with SessionLocal() as session:
+        settings_service = SettingsService(session)
+        site_key = settings_service.get("turnstile_site_key") or ""
+        enabled = bool(site_key and settings_service.get("turnstile_secret_key"))
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"error": None, "turnstile_site_key": site_key if enabled else ""},
+    )
 
 
 @router.post("/login")
@@ -363,31 +422,390 @@ async def login(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
+    turnstile_response: str = Form("", alias="cf-turnstile-response"),
     session: Session = Depends(get_db),
 ):
     settings_service = SettingsService(session)
+    limiter_key = username.strip().lower()
+    site_key = settings_service.get("turnstile_site_key") or ""
+    turnstile_secret = settings_service.get("turnstile_secret_key") or ""
+    turnstile_enabled = bool(site_key and turnstile_secret)
+    login_context = {"turnstile_site_key": site_key if turnstile_enabled else ""}
+    if login_rate_limiter.blocked(limiter_key):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {**login_context, "error": "登录失败次数过多，请 5 分钟后重试。"},
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    if turnstile_enabled:
+        public_hostname = urlsplit(settings.public_origin).hostname if settings.public_origin else None
+        remote_ip = request.client.host if request.client else None
+        if not await verify_turnstile(
+            turnstile_response,
+            turnstile_secret,
+            remote_ip=remote_ip,
+            expected_hostname=public_hostname,
+        ):
+            return templates.TemplateResponse(
+                request,
+                "login.html",
+                {**login_context, "error": "人机验证失败，请刷新后重试。"},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
     saved_username = settings_service.get("admin_username")
     saved_password_hash = settings_service.get("admin_password_hash")
     if saved_username == username and saved_password_hash and verify_password(password, saved_password_hash):
+        login_rate_limiter.success(limiter_key)
         request.session.clear()
+        if settings_service.get("admin_totp_enabled") == "true":
+            request.session["pending_admin_username"] = username
+            request.session["pending_admin_started_at"] = int(time.time())
+            return redirect("/console/login/2fa")
         request.session["admin_authenticated"] = True
         request.session["admin_username"] = username
         if settings_service.get("admin_password_changed") == "false":
             set_flash(request, "首次登录，请修改管理员密码。")
             return redirect("/console/system")
         return redirect("/console")
+    login_rate_limiter.failure(limiter_key)
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"error": "用户名或密码不正确。"},
+        {**login_context, "error": "用户名或密码不正确。"},
         status_code=status.HTTP_401_UNAUTHORIZED,
     )
+
+
+@router.get("/login/2fa", response_class=HTMLResponse)
+async def login_2fa_page(request: Request) -> Response:
+    started_at = int(request.session.get("pending_admin_started_at") or 0)
+    if not request.session.get("pending_admin_username") or time.time() - started_at > 300:
+        request.session.clear()
+        return redirect("/console/login")
+    return templates.TemplateResponse(request, "login_2fa.html", {"error": None})
+
+
+@router.post("/login/2fa")
+async def login_2fa(
+    request: Request,
+    code: str = Form(...),
+    session: Session = Depends(get_db),
+) -> Response:
+    username = request.session.get("pending_admin_username")
+    started_at = int(request.session.get("pending_admin_started_at") or 0)
+    if not username or time.time() - started_at > 300:
+        request.session.clear()
+        return redirect("/console/login")
+    settings_service = SettingsService(session)
+    limiter_key = f"2fa:{username}"
+    if login_rate_limiter.blocked(limiter_key):
+        return templates.TemplateResponse(
+            request,
+            "login_2fa.html",
+            {"error": "验证失败次数过多，请 5 分钟后重新登录。"},
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    if not (_verify_totp(settings_service, code.strip()) or _consume_recovery_code(settings_service, code)):
+        login_rate_limiter.failure(limiter_key)
+        return templates.TemplateResponse(
+            request,
+            "login_2fa.html",
+            {"error": "验证码或恢复码不正确。"},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+    login_rate_limiter.success(limiter_key)
+    request.session.clear()
+    request.session["admin_authenticated"] = True
+    request.session["admin_username"] = username
+    return redirect("/console")
 
 
 @router.post("/logout")
 async def logout(request: Request) -> RedirectResponse:
     request.session.clear()
     return redirect("/console/login")
+
+
+@router.get("/security", response_class=HTMLResponse)
+async def security_settings(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    settings_service = SettingsService(session)
+    totp_enabled = settings_service.get("admin_totp_enabled") == "true"
+    pending_secret = ""
+    qr_image = None
+    if not totp_enabled:
+        pyotp = importlib.import_module("pyotp")
+        pending_secret = request.session.get("pending_totp_secret") or pyotp.random_base32()
+        request.session["pending_totp_secret"] = pending_secret
+        username = settings_service.get("admin_username") or "admin"
+        provisioning_uri = pyotp.TOTP(pending_secret).provisioning_uri(
+            name=username,
+            issuer_name="AI Calendar Assistant",
+        )
+        qr_image = _qr_image_data_url(provisioning_uri)
+    recovery_codes = request.session.pop("new_recovery_codes", None)
+    return templates.TemplateResponse(
+        request,
+        "security.html",
+        {
+            "totp_enabled": totp_enabled,
+            "pending_totp_secret": pending_secret,
+            "totp_qr_image": qr_image,
+            "recovery_codes": recovery_codes,
+            "turnstile_site_key": settings_service.get("turnstile_site_key") or "",
+            "turnstile_secret_masked": settings_service.get_masked("turnstile_secret_key"),
+            "message": get_flash(request),
+            "error": get_error_flash(request),
+        },
+    )
+
+
+@router.post("/security/turnstile")
+async def update_turnstile_settings(
+    request: Request,
+    site_key: str = Form(""),
+    secret_key: str = Form(""),
+    clear_secret: bool = Form(False),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    settings_service.set("turnstile_site_key", site_key.strip())
+    if clear_secret:
+        settings_service.set("turnstile_secret_key", None, encrypted=True)
+    elif secret_key.strip():
+        settings_service.set("turnstile_secret_key", secret_key.strip(), encrypted=True)
+    settings_service.commit()
+    set_flash(request, "Turnstile 配置已保存。")
+    return redirect("/console/security")
+
+
+@router.post("/security/totp/enable")
+async def enable_totp(
+    request: Request,
+    current_password: str = Form(...),
+    code: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    password_hash = settings_service.get("admin_password_hash")
+    secret = request.session.get("pending_totp_secret")
+    if not password_hash or not verify_password(current_password, password_hash):
+        set_error_flash(request, "当前密码不正确。")
+        return redirect("/console/security")
+    pyotp = importlib.import_module("pyotp")
+    if not secret or not pyotp.TOTP(secret).verify(code.strip(), valid_window=1):
+        set_error_flash(request, "动态验证码不正确。")
+        return redirect("/console/security")
+    recovery_codes = _generate_recovery_codes()
+    hashes = [hashlib.sha256(item.encode()).hexdigest() for item in recovery_codes]
+    settings_service.set("admin_totp_secret", secret, encrypted=True)
+    settings_service.set("admin_totp_enabled", "true")
+    settings_service.set("admin_totp_last_counter", "-1")
+    settings_service.set("admin_recovery_code_hashes", json.dumps(hashes))
+    settings_service.commit()
+    request.session.pop("pending_totp_secret", None)
+    request.session["new_recovery_codes"] = recovery_codes
+    set_flash(request, "两步验证已启用。请立即保存恢复码。")
+    return redirect("/console/security")
+
+
+@router.post("/security/totp/disable")
+async def disable_totp(
+    request: Request,
+    current_password: str = Form(...),
+    code: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    password_hash = settings_service.get("admin_password_hash")
+    if not password_hash or not verify_password(current_password, password_hash):
+        set_error_flash(request, "当前密码不正确。")
+        return redirect("/console/security")
+    if not (_verify_totp(settings_service, code.strip()) or _consume_recovery_code(settings_service, code)):
+        set_error_flash(request, "验证码或恢复码不正确。")
+        return redirect("/console/security")
+    settings_service.set("admin_totp_secret", None, encrypted=True)
+    settings_service.set("admin_totp_enabled", "false")
+    settings_service.set("admin_totp_last_counter", "-1")
+    settings_service.set("admin_recovery_code_hashes", "[]")
+    settings_service.commit()
+    set_flash(request, "两步验证已停用。")
+    return redirect("/console/security")
+
+
+@router.get("/security/passkeys")
+async def list_passkeys(
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> list[dict[str, object]]:
+    rows = session.execute(select(PasskeyCredential).order_by(PasskeyCredential.created_at.desc())).scalars().all()
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "created_at": row.created_at.isoformat(),
+            "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/security/passkeys/register/options")
+async def passkey_registration_options(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> Response:
+    rp_id, _origin = _passkey_config()
+    body = await request.json()
+    current_password = str(body.get("current_password") or "")
+    settings_service = SettingsService(session)
+    password_hash = settings_service.get("admin_password_hash")
+    if not password_hash or not verify_password(current_password, password_hash):
+        raise HTTPException(status_code=403, detail="当前密码不正确。")
+    webauthn = importlib.import_module("webauthn")
+    structs = importlib.import_module("webauthn.helpers.structs")
+    rows = session.execute(select(PasskeyCredential)).scalars().all()
+    options = webauthn.generate_registration_options(
+        rp_id=rp_id,
+        rp_name="AI Calendar Assistant",
+        user_name=settings_service.get("admin_username") or "admin",
+        user_id=hashlib.sha256((settings_service.get("admin_username") or "admin").encode()).digest(),
+        authenticator_selection=structs.AuthenticatorSelectionCriteria(
+            resident_key=structs.ResidentKeyRequirement.PREFERRED,
+            user_verification=structs.UserVerificationRequirement.REQUIRED,
+        ),
+        exclude_credentials=[
+            structs.PublicKeyCredentialDescriptor(id=webauthn.base64url_to_bytes(row.credential_id))
+            for row in rows
+        ],
+    )
+    request.session["passkey_registration_challenge"] = webauthn.bytes_to_base64url(options.challenge)
+    request.session["passkey_registration_name"] = str(body.get("name") or "我的通行密钥").strip()[:100]
+    request.session["passkey_registration_started_at"] = int(time.time())
+    return Response(webauthn.options_to_json(options), media_type="application/json")
+
+
+@router.post("/security/passkeys/register/verify")
+async def verify_passkey_registration(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> JSONResponse:
+    rp_id, origin = _passkey_config()
+    challenge = request.session.pop("passkey_registration_challenge", None)
+    name = request.session.pop("passkey_registration_name", "我的通行密钥")
+    started_at = int(request.session.pop("passkey_registration_started_at", 0))
+    if not challenge or time.time() - started_at > 300:
+        raise HTTPException(status_code=400, detail="注册请求已过期，请重试。")
+    webauthn = importlib.import_module("webauthn")
+    try:
+        verified = webauthn.verify_registration_response(
+            credential=await request.json(),
+            expected_challenge=webauthn.base64url_to_bytes(challenge),
+            expected_rp_id=rp_id,
+            expected_origin=origin,
+            require_user_verification=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="通行密钥验证失败。") from exc
+    credential_id = webauthn.bytes_to_base64url(verified.credential_id)
+    if session.scalar(select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id)):
+        raise HTTPException(status_code=409, detail="此通行密钥已注册。")
+    session.add(
+        PasskeyCredential(
+            name=name or "我的通行密钥",
+            credential_id=credential_id,
+            public_key=webauthn.bytes_to_base64url(verified.credential_public_key),
+            sign_count=verified.sign_count,
+        )
+    )
+    session.commit()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/security/passkeys/{credential_id}/delete")
+async def delete_passkey(
+    credential_id: int,
+    request: Request,
+    current_password: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    settings_service = SettingsService(session)
+    password_hash = settings_service.get("admin_password_hash")
+    if not password_hash or not verify_password(current_password, password_hash):
+        set_error_flash(request, "当前密码不正确，未删除通行密钥。")
+        return redirect("/console/security")
+    row = session.get(PasskeyCredential, credential_id)
+    if row:
+        session.delete(row)
+        session.commit()
+    set_flash(request, "通行密钥已删除。")
+    return redirect("/console/security")
+
+
+@router.post("/login/passkey/options")
+async def passkey_authentication_options(request: Request, session: Session = Depends(get_db)) -> Response:
+    rp_id, _origin = _passkey_config()
+    webauthn = importlib.import_module("webauthn")
+    structs = importlib.import_module("webauthn.helpers.structs")
+    rows = session.execute(select(PasskeyCredential)).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="尚未注册通行密钥。")
+    options = webauthn.generate_authentication_options(
+        rp_id=rp_id,
+        user_verification=structs.UserVerificationRequirement.REQUIRED,
+        allow_credentials=[
+            structs.PublicKeyCredentialDescriptor(id=webauthn.base64url_to_bytes(row.credential_id))
+            for row in rows
+        ],
+    )
+    request.session["passkey_authentication_challenge"] = webauthn.bytes_to_base64url(options.challenge)
+    request.session["passkey_authentication_started_at"] = int(time.time())
+    return Response(webauthn.options_to_json(options), media_type="application/json")
+
+
+@router.post("/login/passkey/verify")
+async def verify_passkey_authentication(request: Request, session: Session = Depends(get_db)) -> JSONResponse:
+    rp_id, origin = _passkey_config()
+    challenge = request.session.pop("passkey_authentication_challenge", None)
+    started_at = int(request.session.pop("passkey_authentication_started_at", 0))
+    if not challenge or time.time() - started_at > 300:
+        raise HTTPException(status_code=400, detail="登录请求已过期，请重试。")
+    body = await request.json()
+    credential_id = str(body.get("id") or "")
+    row = session.scalar(select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id))
+    if row is None:
+        raise HTTPException(status_code=401, detail="未知的通行密钥。")
+    webauthn = importlib.import_module("webauthn")
+    try:
+        verified = webauthn.verify_authentication_response(
+            credential=body,
+            expected_challenge=webauthn.base64url_to_bytes(challenge),
+            expected_rp_id=rp_id,
+            expected_origin=origin,
+            credential_public_key=webauthn.base64url_to_bytes(row.public_key),
+            credential_current_sign_count=row.sign_count,
+            require_user_verification=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="通行密钥验证失败。") from exc
+    row.sign_count = verified.new_sign_count
+    row.last_used_at = datetime.now().astimezone()
+    session.commit()
+    settings_service = SettingsService(session)
+    request.session.clear()
+    request.session["admin_authenticated"] = True
+    request.session["admin_username"] = settings_service.get("admin_username") or "admin"
+    return JSONResponse({"ok": True})
 
 
 @router.get("/system", response_class=HTMLResponse)

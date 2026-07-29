@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.bootstrap import bootstrap_application
 from app.core.bootstrap import read_version
@@ -12,18 +13,25 @@ from app.services.telegram_service import TelegramService
 from app.services.discord_service import DiscordService
 from app.services.wechat_service import WechatService
 from app.web.routes import router as web_router
+from app.web.security import SameOriginMiddleware, SecurityHeadersMiddleware
 
 
 def create_app() -> FastAPI:
     bootstrap_application()
     app = FastAPI(title="AI Calendar Assistant")
+    app.add_middleware(SameOriginMiddleware)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[host.strip() for host in settings.trusted_hosts.split(",") if host.strip()],
+    )
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.app_secret_key or "development-only-secret",
         max_age=settings.session_days * 24 * 60 * 60,
-        same_site="lax",
-        https_only=False,
+        same_site="strict",
+        https_only=settings.secure_cookies,
     )
+    app.add_middleware(SecurityHeadersMiddleware)
     app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
     app.include_router(web_router)
 

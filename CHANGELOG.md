@@ -1,5 +1,15 @@
 # Changelog
 
+## [v1.15.0] - 2026-07-29
+
+
+### Features
+
+- secure the public console with Turnstile, TOTP 2FA, recovery codes, and WebAuthn passkeys — 使用 Turnstile、TOTP 两步验证、恢复码和 WebAuthn 通行密钥保护公网后台
+
+- enforce trusted hosts, same-origin writes, secure cookies, login throttling, security headers, and private console caching — 强制可信域名、同源写请求、安全 Cookie、登录限流、安全响应头及后台禁止缓存
+
+
 ## [v1.14.0] - 2026-07-29
 
 

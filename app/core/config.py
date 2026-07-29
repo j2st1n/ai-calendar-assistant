@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     session_days: int = 7
     event_record_limit: int = 500
     data_dir: str = "data"
+    public_origin: str = ""
+    webauthn_rp_id: str = ""
+    trusted_hosts: str = "127.0.0.1,localhost,testserver"
+    secure_cookies: bool = False
 
 
 settings = Settings()
