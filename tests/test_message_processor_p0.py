@@ -533,6 +533,42 @@ def test_route_with_unreadable_quote_does_not_fall_back_to_recent_event():
     asyncio.run(run())
 
 
+def test_route_with_quoted_message_id_deletes_exact_event_without_quote_body():
+    async def run():
+        session = _session()
+        target = _seed_event(
+            session,
+            bot_message_id="bot-message-123",
+            event_id="target-event",
+        )
+        _ = _seed_event(
+            session,
+            title="其它日程",
+            bot_message_id="bot-message-456",
+            event_id="other-event",
+        )
+        session.commit()
+        ctx = _wechat_ctx(
+            reply_to_message_id="bot-message-123",
+            quote_reference_present=True,
+        )
+        svc = SettingsService(session)
+
+        with patch.object(svc, "get", return_value=""):
+            replies = await _route(
+                session, ctx, "删除",
+                extractor=_FakeExtractor(intent=Intent.no_event),
+                caldav=_caldav(),
+                svc=svc,
+            )
+
+        assert replies == [("🗑️ 已删除日程：测试（CalDAV 删除失败，但本地记录已标记）", None)]
+        deleted = session.query(EventRecord).filter(EventRecord.operation == "delete").one()
+        assert deleted.event_id == target.event_id
+
+    asyncio.run(run())
+
+
 def test_find_target_quoted_text_does_not_fall_back_to_recent():
     async def run():
         session = _session()

@@ -16,6 +16,7 @@ from app.channels.wechat_handler import (
     has_image_items,
     image_sources_from_message,
     image_urls_from_message,
+    quoted_message_id_from_message,
     quoted_text_from_message,
     text_items_from_message,
     wechat_context_from_message,
@@ -499,6 +500,24 @@ def test_wechat_context_marks_unreadable_ref_msg():
     assert has_quoted_reference(msg) is True
     assert ctx.quote_reference_present is True
     assert ctx.quoted_text is None
+
+
+def test_wechat_context_uses_quoted_message_item_id_without_body():
+    msg = _message("删除")
+    msg["item_list"][0]["ref_msg"] = {
+        "title": "引用了一条消息",
+        "message_item": {
+            "type": 1,
+            "msg_id": "bot-message-123",
+        },
+    }
+
+    ctx = wechat_context_from_message(msg)
+
+    assert quoted_message_id_from_message(msg) == "bot-message-123"
+    assert ctx.quote_reference_present is True
+    assert ctx.quoted_text is None
+    assert ctx.reply_to_message_id == "bot-message-123"
 
 
 def test_quoted_text_from_message_returns_none_on_empty_item_list():

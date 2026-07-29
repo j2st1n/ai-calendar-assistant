@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.13.3] - 2026-07-29
+
+
+### Bug Fixes
+
+- target WeChat quoted messages by item message ID — 通过消息ID定位微信引用日程
+
+
 ## [v1.13.2] - 2026-07-29
 
 
@@ -1086,4 +1094,3 @@
 - ai-driven intent routing, remove keyword matching
 
 - rename web console routes
-

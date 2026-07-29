@@ -69,6 +69,31 @@ def has_quoted_reference(message: dict[str, Any]) -> bool:
     return find_ref(message)
 
 
+def quoted_message_id_from_message(message: dict[str, Any]) -> str | None:
+    def find_ref_id(value: object) -> str | None:
+        if isinstance(value, dict):
+            ref_msg = value.get("ref_msg")
+            if isinstance(ref_msg, dict):
+                message_item = ref_msg.get("message_item")
+                if isinstance(message_item, dict):
+                    for key in ("msg_id", "message_id", "id"):
+                        message_id = message_item.get(key)
+                        if message_id not in (None, ""):
+                            return str(message_id)
+            for nested in value.values():
+                message_id = find_ref_id(nested)
+                if message_id:
+                    return message_id
+        elif isinstance(value, list):
+            for nested in value:
+                message_id = find_ref_id(nested)
+                if message_id:
+                    return message_id
+        return None
+
+    return find_ref_id(message)
+
+
 def _text_from_message_item(message_item: dict[str, Any]) -> str | None:
     text_item = message_item.get("text_item")
     if isinstance(text_item, dict):
@@ -95,7 +120,11 @@ def wechat_context_from_message(message: dict[str, Any]) -> ChannelContext:
     from_user_id = str(message.get("from_user_id") or "")
     message_id = message.get("message_id")
     parent_id = message.get("parent_id")
-    reply_to = str(parent_id) if parent_id not in (None, 0, "0", "") else None
+    reply_to = (
+        str(parent_id)
+        if parent_id not in (None, 0, "0", "")
+        else quoted_message_id_from_message(message)
+    )
     return ChannelContext(
         source="wechat",
         source_user_id=from_user_id,
