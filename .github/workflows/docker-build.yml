@@ -10,7 +10,25 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/ai-calendar-assistant
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest trio
+
+      - name: Run tests
+        run: pytest -q
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write

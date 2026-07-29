@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.13.6] - 2026-07-29
+
+
+### Maintenance
+
+- require full tests before Docker image builds — Docker镜像构建前强制通过全量测试
+
+
 ## [v1.13.5] - 2026-07-29
 
 
