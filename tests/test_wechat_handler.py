@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
@@ -152,6 +153,25 @@ def test_dispatch_uses_message_processor_for_plain_text():
         assert kwargs["source"] == "wechat"
         assert kwargs["conversation_id"] == "u@im.wechat"
         assert kwargs["source_message_id"] == "7466869436612690000"
+
+    asyncio.run(run())
+
+
+def test_dispatch_warns_when_event_reply_has_no_message_id(caplog):
+    async def run():
+        client = AsyncMock()
+        client.send_message = AsyncMock(return_value={})
+        session = _session()
+        caplog.set_level(logging.WARNING)
+
+        with patch("app.channels.wechat_handler.MessageProcessor") as MockProcessor:
+            MockProcessor.return_value.process = AsyncMock(return_value=[("ok", 123)])
+            replies = await dispatch_wechat_message(_message("明天三点开会"), session, client)
+
+        assert replies == [{"text": "ok", "record_id": 123, "bot_message_id": None}]
+        assert "WeChat reply message ID missing" in caplog.text
+        assert "record_id=123" in caplog.text
+        assert "response_keys=[]" in caplog.text
 
     asyncio.run(run())
 

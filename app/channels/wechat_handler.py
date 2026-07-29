@@ -347,6 +347,11 @@ async def _send_wechat_replies(
         bot_message_id = _bot_message_id(response)
         if bot_message_id:
             bind_bot_message(session, record_id, bot_message_id)
+        elif record_id:
+            logger.warning(
+                "WeChat reply message ID missing: record_id=%s source_message_id=%s response_keys=%s",
+                record_id, ctx.source_message_id, sorted(response),
+            )
         sent.append({"text": response_text, "record_id": record_id, "bot_message_id": bot_message_id})
 
 

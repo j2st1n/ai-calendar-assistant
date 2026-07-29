@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.13.4] - 2026-07-29
+
+
+### Bug Fixes
+
+- add privacy-safe WeChat quote diagnostics — 增加脱敏微信引用诊断日志
+
+
 ## [v1.13.3] - 2026-07-29
 
 

@@ -100,6 +100,10 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
 
     reply_to = ctx.reply_to_message_id
     if ctx.quote_reference_present and not reply_to and not ctx.quoted_text:
+        logger.warning(
+            "Quote reference unreadable: source=%s source_message_id=%s",
+            ctx.source, ctx.source_message_id,
+        )
         return [(
             "🤔 检测到微信引用，但无法读取被引用的日程。请重新引用我发送的日程确认消息。",
             None,
@@ -171,8 +175,8 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
             if match:
                 return match
         logger.warning(
-            "Reply target not found: source=%s user_id=%s conversation_id=%s reply_to=%s",
-            ctx.source, ctx.source_user_id, ctx.conversation_id, ctx.reply_to_message_id,
+            "Reply target not found: source=%s source_message_id=%s reply_to=%s quote_text_present=%s",
+            ctx.source, ctx.source_message_id, ctx.reply_to_message_id, bool(ctx.quoted_text),
         )
         return None
 
@@ -181,8 +185,8 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
         if match:
             return match
         logger.warning(
-            "Quoted target not found: source=%s user_id=%s conversation_id=%s quote=%s",
-            ctx.source, ctx.source_user_id, ctx.conversation_id, ctx.quoted_text[:120],
+            "Quoted target not found: source=%s source_message_id=%s quote_length=%d",
+            ctx.source, ctx.source_message_id, len(ctx.quoted_text),
         )
         return None
 
@@ -220,7 +224,10 @@ async def _match_by_quoted_text(
 ) -> EventRecord | None:
     title, start_prefix = _parse_title_and_start_from_quote(quoted_text)
     if not title or not start_prefix:
-        logger.debug("Could not parse title/start from quoted text: %s", quoted_text[:80])
+        logger.debug(
+            "Could not parse title/start from quoted text: quote_length=%d",
+            len(quoted_text),
+        )
         return None
 
     candidates = session.execute(
@@ -236,8 +243,8 @@ async def _match_by_quoted_text(
         return _latest_record_for_event(session, base_filter, candidates[0])
     if len(candidates) > 1:
         logger.debug(
-            "Quote match ambiguous: %d candidates for title=%s start_prefix=%s",
-            len(candidates), title, start_prefix,
+            "Quote match ambiguous: candidates=%d",
+            len(candidates),
         )
     return None
 

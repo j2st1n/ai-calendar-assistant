@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -484,13 +485,15 @@ def test_find_target_by_quoted_text_returns_none_when_no_match():
     asyncio.run(run())
 
 
-def test_route_with_unmatched_quoted_text_does_not_extract_as_new_input():
+def test_route_with_unmatched_quoted_text_does_not_extract_as_new_input(caplog):
     async def run():
         session = _session()
         _ = _seed_event(session, title="其他", start_time="2026-06-02T16:00:00+08:00")
         session.commit()
-        ctx = _wechat_ctx(quoted_text=QUOTE_TEXT)
+        private_quote = QUOTE_TEXT + "\n敏感引用正文"
+        ctx = _wechat_ctx(quoted_text=private_quote)
         svc = SettingsService(session)
+        caplog.set_level(logging.WARNING)
         with patch.object(svc, "get", return_value=""):
             replies = await _route(
                 session, ctx, "删除",
@@ -502,10 +505,13 @@ def test_route_with_unmatched_quoted_text_does_not_extract_as_new_input():
         assert replies == [("🤔 没有找到引用消息对应的日程。请引用我发送的日程确认消息，或说“删除xx日程”。", None)]
         records = session.query(EventRecord).filter(EventRecord.operation == "delete").all()
         assert records == []
+        assert "Quoted target not found" in caplog.text
+        assert f"quote_length={len(private_quote)}" in caplog.text
+        assert "敏感引用正文" not in caplog.text
     asyncio.run(run())
 
 
-def test_route_with_unreadable_quote_does_not_fall_back_to_recent_event():
+def test_route_with_unreadable_quote_does_not_fall_back_to_recent_event(caplog):
     async def run():
         session = _session()
         _ = _seed_event(
@@ -515,6 +521,7 @@ def test_route_with_unreadable_quote_does_not_fall_back_to_recent_event():
         session.commit()
         ctx = _wechat_ctx(quote_reference_present=True)
         svc = SettingsService(session)
+        caplog.set_level(logging.WARNING)
 
         with patch.object(svc, "get", return_value=""):
             replies = await _route(
@@ -529,6 +536,8 @@ def test_route_with_unreadable_quote_does_not_fall_back_to_recent_event():
             None,
         )]
         assert session.query(EventRecord).filter(EventRecord.operation == "delete").count() == 0
+        assert "Quote reference unreadable" in caplog.text
+        assert "source_message_id=None" in caplog.text
 
     asyncio.run(run())
 
