@@ -148,6 +148,16 @@ docker compose pull && docker compose up -d
 
 数据在 `data/` 目录下持久化，升级不会丢失配置和记录。
 
+生产环境可固定到版本标签，避免 `latest` 变化：
+
+```bash
+APP_VERSION=v1.14.0 docker compose pull app
+APP_VERSION=v1.14.0 docker compose up -d --force-recreate app
+```
+
+回滚时把 `APP_VERSION` 改为上一个版本并重复以上两条命令。容器可通过
+`docker inspect` 查看内置健康检查状态，HTTP 探针地址为 `/health`。
+
 ## 目录结构
 
 ```text

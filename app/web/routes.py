@@ -6,8 +6,11 @@ import importlib
 from io import BytesIO
 import json
 from pathlib import Path
+import sqlite3
+import tempfile
 from typing import Any, cast
 from urllib.parse import urlencode
+import zipfile
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -146,6 +149,14 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
     week_end = week_start + timedelta(days=6)
     month_start = today.replace(day=1)
 
+    def count_records(*conditions: object) -> int:
+        return session.scalar(
+            select(func.count()).select_from(EventRecord).where(
+                EventRecord.created_at >= today,
+                *conditions,
+            )
+        ) or 0
+
     def count_since(since_date: date) -> int:
         deleted_uids = select(EventRecord.caldav_uid).where(
             EventRecord.operation == "delete",
@@ -190,6 +201,8 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
         if event_date.year == month_start.year and event_date.month == month_start.month:
             month_events += 1
 
+    today_processed = count_records()
+    today_failed = count_records(EventRecord.status == "failed")
     return {
         "today_created": count_since(today),
         "week_created": count_since(week_start),
@@ -197,6 +210,15 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
         "today_events": today_events,
         "week_events": week_events,
         "month_events": month_events,
+        "today_processed": today_processed,
+        "today_failed": today_failed,
+        "today_no_event": count_records(EventRecord.operation == "no_event"),
+        "today_quote_failures": count_records(EventRecord.operation == "quote_not_found"),
+        "today_success_rate": (
+            round((today_processed - today_failed) * 100 / today_processed)
+            if today_processed
+            else 100
+        ),
     }
 
 
@@ -1319,19 +1341,37 @@ async def clear_event_records(
 
 @router.get("/system/backup")
 async def download_backup(_request: Request, _: None = Depends(require_admin)):
-    import io, zipfile
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        for fn in ["app.db", "secrets.json"]:
-            path = Path("data") / fn
-            if path.exists():
-                zf.write(path, fn)
-    if buf.seek(0) != 0:
-        raise RuntimeError("failed to rewind backup buffer")
+    buf = BytesIO(_create_backup_archive(Path("data")))
     from datetime import date
     from starlette.responses import StreamingResponse
     return StreamingResponse(buf, media_type="application/zip",
                              headers={"Content-Disposition": f"attachment; filename=backup-{date.today()}.zip"})
+
+
+def _create_backup_archive(data_dir: Path) -> bytes:
+    buffer = BytesIO()
+    with tempfile.TemporaryDirectory(prefix="ai-calendar-backup-") as tmp:
+        snapshot_path = Path(tmp) / "app.db"
+        database_path = data_dir / "app.db"
+        if database_path.exists():
+            source = sqlite3.connect(f"file:{database_path.resolve()}?mode=ro", uri=True)
+            target = sqlite3.connect(snapshot_path)
+            try:
+                source.backup(target)
+                integrity = target.execute("PRAGMA integrity_check").fetchone()
+                if not integrity or integrity[0] != "ok":
+                    raise RuntimeError("SQLite backup integrity check failed")
+            finally:
+                target.close()
+                source.close()
+
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            if snapshot_path.exists():
+                archive.write(snapshot_path, "app.db")
+            secrets_path = data_dir / "secrets.json"
+            if secrets_path.exists():
+                archive.write(secrets_path, "secrets.json")
+    return buffer.getvalue()
 
 
 def prune_event_records(session: Session, limit: int) -> None:

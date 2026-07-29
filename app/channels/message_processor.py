@@ -104,14 +104,17 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
             "Quote reference unreadable: source=%s source_message_id=%s",
             ctx.source, ctx.source_message_id,
         )
+        _record_quote_failure(session, ctx, "quote_reference_unreadable")
         return [(
             "🤔 检测到微信引用，但无法读取被引用的日程。请重新引用我发送的日程确认消息。",
             None,
         )]
     target = await _find_target(session, ctx)
     if ctx.reply_to_message_id and target is None:
+        _record_quote_failure(session, ctx, "reply_target_not_found")
         return [("🤔 没有找到这条回复对应的日程。请回复我发送的某条日程消息，或重新描述要修改的日程。", None)]
     if ctx.quoted_text and target is None:
+        _record_quote_failure(session, ctx, "quoted_target_not_found")
         return [("🤔 没有找到引用消息对应的日程。请引用我发送的日程确认消息，或说“删除xx日程”。", None)]
     if target and target.event_json and (reply_to or ctx.quoted_text):
         existing = json.loads(target.event_json)
@@ -609,6 +612,20 @@ def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, t
     session.add(rec)
     session.flush()
     return rec.id
+
+
+def _record_quote_failure(session: Session, ctx: ChannelContext, reason: str) -> None:
+    _ = _record(
+        session,
+        ctx,
+        "quote_not_found",
+        None,
+        "",
+        "failed",
+        "",
+        err=reason,
+    )
+    session.commit()
 
 
 def _redact_sensitive_text(text: str) -> str:

@@ -1,5 +1,27 @@
 # Changelog
 
+## [v1.14.0] - 2026-07-29
+
+
+### Features
+
+- add container health checks and daily processing metrics — 增加容器健康检查与每日处理指标
+
+
+### Bug Fixes
+
+- retry transient Telegram network failures — 重试Telegram临时网络错误
+
+- create consistent restorable SQLite backups — 创建可恢复的一致性SQLite备份
+
+- reject and clean definitely invalid WeChat message IDs — 拒绝并清理确定无效的微信消息ID
+
+
+### Maintenance
+
+- publish one versioned Docker image per release — 每个版本仅构建一次版本化Docker镜像
+
+
 ## [v1.13.6] - 2026-07-29
 
 

@@ -440,6 +440,11 @@ def test_dashboard_stats_empty_database(monkeypatch):
         "today_events": 0,
         "week_events": 0,
         "month_events": 0,
+        "today_processed": 0,
+        "today_failed": 0,
+        "today_no_event": 0,
+        "today_quote_failures": 0,
+        "today_success_rate": 100,
     }
 
 
@@ -452,6 +457,8 @@ def test_dashboard_stats_preserves_key_set(monkeypatch):
     assert set(stats.keys()) == {
         "today_created", "week_created", "month_created",
         "today_events", "week_events", "month_events",
+        "today_processed", "today_failed", "today_no_event",
+        "today_quote_failures", "today_success_rate",
     }
 
 
@@ -464,6 +471,24 @@ def test_dashboard_stats_returns_int_values(monkeypatch):
     stats = dashboard_stats(session, svc)
     for key, val in stats.items():
         assert isinstance(val, int), f"{key} is {type(val).__name__}, not int"
+
+
+def test_dashboard_stats_reports_daily_processing_metrics(monkeypatch):
+    monkeypatch.setattr(routes, "datetime", _FixedNow)
+    session = _session()
+    svc = _svc(session)
+    created_at = datetime(2026, 6, 7, 1, 0, tzinfo=timezone.utc)
+    _ = _seed(session, operation="create", status="success", created_at=created_at)
+    _ = _seed(session, operation="no_event", status="failed", created_at=created_at)
+    _ = _seed(session, operation="quote_not_found", status="failed", created_at=created_at)
+
+    stats = dashboard_stats(session, svc)
+
+    assert stats["today_processed"] == 3
+    assert stats["today_failed"] == 2
+    assert stats["today_no_event"] == 1
+    assert stats["today_quote_failures"] == 1
+    assert stats["today_success_rate"] == 33
 
 
 # ---------------------------------------------------------------------------

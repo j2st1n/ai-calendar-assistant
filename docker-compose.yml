@@ -1,7 +1,7 @@
 services:
   app:
     network_mode: host
-    image: ghcr.io/j2st1n/ai-calendar-assistant:latest
+    image: ghcr.io/j2st1n/ai-calendar-assistant:${APP_VERSION:-latest}
     user: "1000:1000"
     restart: unless-stopped
     volumes:

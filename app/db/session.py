@@ -32,3 +32,8 @@ def _migrate_event_records() -> None:
             conn.execute(text("ALTER TABLE event_records ADD COLUMN event_id VARCHAR(64)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_event_records_event_id ON event_records (event_id)"))
         conn.execute(text("UPDATE event_records SET source_user_id = telegram_user_id WHERE source_user_id IS NULL"))
+        conn.execute(text(
+            "UPDATE event_records SET bot_message_id = NULL "
+            "WHERE source = 'wechat' AND bot_message_id IS NOT NULL "
+            "AND (bot_message_id = '' OR bot_message_id GLOB '*[^0-9]*')"
+        ))

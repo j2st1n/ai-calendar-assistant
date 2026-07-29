@@ -242,7 +242,9 @@ def _bot_message_id(response: dict[str, Any]) -> str | None:
     for key in ("message_id", "msg_id"):
         value = response.get(key)
         if value not in (None, ""):
-            return str(value)
+            candidate = str(value)
+            if candidate.isdigit():
+                return candidate
     msg = response.get("msg")
     if isinstance(msg, dict):
         return _bot_message_id(msg)

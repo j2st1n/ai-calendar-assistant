@@ -120,7 +120,7 @@ def test_has_image_items_detects_type_two_items():
 def test_dispatch_handles_command_and_sends_reply():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-1"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358601"})
         session = _session()
 
         replies = await dispatch_wechat_message(_message("/status"), session, client)
@@ -138,14 +138,14 @@ def test_dispatch_handles_command_and_sends_reply():
 def test_dispatch_uses_message_processor_for_plain_text():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"msg": {"message_id": "bot-2"}})
+        client.send_message = AsyncMock(return_value={"msg": {"message_id": "7488170983529358602"}})
         session = _session()
 
         with patch("app.channels.wechat_handler.MessageProcessor") as MockProcessor:
             MockProcessor.return_value.process = AsyncMock(return_value=[("ok", None)])
             replies = await dispatch_wechat_message(_message("明天三点开会"), session, client)
 
-        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "bot-2"}]
+        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "7488170983529358602"}]
         MockProcessor.return_value.process.assert_awaited_once()
         assert MockProcessor.return_value.process.await_args is not None
         args = MockProcessor.return_value.process.await_args.args
@@ -164,6 +164,7 @@ def test_dispatch_uses_message_processor_for_plain_text():
         ({"message_id": 7488170983529358600}, "7488170983529358600"),
         ({"msg_id": "7488170983529358600"}, "7488170983529358600"),
         ({"msg": {"message_id": "7488170983529358600"}}, "7488170983529358600"),
+        ({"message_id": "not-a-numeric-message-id"}, None),
         ({"id": "unrelated-id"}, None),
         ({"msg": {"id": "unrelated-id"}}, None),
         ({"msg": {"client_id": "request-id"}}, None),
@@ -229,7 +230,7 @@ def test_decrypt_wechat_image_decrypts_aes_ecb_payload():
 def test_dispatch_handles_image_with_main_model():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
         settings = SettingsService(session)
         settings.set("ai_model", "main-model")
@@ -242,7 +243,7 @@ def test_dispatch_handles_image_with_main_model():
                     MockProcessor.return_value.process = AsyncMock(return_value=[("ok", None)])
                     replies = await dispatch_wechat_message(_image_message(), session, client)
 
-        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "bot-img"}]
+        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "7488170983529358603"}]
         mock_download.assert_awaited_once_with("https://example.test/a.jpg")
         MockAISvc.return_value.vision_completion.assert_awaited_once()
         assert MockAISvc.return_value.vision_completion.await_args is not None
@@ -258,7 +259,7 @@ def test_dispatch_handles_image_with_main_model():
 def test_dispatch_handles_encrypted_wechat_image_media():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
         settings = SettingsService(session)
         settings.set("ai_model", "main-model")
@@ -276,7 +277,7 @@ def test_dispatch_handles_encrypted_wechat_image_media():
         mock_download.assert_awaited_once_with(expected_url)
         assert MockAISvc.return_value.vision_completion.await_args is not None
         assert MockAISvc.return_value.vision_completion.await_args.args[1] == "cmVhbC1pbWFnZQ=="
-        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "bot-img"}]
+        assert replies == [{"text": "ok", "record_id": None, "bot_message_id": "7488170983529358603"}]
 
     asyncio.run(run())
 
@@ -284,7 +285,7 @@ def test_dispatch_handles_encrypted_wechat_image_media():
 def test_dispatch_handles_image_with_separate_vision_model():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
         svc = SettingsService(session)
         svc.set("ai_vision_use_main", "false")
@@ -311,7 +312,7 @@ def test_dispatch_handles_image_with_separate_vision_model():
 def test_dispatch_image_without_vision_model_sends_error():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
         settings = SettingsService(session)
         settings.set("ai_vision_use_main", "false")
@@ -320,7 +321,7 @@ def test_dispatch_image_without_vision_model_sends_error():
         with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")) as mock_download:
             replies = await dispatch_wechat_message(_image_message(), session, client)
 
-        assert replies == [{"text": "📸 未配置识图模型，请先在控制台 AI 设置中配置。", "record_id": None, "bot_message_id": "bot-img"}]
+        assert replies == [{"text": "📸 未配置识图模型，请先在控制台 AI 设置中配置。", "record_id": None, "bot_message_id": "7488170983529358603"}]
         mock_download.assert_not_awaited()
 
     asyncio.run(run())
@@ -329,13 +330,13 @@ def test_dispatch_image_without_vision_model_sends_error():
 def test_dispatch_image_download_failure_sends_error():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
 
         with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=None)):
             replies = await dispatch_wechat_message(_image_message(), session, client)
 
-        assert replies == [{"text": "图片下载失败，请稍后重试。", "record_id": None, "bot_message_id": "bot-img"}]
+        assert replies == [{"text": "图片下载失败，请稍后重试。", "record_id": None, "bot_message_id": "7488170983529358603"}]
 
     asyncio.run(run())
 
@@ -343,14 +344,14 @@ def test_dispatch_image_download_failure_sends_error():
 def test_dispatch_image_without_supported_url_sends_error():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
         msg = _message("")
         msg["item_list"] = [{"type": 2, "image_item": {"file_id": "file-1"}}]
 
         replies = await dispatch_wechat_message(msg, session, client)
 
-        assert replies == [{"text": "收到图片，但消息里没有可下载的图片地址，暂时无法识别。", "record_id": None, "bot_message_id": "bot-img"}]
+        assert replies == [{"text": "收到图片，但消息里没有可下载的图片地址，暂时无法识别。", "record_id": None, "bot_message_id": "7488170983529358603"}]
 
     asyncio.run(run())
 
@@ -358,7 +359,7 @@ def test_dispatch_image_without_supported_url_sends_error():
 def test_dispatch_image_vision_failure_sends_error():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
 
         with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")):
@@ -366,7 +367,7 @@ def test_dispatch_image_vision_failure_sends_error():
                 MockAISvc.return_value.vision_completion = AsyncMock(side_effect=RuntimeError("bad vision"))
                 replies = await dispatch_wechat_message(_image_message(), session, client)
 
-        assert replies == [{"text": "图片识别失败：bad vision", "record_id": None, "bot_message_id": "bot-img"}]
+        assert replies == [{"text": "图片识别失败：bad vision", "record_id": None, "bot_message_id": "7488170983529358603"}]
 
     asyncio.run(run())
 
@@ -374,7 +375,7 @@ def test_dispatch_image_vision_failure_sends_error():
 def test_dispatch_image_and_text_processes_both_inputs():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-img"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358603"})
         session = _session()
 
         with patch("app.channels.wechat_handler._download_image_bytes", AsyncMock(return_value=b"img")):
@@ -394,7 +395,7 @@ def test_dispatch_image_and_text_processes_both_inputs():
 def test_dispatch_starts_and_cancels_typing():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-1"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358601"})
         client.get_typing_ticket = AsyncMock(return_value="ticket-abc")
         client.send_typing = AsyncMock(return_value={})
         session = _session()
@@ -415,7 +416,7 @@ def test_dispatch_starts_and_cancels_typing():
 def test_dispatch_typing_failure_does_not_block_processing():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"message_id": "bot-1"})
+        client.send_message = AsyncMock(return_value={"message_id": "7488170983529358601"})
         client.get_typing_ticket = AsyncMock(side_effect=RuntimeError("network error"))
         session = _session()
 

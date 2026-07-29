@@ -21,6 +21,30 @@
   </div>
 </div>
 
+<h3 class="muted" style="font-size:13px;font-weight:510;margin-bottom:12px;">今日处理</h3>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-bottom:24px;">
+  <div class="metric">
+    <span>处理总数</span>
+    <strong>{{ stats.today_processed }}</strong>
+  </div>
+  <div class="metric">
+    <span>成功率</span>
+    <strong>{{ stats.today_success_rate }}%</strong>
+  </div>
+  <div class="metric">
+    <span>处理失败</span>
+    <strong>{{ stats.today_failed }}</strong>
+  </div>
+  <div class="metric">
+    <span>未识别</span>
+    <strong>{{ stats.today_no_event }}</strong>
+  </div>
+  <div class="metric">
+    <span>引用未命中</span>
+    <strong>{{ stats.today_quote_failures }}</strong>
+  </div>
+</div>
+
 <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom:24px;">
   <div class="card" style="margin-bottom:0;">
     <h3 style="margin-bottom:8px;">AI</h3>

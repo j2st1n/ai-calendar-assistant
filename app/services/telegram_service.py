@@ -4,7 +4,8 @@ import asyncio
 import logging
 import secrets
 import time
-from typing import TYPE_CHECKING, Protocol, cast
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 if TYPE_CHECKING:
     from telegram import Update
@@ -25,9 +26,61 @@ logger = logging.getLogger(__name__)
 
 BIND_TOKEN_LIFETIME = 600
 MAX_REJECTED_LOG = 50
+TELEGRAM_RETRY_ATTEMPTS = 5
+TELEGRAM_RETRY_BASE_SECONDS = 2.0
+TELEGRAM_RETRY_MAX_SECONDS = 30.0
+
+T = TypeVar("T")
 
 _rejected_users: list[tuple[str, str, str]] = []
 _bind_tokens: dict[str, float] = {}
+
+
+async def _retry_telegram_network(
+    operation: Callable[[], Awaitable[T]],
+    operation_name: str,
+) -> T:
+    from telegram.error import NetworkError, RetryAfter
+
+    for attempt in range(1, TELEGRAM_RETRY_ATTEMPTS + 1):
+        try:
+            return await operation()
+        except (NetworkError, RetryAfter) as exc:
+            if attempt >= TELEGRAM_RETRY_ATTEMPTS:
+                raise
+            if isinstance(exc, RetryAfter):
+                retry_after = exc.retry_after
+                delay = (
+                    retry_after.total_seconds()
+                    if hasattr(retry_after, "total_seconds")
+                    else float(retry_after)
+                )
+            else:
+                delay = min(
+                    TELEGRAM_RETRY_BASE_SECONDS * (2 ** (attempt - 1)),
+                    TELEGRAM_RETRY_MAX_SECONDS,
+                )
+            logger.warning(
+                "Telegram network retry: operation=%s attempt=%d/%d delay=%.1fs error_type=%s",
+                operation_name,
+                attempt,
+                TELEGRAM_RETRY_ATTEMPTS,
+                delay,
+                type(exc).__name__,
+            )
+            await asyncio.sleep(delay)
+    raise RuntimeError("unreachable")
+
+
+async def _reply_text(message: Any, text: str) -> Any:
+    return await _retry_telegram_network(lambda: message.reply_text(text), "reply_text")
+
+
+async def _send_chat_action(chat: Any) -> Any:
+    return await _retry_telegram_network(
+        lambda: chat.send_chat_action(action="typing"),
+        "send_chat_action",
+    )
 
 
 class TelegramBotProtocol(Protocol):
@@ -218,17 +271,24 @@ class TelegramBotRuntime:
     async def _start_bot(self, app: object) -> None:
         typed_app = cast(TelegramApplicationProtocol, app)
         try:
-            _ = await typed_app.initialize()
+            _ = await _retry_telegram_network(typed_app.initialize, "initialize")
             _ = await typed_app.start()
             from telegram import BotCommand
-            _ = await typed_app.bot.set_my_commands([
+            commands = [
                 BotCommand("start", "开始使用"),
                 BotCommand("help", "使用帮助"),
                 BotCommand("list", "未来日程"),
                 BotCommand("latest", "最近一条"),
                 BotCommand("status", "配置状态"),
-            ])
-            _ = await typed_app.updater.start_polling(drop_pending_updates=True)
+            ]
+            _ = await _retry_telegram_network(
+                lambda: typed_app.bot.set_my_commands(commands),
+                "set_my_commands",
+            )
+            _ = await _retry_telegram_network(
+                lambda: typed_app.updater.start_polling(drop_pending_updates=True),
+                "start_polling",
+            )
             while True:
                 await asyncio.sleep(3600)
         except asyncio.CancelledError:
@@ -236,6 +296,7 @@ class TelegramBotRuntime:
         except Exception as exc:
             self.running = False
             self._last_error = str(exc)
+            logger.exception("Telegram runtime stopped after retries")
 
     def stop(self) -> None:
         self.running = False
@@ -260,15 +321,16 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 username = update.effective_user.username or ""
                 display_name = update.effective_user.full_name
                 service.add_user(session, user_id, username, display_name)
-                _ = await update.effective_message.reply_text("✅ 绑定成功，你现在可以使用此 Bot。")
+                _ = await _reply_text(update.effective_message, "✅ 绑定成功，你现在可以使用此 Bot。")
                 return
-            _ = await update.effective_message.reply_text("❌ 绑定码无效或已过期，请在控制台重新生成。")
+            _ = await _reply_text(update.effective_message, "❌ 绑定码无效或已过期，请在控制台重新生成。")
             return
 
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
-            _ = await update.effective_message.reply_text(
+            _ = await _reply_text(
+                update.effective_message,
                 "\n".join([
                     "👋 你还未授权使用此 Bot",
                     "",
@@ -278,7 +340,8 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             return
 
-    _ = await update.effective_message.reply_text(
+    _ = await _reply_text(
+        update.effective_message,
         "\n".join([
             "👋 我是 AI 日程助手",
             "",
@@ -299,7 +362,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
 
-    _ = await update.effective_chat.send_chat_action(action="typing")
+    _ = await _send_chat_action(update.effective_chat)
 
     with SessionLocal() as session:
         service = TelegramService()
@@ -307,7 +370,8 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             username = update.effective_user.username or "" if update.effective_user else ""
             display_name = update.effective_user.full_name if update.effective_user else ""
             record_rejected_user(user_id, username, display_name)
-            _ = await update.effective_message.reply_text(
+            _ = await _reply_text(
+                update.effective_message,
                 "\n".join([
                     "你没有权限使用此 Bot。",
                     f"你的 Telegram user_id 是：{user_id}",
@@ -328,13 +392,13 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 source_message_id=str(update.effective_message.message_id),
             )
             for response, record_id in replies:
-                sent = await update.effective_message.reply_text(response)
+                sent = await _reply_text(update.effective_message, response)
                 if record_id and sent:
                     bind_bot_message(session, record_id, str(sent.message_id))
             session.commit()
         except Exception as exc:
             logger.exception("Message processing failed")
-            _ = await update.effective_message.reply_text(f"处理消息时出错：{exc}")
+            _ = await _reply_text(update.effective_message, f"处理消息时出错：{exc}")
 
 
 async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -355,14 +419,20 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
-            _ = await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            _ = await _reply_text(update.effective_message, "你没有权限使用此 Bot。")
             return
 
-        _ = await update.effective_chat.send_chat_action(action="typing")
+        _ = await _send_chat_action(update.effective_chat)
 
         photo = update.effective_message.photo[-1]
-        file = await context.bot.get_file(photo.file_id)
-        img_bytes = await file.download_as_bytearray()
+        file = await _retry_telegram_network(
+            lambda: context.bot.get_file(photo.file_id),
+            "get_file",
+        )
+        img_bytes = await _retry_telegram_network(
+            file.download_as_bytearray,
+            "download_file",
+        )
 
         settings_service = SettingsService(session)
         use_main = settings_service.get("ai_vision_use_main") or "true"
@@ -376,7 +446,8 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
         else:
             if not settings_service.get("ai_vision_model"):
-                _ = await update.effective_message.reply_text(
+                _ = await _reply_text(
+                    update.effective_message,
                     "📸 未配置识图模型，请先在控制台 AI 设置中配置。"
                 )
                 return
@@ -393,7 +464,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         try:
             text = await AISvc().vision_completion(config, img_b64)
         except Exception as exc:
-            _ = await update.effective_message.reply_text(f"图片识别失败：{exc}")
+            _ = await _reply_text(update.effective_message, f"图片识别失败：{exc}")
             return
 
         processor = MessageProcessor()
@@ -405,7 +476,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             source_message_id=str(update.effective_message.message_id),
         )
         for response, record_id in replies:
-            sent = await update.effective_message.reply_text(response)
+            sent = await _reply_text(update.effective_message, response)
             if record_id and sent:
                     bind_bot_message(session, record_id, str(sent.message_id))
         session.commit()
@@ -419,7 +490,7 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
-            _ = await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            _ = await _reply_text(update.effective_message, "你没有权限使用此 Bot。")
             return
         text = "/list" + (" " + " ".join(context.args) if context.args else "")
         replies = await handle_command(session, _telegram_context(update, user_id), text)
@@ -435,7 +506,7 @@ async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
-            _ = await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            _ = await _reply_text(update.effective_message, "你没有权限使用此 Bot。")
             return
 
         replies = await handle_command(session, _telegram_context(update, user_id), "/latest")
@@ -451,7 +522,7 @@ async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     with SessionLocal() as session:
         service = TelegramService()
         if not service.is_user_allowed(session, user_id):
-            _ = await update.effective_message.reply_text("你没有权限使用此 Bot。")
+            _ = await _reply_text(update.effective_message, "你没有权限使用此 Bot。")
             return
 
         replies = await handle_command(session, _telegram_context(update, user_id), "/status")
@@ -468,7 +539,7 @@ async def _send_telegram_replies(update: Update, session: Session, replies: list
     if update.effective_message is None:
         return
     for response, record_id in replies:
-        sent = await update.effective_message.reply_text(response)
+        sent = await _reply_text(update.effective_message, response)
         if sent:
             bind_bot_message(session, record_id, str(sent.message_id))
     session.commit()

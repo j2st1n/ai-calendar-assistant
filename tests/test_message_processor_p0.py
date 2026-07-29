@@ -508,6 +508,11 @@ def test_route_with_unmatched_quoted_text_does_not_extract_as_new_input(caplog):
         assert "Quoted target not found" in caplog.text
         assert f"quote_length={len(private_quote)}" in caplog.text
         assert "敏感引用正文" not in caplog.text
+        failure = session.query(EventRecord).filter(
+            EventRecord.operation == "quote_not_found"
+        ).one()
+        assert failure.error_message == "quoted_target_not_found"
+        assert failure.original_text == ""
     asyncio.run(run())
 
 
@@ -538,6 +543,11 @@ def test_route_with_unreadable_quote_does_not_fall_back_to_recent_event(caplog):
         assert session.query(EventRecord).filter(EventRecord.operation == "delete").count() == 0
         assert "Quote reference unreadable" in caplog.text
         assert "source_message_id=None" in caplog.text
+        failure = session.query(EventRecord).filter(
+            EventRecord.operation == "quote_not_found"
+        ).one()
+        assert failure.error_message == "quote_reference_unreadable"
+        assert failure.original_text == ""
 
     asyncio.run(run())
 

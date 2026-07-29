@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.core.bootstrap import bootstrap_application
+from app.core.bootstrap import read_version
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
@@ -44,6 +45,11 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "version": read_version()}
 
 
 @app.get("/")
