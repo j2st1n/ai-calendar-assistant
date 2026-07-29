@@ -239,7 +239,7 @@ def _decode_media_aes_key(value: str) -> bytes | None:
 
 
 def _bot_message_id(response: dict[str, Any]) -> str | None:
-    for key in ("message_id", "msg_id", "id"):
+    for key in ("message_id", "msg_id"):
         value = response.get(key)
         if value not in (None, ""):
             return str(value)

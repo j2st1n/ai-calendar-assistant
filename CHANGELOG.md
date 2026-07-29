@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.13.5] - 2026-07-29
+
+
+### Bug Fixes
+
+- reject unrelated IDs in WeChat reply binding — 拒绝微信回复绑定中的非消息ID
+
+
 ## [v1.13.4] - 2026-07-29
 
 

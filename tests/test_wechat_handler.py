@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.channels.wechat_handler import (
     WECHAT_CDN_BASE_URL,
+    _bot_message_id,
     _decrypt_wechat_image,
     dispatch_wechat_message,
     has_quoted_reference,
@@ -137,7 +138,7 @@ def test_dispatch_handles_command_and_sends_reply():
 def test_dispatch_uses_message_processor_for_plain_text():
     async def run():
         client = AsyncMock()
-        client.send_message = AsyncMock(return_value={"msg": {"id": "bot-2"}})
+        client.send_message = AsyncMock(return_value={"msg": {"message_id": "bot-2"}})
         session = _session()
 
         with patch("app.channels.wechat_handler.MessageProcessor") as MockProcessor:
@@ -155,6 +156,21 @@ def test_dispatch_uses_message_processor_for_plain_text():
         assert kwargs["source_message_id"] == "7466869436612690000"
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ({"message_id": 7488170983529358600}, "7488170983529358600"),
+        ({"msg_id": "7488170983529358600"}, "7488170983529358600"),
+        ({"msg": {"message_id": "7488170983529358600"}}, "7488170983529358600"),
+        ({"id": "unrelated-id"}, None),
+        ({"msg": {"id": "unrelated-id"}}, None),
+        ({"msg": {"client_id": "request-id"}}, None),
+    ],
+)
+def test_bot_message_id_only_accepts_explicit_message_fields(response, expected):
+    assert _bot_message_id(response) == expected
 
 
 def test_dispatch_warns_when_event_reply_has_no_message_id(caplog):
