@@ -38,6 +38,15 @@ def test_build_result_normalizes_bare_int_reminder():
     assert result.events[0].reminders[0].minutes_before == 30
 
 
+def test_build_result_normalizes_single_dict_reminder():
+    result = _build_result(_event_payload({"minutes_before": 10}))
+
+    assert result.error_type is None
+    assert result.missing_fields == []
+    assert result.events[0].reminders is not None
+    assert result.events[0].reminders[0].minutes_before == 10
+
+
 def test_build_result_normalizes_zero_reminder_without_dropping():
     result = _build_result(_event_payload(0))
 

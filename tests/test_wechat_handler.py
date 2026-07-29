@@ -12,6 +12,7 @@ from app.channels.wechat_handler import (
     WECHAT_CDN_BASE_URL,
     _decrypt_wechat_image,
     dispatch_wechat_message,
+    has_quoted_reference,
     has_image_items,
     image_sources_from_message,
     image_urls_from_message,
@@ -458,8 +459,46 @@ def test_quoted_text_from_message_extracts_nested_ref_item_list_text():
     assert "📌 标题：测试" in text
 
 
+def test_quoted_text_from_message_extracts_deeply_nested_ref_msg():
+    msg = _message("删除")
+    msg["item_list"][0]["text_item"]["metadata"] = {
+        "wrapper": {
+            "ref_msg": {
+                "payload": {
+                    "message_item": {
+                        "item_list": [
+                            {
+                                "type": 1,
+                                "text_item": {
+                                    "text": "✅ 日程已安排好啦！\n\n📌 标题：测试\n🕒 时间：2026-06-02 15:00 - 16:00",
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+    text = quoted_text_from_message(msg)
+
+    assert text is not None
+    assert "📌 标题：测试" in text
+
+
 def test_quoted_text_from_message_returns_none_on_no_ref_msg():
     assert quoted_text_from_message(_message("hello")) is None
+
+
+def test_wechat_context_marks_unreadable_ref_msg():
+    msg = _message("删除")
+    msg["item_list"][0]["ref_msg"] = {"message_item": {}}
+
+    ctx = wechat_context_from_message(msg)
+
+    assert has_quoted_reference(msg) is True
+    assert ctx.quote_reference_present is True
+    assert ctx.quoted_text is None
 
 
 def test_quoted_text_from_message_returns_none_on_empty_item_list():

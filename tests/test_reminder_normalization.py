@@ -44,6 +44,12 @@ class TestNormalizeReminders:
         _normalize_reminders(ev)
         assert ev["reminders"] == [{"minutes_before": 10}]
 
+    def test_single_dict_wrapped_in_list(self):
+        """{"minutes_before": n} → [{"minutes_before": n}]."""
+        ev = {"title": "test", "reminders": {"minutes_before": 10}}
+        _normalize_reminders(ev)
+        assert ev["reminders"] == [{"minutes_before": 10}]
+
     def test_empty_list_passthrough(self):
         """[] stays [] (cancel reminders)."""
         ev = {"title": "test", "reminders": []}

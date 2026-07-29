@@ -30,28 +30,43 @@ class WeChatImageSource:
 
 
 def quoted_text_from_message(message: dict[str, Any]) -> str | None:
-    """Extract the first non-empty ref_msg quote text from message item_list.
+    """Extract the first non-empty ref_msg quote text from a message payload.
 
     WeChat quoted messages have parent_id=0, root_id=0, but
-    item_list[i].ref_msg.message_item.text_item.text contains
-    the bot's original reply text that was quoted.
+    a nested ref_msg contains the bot's original reply text.
     """
-    item_list = message.get("item_list")
-    if not isinstance(item_list, list):
+    def find_ref_text(value: object) -> str | None:
+        if isinstance(value, dict):
+            ref_msg = value.get("ref_msg")
+            if isinstance(ref_msg, dict):
+                text = _text_from_message_item(ref_msg)
+                if text:
+                    return text
+            for nested in value.values():
+                text = find_ref_text(nested)
+                if text:
+                    return text
+        elif isinstance(value, list):
+            for nested in value:
+                text = find_ref_text(nested)
+                if text:
+                    return text
         return None
-    for item in item_list:
-        if not isinstance(item, dict):
-            continue
-        ref_msg = item.get("ref_msg")
-        if not isinstance(ref_msg, dict):
-            continue
-        msg_item = ref_msg.get("message_item")
-        if not isinstance(msg_item, dict):
-            continue
-        text = _text_from_message_item(msg_item)
-        if text:
-            return text
-    return None
+
+    return find_ref_text(message)
+
+
+def has_quoted_reference(message: dict[str, Any]) -> bool:
+    def find_ref(value: object) -> bool:
+        if isinstance(value, dict):
+            if isinstance(value.get("ref_msg"), dict):
+                return True
+            return any(find_ref(nested) for nested in value.values())
+        if isinstance(value, list):
+            return any(find_ref(nested) for nested in value)
+        return False
+
+    return find_ref(message)
 
 
 def _text_from_message_item(message_item: dict[str, Any]) -> str | None:
@@ -61,17 +76,18 @@ def _text_from_message_item(message_item: dict[str, Any]) -> str | None:
         if isinstance(text, str) and text.strip():
             return text.strip()
 
-    item_list = message_item.get("item_list")
-    if isinstance(item_list, list):
-        for item in item_list:
-            if not isinstance(item, dict):
-                continue
-            text_item = item.get("text_item")
-            if not isinstance(text_item, dict):
-                continue
-            text = text_item.get("text")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
+    for value in message_item.values():
+        if isinstance(value, dict):
+            text = _text_from_message_item(value)
+            if text:
+                return text
+        elif isinstance(value, list):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                text = _text_from_message_item(item)
+                if text:
+                    return text
     return None
 
 
@@ -87,6 +103,7 @@ def wechat_context_from_message(message: dict[str, Any]) -> ChannelContext:
         source_message_id=str(message_id) if message_id not in (None, "") else None,
         reply_to_message_id=reply_to,
         quoted_text=quoted_text_from_message(message),
+        quote_reference_present=has_quoted_reference(message),
     )
 
 
@@ -337,6 +354,7 @@ async def dispatch_wechat_message(message: dict[str, Any], session: Session, cli
                     conversation_id=ctx.conversation_id,
                     source_message_id=ctx.source_message_id,
                     quoted_text=ctx.quoted_text,
+                    quote_reference_present=ctx.quote_reference_present,
                 )
             await _send_wechat_replies(session, client, ctx, context_token, replies, sent)
         session.commit()

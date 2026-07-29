@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ class ChannelContext:
     source_message_id: str | None = None
     reply_to_message_id: str | None = None
     quoted_text: str | None = None
+    quote_reference_present: bool = False
 
 
 @runtime_checkable
@@ -50,9 +52,12 @@ class MessageProcessor:
     async def process(
         self, session: Session, user_id: str, text: str, reply_to_message_id: str | None = None,
         source: str = "telegram", conversation_id: str | None = None, source_message_id: str | None = None,
-        quoted_text: str | None = None,
+        quoted_text: str | None = None, quote_reference_present: bool = False,
     ) -> list[tuple[str, int | None]]:
-        ctx = ChannelContext(source, user_id, conversation_id, source_message_id, reply_to_message_id, quoted_text)
+        ctx = ChannelContext(
+            source, user_id, conversation_id, source_message_id, reply_to_message_id,
+            quoted_text, quote_reference_present,
+        )
         svc = SettingsService(session)
         config = AIProviderConfig(
             provider_type=svc.get("ai_provider_type") or "openai_compatible",
@@ -94,6 +99,11 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
         return [("🤔 仍缺少信息，请重新描述。", None)]
 
     reply_to = ctx.reply_to_message_id
+    if ctx.quote_reference_present and not reply_to and not ctx.quoted_text:
+        return [(
+            "🤔 检测到微信引用，但无法读取被引用的日程。请重新引用我发送的日程确认消息。",
+            None,
+        )]
     target = await _find_target(session, ctx)
     if ctx.reply_to_message_id and target is None:
         return [("🤔 没有找到这条回复对应的日程。请回复我发送的某条日程消息，或重新描述要修改的日程。", None)]
@@ -581,17 +591,27 @@ def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, t
     rec = EventRecord(
         source=ctx.source, telegram_user_id=ctx.source_user_id, source_user_id=ctx.source_user_id,
         conversation_id=ctx.conversation_id, event_id=event_id or uuid.uuid4().hex, operation=op,
-        title=title, start_time=start_time, status=status,
+        title=_redact_sensitive_text(title) if title else title, start_time=start_time, status=status,
         source_message_id=ctx.source_message_id,
-        original_text=(text or "")[:2000],
-        event_json=(js or "")[:4000],
+        original_text=_redact_sensitive_text(text or "")[:2000],
+        event_json=_redact_sensitive_text(js or "")[:4000],
         caldav_uid=cr.get("uid") if cr else None,
         caldav_href=cr.get("href") if cr else None,
-        error_message=err,
+        error_message=_redact_sensitive_text(err) if err else err,
     )
     session.add(rec)
     session.flush()
     return rec.id
+
+
+def _redact_sensitive_text(text: str) -> str:
+    patterns = (
+        r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}",
+        r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{20,}",
+    )
+    for pattern in patterns:
+        text = re.sub(pattern, "[REDACTED]", text)
+    return text
 
 
 def _parse_time(iso: str):

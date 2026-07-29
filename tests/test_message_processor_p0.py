@@ -60,6 +60,21 @@ def test_handle_new_system_error_uses_system_message_and_records_error():
     asyncio.run(run())
 
 
+def test_handle_new_redacts_api_key_from_record():
+    async def run():
+        session = _session()
+        result = ExtractionResult(intent=Intent.no_event)
+        secret = "sk-" + ("a" * 48)
+
+        _ = await _handle_new(session, _ctx(), secret, result, _caldav(), SettingsService(session))
+
+        record = session.query(EventRecord).one()
+        assert record.original_text == "[REDACTED]"
+        assert secret not in (record.event_json or "")
+
+    asyncio.run(run())
+
+
 def test_handle_new_caldav_not_configured_keeps_success_message():
     async def run():
         session = _session()
@@ -487,6 +502,34 @@ def test_route_with_unmatched_quoted_text_does_not_extract_as_new_input():
         assert replies == [("🤔 没有找到引用消息对应的日程。请引用我发送的日程确认消息，或说“删除xx日程”。", None)]
         records = session.query(EventRecord).filter(EventRecord.operation == "delete").all()
         assert records == []
+    asyncio.run(run())
+
+
+def test_route_with_unreadable_quote_does_not_fall_back_to_recent_event():
+    async def run():
+        session = _session()
+        _ = _seed_event(
+            session,
+            start_time=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        )
+        session.commit()
+        ctx = _wechat_ctx(quote_reference_present=True)
+        svc = SettingsService(session)
+
+        with patch.object(svc, "get", return_value=""):
+            replies = await _route(
+                session, ctx, "删除",
+                extractor=_FakeExtractor(intent=Intent.delete_event),
+                caldav=_caldav(),
+                svc=svc,
+            )
+
+        assert replies == [(
+            "🤔 检测到微信引用，但无法读取被引用的日程。请重新引用我发送的日程确认消息。",
+            None,
+        )]
+        assert session.query(EventRecord).filter(EventRecord.operation == "delete").count() == 0
+
     asyncio.run(run())
 
 

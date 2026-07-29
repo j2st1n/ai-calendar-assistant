@@ -1,5 +1,17 @@
 # Changelog
 
+## [v1.13.2] - 2026-07-29
+
+
+### Bug Fixes
+
+- recognize nested WeChat quoted messages — 兼容嵌套微信引用消息
+
+- normalize single-object AI reminders — 兼容AI单对象提醒字段
+
+- redact API keys and bot tokens from event records — 事件记录脱敏密钥和Bot Token
+
+
 ## [v1.13.1] - 2026-06-06
 
 
@@ -1074,5 +1086,4 @@
 - ai-driven intent routing, remove keyword matching
 
 - rename web console routes
-
 

@@ -216,7 +216,9 @@ def _normalize_reminders(ev_data: dict[str, Any]) -> None:
     reminders = ev_data["reminders"]
     if reminders is None:
         return
-    if isinstance(reminders, int):
+    if isinstance(reminders, dict):
+        ev_data["reminders"] = [reminders]
+    elif isinstance(reminders, int):
         ev_data["reminders"] = [{"minutes_before": reminders}]
     elif isinstance(reminders, list):
         normalized: list[dict[str, object]] = []
