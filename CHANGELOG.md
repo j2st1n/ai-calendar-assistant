@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.15.2] - 2026-07-30
+
+
+### Bug Fixes
+
+- invalidate cached console styles for the new in-app security dialogs — 更新控制台样式缓存版本以确保站内安全弹窗立即生效
+
+
 ## [v1.15.1] - 2026-07-30
 
 
