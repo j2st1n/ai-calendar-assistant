@@ -13,6 +13,21 @@ def test_system_page_mentions_manual_backup_for_custom_paths():
     assert "若你自定义了数据目录或数据库路径，请手动备份对应的 app.db 和 secrets.json。" in template
 
 
+def test_security_is_embedded_and_uses_masked_in_app_modals():
+    system_template = Path("app/web/templates/system.html").read_text()
+    security_template = Path("app/web/templates/_security_section.html").read_text()
+    base_template = Path("app/web/templates/base.html").read_text()
+
+    assert '{% include "_security_section.html" %}' in system_template
+    assert 'href="/console/security"' not in base_template
+    assert "prompt(" not in security_template
+    assert 'name="current_password" type="password"' in security_template
+    assert "/console/security/totp/setup" in security_template
+    assert 'id="totp-qr-image"' in security_template
+    assert 'id="passkey-add-modal"' in security_template
+    assert 'id="passkey-delete-modal"' in security_template
+
+
 def test_backup_archive_contains_consistent_restorable_database(tmp_path):
     database_path = tmp_path / "app.db"
     connection = sqlite3.connect(database_path)

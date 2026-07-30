@@ -253,6 +253,49 @@ button.danger:hover { background: rgba(239,68,68,0.25); }
 .stack { display: grid; gap: 12px; }
 .muted { color: #8a8f98; }
 .muted-secondary { color: #62666d; }
+.hidden { display: none !important; }
+
+/* ── Modal dialogs ── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(4px);
+}
+.modal-card {
+  width: min(440px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: #15171a;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 22px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.45);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.modal-header h2 { margin: 0; color: #f7f8f8; font-size: 17px; }
+.modal-close { padding: 4px 10px; font-size: 18px; line-height: 1; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.passkey-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.passkey-item:last-child { border-bottom: 0; }
 
 /* ── Chips / status badges ── */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }

@@ -1,0 +1,271 @@
+<section id="security" style="margin-top:24px;">
+  <h2 class="section-title">登录安全</h2>
+
+  <div class="card">
+    <h2>公网安全配置</h2>
+    <p class="muted">域名与安全 Cookie 由部署环境变量控制，不能在网页中修改。</p>
+    <div class="grid" style="grid-template-columns:1fr 1fr 1fr;">
+      <div><span class="muted">Public Origin</span><p><code>{{ public_origin }}</code></p></div>
+      <div><span class="muted">WebAuthn RP ID</span><p><code>{{ webauthn_rp_id }}</code></p></div>
+      <div><span class="muted">Secure Cookie</span><p>{{ "已启用" if secure_cookies else "未启用" }}</p></div>
+    </div>
+  </div>
+
+  <div class="grid" style="grid-template-columns:1fr 1fr;">
+    <div class="card" style="margin-bottom:0;">
+      <h2>Cloudflare Turnstile</h2>
+      <p class="muted">Site Key 和 Secret Key 同时存在时，登录页才会启用人机验证。</p>
+      <form method="post" action="/console/security/turnstile" class="stack">
+        <label><span>Site Key</span><input name="site_key" value="{{ turnstile_site_key }}"></label>
+        <label><span>Secret Key</span><input name="secret_key" type="password" placeholder="{{ turnstile_secret_masked or '留空则保持不变' }}" autocomplete="off"></label>
+        {% if turnstile_secret_masked %}
+        <label><input name="clear_secret" type="checkbox" value="true"> 清除现有 Secret Key</label>
+        {% endif %}
+        <div><button type="submit">保存 Turnstile 配置</button></div>
+      </form>
+    </div>
+
+    <div class="card" style="margin-bottom:0;">
+      <h2>TOTP 两步验证</h2>
+      {% if totp_enabled %}
+      <p class="alert success">已启用。密码验证通过后，还需要动态验证码。</p>
+      <button type="button" class="danger" data-open-modal="totp-disable-modal">停用两步验证</button>
+      {% else %}
+      <p class="muted">点击启用后先验证当前密码，通过后才会生成配置二维码。</p>
+      <button type="button" data-open-modal="totp-setup-modal">启用两步验证</button>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if recovery_codes %}
+  <div class="card">
+    <h2>恢复码</h2>
+    <p class="alert">恢复码仅显示这一次，请立即离线保存。</p>
+    <pre>{% for item in recovery_codes %}{{ item }}
+{% endfor %}</pre>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>通行密钥</h2>
+    <div id="passkey-list"><p class="muted">正在加载…</p></div>
+    <button type="button" data-open-modal="passkey-add-modal">添加通行密钥</button>
+    <p id="passkey-status" class="muted"></p>
+  </div>
+</section>
+
+<div class="modal-backdrop hidden" id="totp-setup-modal" role="dialog" aria-modal="true" aria-labelledby="totp-setup-title">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="totp-setup-title">启用两步验证</h2>
+      <button type="button" class="modal-close secondary" data-close-modal aria-label="关闭">×</button>
+    </div>
+    <form id="totp-password-form" class="stack">
+      <p class="muted">先验证当前管理员密码。验证通过后才会生成 TOTP 二维码。</p>
+      <label><span>当前密码</span><input name="current_password" type="password" autocomplete="current-password" required></label>
+      <p class="alert error hidden" data-modal-error></p>
+      <div class="modal-actions"><button type="button" class="secondary" data-close-modal>取消</button><button type="submit">继续</button></div>
+    </form>
+    <div id="totp-qr-step" class="stack hidden">
+      <p class="muted">使用验证器扫描二维码，然后输入生成的 6 位动态验证码。</p>
+      <img id="totp-qr-image" width="200" height="200" alt="TOTP 配置二维码">
+      <code id="totp-secret"></code>
+      <form method="post" action="/console/security/totp/enable" class="stack">
+        <label><span>6 位动态验证码</span><input name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required></label>
+        <div class="modal-actions"><button type="button" class="secondary" data-close-modal>取消</button><button type="submit">确认启用</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="totp-disable-modal" role="dialog" aria-modal="true" aria-labelledby="totp-disable-title">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="totp-disable-title">停用两步验证</h2>
+      <button type="button" class="modal-close secondary" data-close-modal aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/console/security/totp/disable" class="stack">
+      <label><span>当前密码</span><input name="current_password" type="password" autocomplete="current-password" required></label>
+      <label><span>动态验证码或恢复码</span><input name="code" type="password" autocomplete="one-time-code" required></label>
+      <div class="modal-actions"><button type="button" class="secondary" data-close-modal>取消</button><button type="submit" class="danger">确认停用</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="passkey-add-modal" role="dialog" aria-modal="true" aria-labelledby="passkey-add-title">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="passkey-add-title">添加通行密钥</h2>
+      <button type="button" class="modal-close secondary" data-close-modal aria-label="关闭">×</button>
+    </div>
+    <form id="passkey-add-form" class="stack">
+      <label><span>名称</span><input name="name" value="我的通行密钥" maxlength="100" required></label>
+      <label><span>当前密码</span><input name="current_password" type="password" autocomplete="current-password" required></label>
+      <p class="alert error hidden" data-modal-error></p>
+      <div class="modal-actions"><button type="button" class="secondary" data-close-modal>取消</button><button type="submit">继续添加</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="passkey-delete-modal" role="dialog" aria-modal="true" aria-labelledby="passkey-delete-title">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="passkey-delete-title">删除通行密钥</h2>
+      <button type="button" class="modal-close secondary" data-close-modal aria-label="关闭">×</button>
+    </div>
+    <form id="passkey-delete-form" class="stack">
+      <p>确定删除“<span id="passkey-delete-name"></span>”吗？</p>
+      <label><span>当前密码</span><input name="current_password" type="password" autocomplete="current-password" required></label>
+      <p class="alert error hidden" data-modal-error></p>
+      <div class="modal-actions"><button type="button" class="secondary" data-close-modal>取消</button><button type="submit" class="danger">确认删除</button></div>
+    </form>
+  </div>
+</div>
+
+<script>
+function b64buf(value) {
+  value = value.replace(/-/g, '+').replace(/_/g, '/');
+  value += '='.repeat((4 - value.length % 4) % 4);
+  return Uint8Array.from(atob(value), c => c.charCodeAt(0)).buffer;
+}
+function bufb64(value) {
+  const bytes = new Uint8Array(value || new ArrayBuffer(0));
+  let binary = ''; bytes.forEach(b => binary += String.fromCharCode(b));
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function openModal(id) {
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const input = modal.querySelector('input');
+  if (input) input.focus();
+}
+function closeModal(modal) {
+  modal.classList.add('hidden');
+  modal.querySelectorAll('input[type="password"]').forEach(input => input.value = '');
+  modal.querySelectorAll('[data-modal-error]').forEach(error => error.classList.add('hidden'));
+  if (modal.id === 'totp-setup-modal') {
+    document.getElementById('totp-password-form').classList.remove('hidden');
+    document.getElementById('totp-qr-step').classList.add('hidden');
+    document.getElementById('totp-qr-image').removeAttribute('src');
+    document.getElementById('totp-secret').textContent = '';
+  }
+}
+function showModalError(form, message) {
+  const error = form.querySelector('[data-modal-error]');
+  error.textContent = message;
+  error.classList.remove('hidden');
+}
+document.querySelectorAll('[data-open-modal]').forEach(button => {
+  button.addEventListener('click', () => openModal(button.dataset.openModal));
+});
+document.querySelectorAll('[data-close-modal]').forEach(button => {
+  button.addEventListener('click', () => closeModal(button.closest('.modal-backdrop')));
+});
+document.querySelectorAll('.modal-backdrop').forEach(modal => {
+  modal.addEventListener('click', event => { if (event.target === modal) closeModal(modal); });
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') document.querySelectorAll('.modal-backdrop:not(.hidden)').forEach(closeModal);
+});
+
+const totpPasswordForm = document.getElementById('totp-password-form');
+if (totpPasswordForm) {
+  totpPasswordForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      const response = await fetch('/console/security/totp/setup', {method: 'POST', body: new FormData(totpPasswordForm)});
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || '无法开始设置');
+      totpPasswordForm.elements.current_password.value = '';
+      document.getElementById('totp-qr-image').src = payload.qr_image;
+      document.getElementById('totp-secret').textContent = payload.secret;
+      totpPasswordForm.classList.add('hidden');
+      document.getElementById('totp-qr-step').classList.remove('hidden');
+    } catch (error) {
+      showModalError(totpPasswordForm, error.message || '验证失败');
+    }
+  });
+}
+
+async function loadPasskeys() {
+  const response = await fetch('/console/security/passkeys');
+  if (!response.ok) throw new Error('无法加载通行密钥');
+  const rows = await response.json();
+  const list = document.getElementById('passkey-list');
+  if (!rows.length) { list.innerHTML = '<p class="muted">尚未添加通行密钥。</p>'; return; }
+  list.innerHTML = '';
+  rows.forEach(row => {
+    const item = document.createElement('div');
+    item.className = 'passkey-item';
+    const text = document.createElement('span');
+    text.textContent = row.name + ' · 添加于 ' + new Date(row.created_at).toLocaleString();
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = '删除'; button.className = 'danger';
+    button.addEventListener('click', () => {
+      const form = document.getElementById('passkey-delete-form');
+      form.dataset.credentialId = row.id;
+      document.getElementById('passkey-delete-name').textContent = row.name;
+      openModal('passkey-delete-modal');
+    });
+    item.append(text, button); list.append(item);
+  });
+}
+
+const passkeyAddForm = document.getElementById('passkey-add-form');
+passkeyAddForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const form = new FormData(passkeyAddForm);
+    const optionsResponse = await fetch('/console/security/passkeys/register/options', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: form.get('name'), current_password: form.get('current_password')})
+    });
+    const options = await optionsResponse.json();
+    if (!optionsResponse.ok) throw new Error(options.detail || '无法开始注册');
+    passkeyAddForm.elements.current_password.value = '';
+    options.challenge = b64buf(options.challenge);
+    options.user.id = b64buf(options.user.id);
+    (options.excludeCredentials || []).forEach(item => item.id = b64buf(item.id));
+    const credential = await navigator.credentials.create({publicKey: options});
+    const response = credential.response;
+    const payload = {
+      id: credential.id, rawId: bufb64(credential.rawId), type: credential.type,
+      response: {
+        attestationObject: bufb64(response.attestationObject),
+        clientDataJSON: bufb64(response.clientDataJSON),
+        transports: response.getTransports ? response.getTransports() : []
+      }
+    };
+    const verifyResponse = await fetch('/console/security/passkeys/register/verify', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    });
+    const verified = await verifyResponse.json();
+    if (!verifyResponse.ok) throw new Error(verified.detail || '注册失败');
+    closeModal(document.getElementById('passkey-add-modal'));
+    document.getElementById('passkey-status').textContent = '通行密钥已添加。';
+    await loadPasskeys();
+  } catch (error) {
+    showModalError(passkeyAddForm, error.message || '通行密钥注册已取消。');
+  }
+});
+
+const passkeyDeleteForm = document.getElementById('passkey-delete-form');
+passkeyDeleteForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const response = await fetch('/console/security/passkeys/' + passkeyDeleteForm.dataset.credentialId + '/delete', {
+      method: 'POST', body: new FormData(passkeyDeleteForm)
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || '删除失败');
+    closeModal(document.getElementById('passkey-delete-modal'));
+    document.getElementById('passkey-status').textContent = '通行密钥已删除。';
+    await loadPasskeys();
+  } catch (error) {
+    showModalError(passkeyDeleteForm, error.message || '删除失败');
+  }
+});
+
+loadPasskeys().catch(() => document.getElementById('passkey-list').textContent = '无法加载通行密钥。');
+</script>

@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.15.1] - 2026-07-30
+
+
+### Bug Fixes
+
+- merge login security into system settings and require masked in-app reauthentication before generating TOTP setup data or changing passkeys — 将登录安全合并到系统设置，并在生成 TOTP 配置或变更通行密钥前使用站内遮蔽密码复核
+
+
 ## [v1.15.0] - 2026-07-29
 
 

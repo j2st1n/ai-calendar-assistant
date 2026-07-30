@@ -529,39 +529,10 @@ async def logout(request: Request) -> RedirectResponse:
 
 @router.get("/security", response_class=HTMLResponse)
 async def security_settings(
-    request: Request,
-    session: Session = Depends(get_db),
+    _request: Request,
     _: None = Depends(require_admin),
-) -> HTMLResponse:
-    settings_service = SettingsService(session)
-    totp_enabled = settings_service.get("admin_totp_enabled") == "true"
-    pending_secret = ""
-    qr_image = None
-    if not totp_enabled:
-        pyotp = importlib.import_module("pyotp")
-        pending_secret = request.session.get("pending_totp_secret") or pyotp.random_base32()
-        request.session["pending_totp_secret"] = pending_secret
-        username = settings_service.get("admin_username") or "admin"
-        provisioning_uri = pyotp.TOTP(pending_secret).provisioning_uri(
-            name=username,
-            issuer_name="AI Calendar Assistant",
-        )
-        qr_image = _qr_image_data_url(provisioning_uri)
-    recovery_codes = request.session.pop("new_recovery_codes", None)
-    return templates.TemplateResponse(
-        request,
-        "security.html",
-        {
-            "totp_enabled": totp_enabled,
-            "pending_totp_secret": pending_secret,
-            "totp_qr_image": qr_image,
-            "recovery_codes": recovery_codes,
-            "turnstile_site_key": settings_service.get("turnstile_site_key") or "",
-            "turnstile_secret_masked": settings_service.get_masked("turnstile_secret_key"),
-            "message": get_flash(request),
-            "error": get_error_flash(request),
-        },
-    )
+) -> RedirectResponse:
+    return redirect("/console/system#security")
 
 
 @router.post("/security/turnstile")
@@ -581,27 +552,53 @@ async def update_turnstile_settings(
         settings_service.set("turnstile_secret_key", secret_key.strip(), encrypted=True)
     settings_service.commit()
     set_flash(request, "Turnstile 配置已保存。")
-    return redirect("/console/security")
+    return redirect("/console/system#security")
+
+
+@router.post("/security/totp/setup")
+async def setup_totp(
+    request: Request,
+    current_password: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> JSONResponse:
+    settings_service = SettingsService(session)
+    password_hash = settings_service.get("admin_password_hash")
+    if not password_hash or not verify_password(current_password, password_hash):
+        raise HTTPException(status_code=403, detail="当前密码不正确。")
+    if settings_service.get("admin_totp_enabled") == "true":
+        raise HTTPException(status_code=409, detail="两步验证已经启用。")
+    pyotp = importlib.import_module("pyotp")
+    secret = pyotp.random_base32()
+    username = settings_service.get("admin_username") or "admin"
+    provisioning_uri = pyotp.TOTP(secret).provisioning_uri(
+        name=username,
+        issuer_name="AI Calendar Assistant",
+    )
+    request.session["pending_totp_secret"] = secret
+    request.session["pending_totp_started_at"] = int(time.time())
+    return JSONResponse({"secret": secret, "qr_image": _qr_image_data_url(provisioning_uri)})
 
 
 @router.post("/security/totp/enable")
 async def enable_totp(
     request: Request,
-    current_password: str = Form(...),
     code: str = Form(...),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
-    password_hash = settings_service.get("admin_password_hash")
     secret = request.session.get("pending_totp_secret")
-    if not password_hash or not verify_password(current_password, password_hash):
-        set_error_flash(request, "当前密码不正确。")
-        return redirect("/console/security")
+    started_at = int(request.session.get("pending_totp_started_at") or 0)
+    if not secret or time.time() - started_at > 300:
+        request.session.pop("pending_totp_secret", None)
+        request.session.pop("pending_totp_started_at", None)
+        set_error_flash(request, "TOTP 设置请求已过期，请重新验证当前密码。")
+        return redirect("/console/system#security")
     pyotp = importlib.import_module("pyotp")
-    if not secret or not pyotp.TOTP(secret).verify(code.strip(), valid_window=1):
+    if not pyotp.TOTP(secret).verify(code.strip(), valid_window=1):
         set_error_flash(request, "动态验证码不正确。")
-        return redirect("/console/security")
+        return redirect("/console/system#security")
     recovery_codes = _generate_recovery_codes()
     hashes = [hashlib.sha256(item.encode()).hexdigest() for item in recovery_codes]
     settings_service.set("admin_totp_secret", secret, encrypted=True)
@@ -610,9 +607,10 @@ async def enable_totp(
     settings_service.set("admin_recovery_code_hashes", json.dumps(hashes))
     settings_service.commit()
     request.session.pop("pending_totp_secret", None)
+    request.session.pop("pending_totp_started_at", None)
     request.session["new_recovery_codes"] = recovery_codes
     set_flash(request, "两步验证已启用。请立即保存恢复码。")
-    return redirect("/console/security")
+    return redirect("/console/system#security")
 
 
 @router.post("/security/totp/disable")
@@ -627,17 +625,17 @@ async def disable_totp(
     password_hash = settings_service.get("admin_password_hash")
     if not password_hash or not verify_password(current_password, password_hash):
         set_error_flash(request, "当前密码不正确。")
-        return redirect("/console/security")
+        return redirect("/console/system#security")
     if not (_verify_totp(settings_service, code.strip()) or _consume_recovery_code(settings_service, code)):
         set_error_flash(request, "验证码或恢复码不正确。")
-        return redirect("/console/security")
+        return redirect("/console/system#security")
     settings_service.set("admin_totp_secret", None, encrypted=True)
     settings_service.set("admin_totp_enabled", "false")
     settings_service.set("admin_totp_last_counter", "-1")
     settings_service.set("admin_recovery_code_hashes", "[]")
     settings_service.commit()
     set_flash(request, "两步验证已停用。")
-    return redirect("/console/security")
+    return redirect("/console/system#security")
 
 
 @router.get("/security/passkeys")
@@ -734,22 +732,20 @@ async def verify_passkey_registration(
 @router.post("/security/passkeys/{credential_id}/delete")
 async def delete_passkey(
     credential_id: int,
-    request: Request,
     current_password: str = Form(...),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
+) -> JSONResponse:
     settings_service = SettingsService(session)
     password_hash = settings_service.get("admin_password_hash")
     if not password_hash or not verify_password(current_password, password_hash):
-        set_error_flash(request, "当前密码不正确，未删除通行密钥。")
-        return redirect("/console/security")
+        raise HTTPException(status_code=403, detail="当前密码不正确。")
     row = session.get(PasskeyCredential, credential_id)
-    if row:
-        session.delete(row)
-        session.commit()
-    set_flash(request, "通行密钥已删除。")
-    return redirect("/console/security")
+    if row is None:
+        raise HTTPException(status_code=404, detail="通行密钥不存在。")
+    session.delete(row)
+    session.commit()
+    return JSONResponse({"ok": True})
 
 
 @router.post("/login/passkey/options")
@@ -815,6 +811,7 @@ async def system_settings(
     _: None = Depends(require_admin),
 ) -> HTMLResponse:
     settings_service = SettingsService(session)
+    recovery_codes = request.session.pop("new_recovery_codes", None)
     return templates.TemplateResponse(
         request,
         "system.html",
@@ -823,6 +820,13 @@ async def system_settings(
             "session_days": settings_service.get("session_days") or "7",
             "event_record_limit": settings_service.get("event_record_limit") or "500",
             "week_start_day": settings_service.get("week_start_day") or "1",
+            "totp_enabled": settings_service.get("admin_totp_enabled") == "true",
+            "recovery_codes": recovery_codes,
+            "turnstile_site_key": settings_service.get("turnstile_site_key") or "",
+            "turnstile_secret_masked": settings_service.get_masked("turnstile_secret_key"),
+            "public_origin": settings.public_origin or "未配置",
+            "webauthn_rp_id": settings.webauthn_rp_id or "未配置",
+            "secure_cookies": settings.secure_cookies,
             "message": get_flash(request) or request.query_params.get("message"),
             "error": get_error_flash(request) or request.query_params.get("error"),
         },
