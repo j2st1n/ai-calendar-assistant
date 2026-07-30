@@ -18,10 +18,12 @@
       <form method="post" action="/console/security/turnstile" class="stack">
         <label><span>Site Key</span><input name="site_key" value="{{ turnstile_site_key }}"></label>
         <label><span>Secret Key</span><input name="secret_key" type="password" placeholder="{{ turnstile_secret_masked or '留空则保持不变' }}" autocomplete="off"></label>
-        {% if turnstile_secret_masked %}
-        <label><input name="clear_secret" type="checkbox" value="true"> 清除现有 Secret Key</label>
-        {% endif %}
-        <div><button type="submit">保存 Turnstile 配置</button></div>
+        <div class="row">
+          <button type="submit">保存 Turnstile 配置</button>
+          {% if turnstile_secret_masked %}
+          <button type="submit" name="clear_secret" value="true" class="danger">清除已保存 Key</button>
+          {% endif %}
+        </div>
       </form>
     </div>
 

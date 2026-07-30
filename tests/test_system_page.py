@@ -26,6 +26,8 @@ def test_security_is_embedded_and_uses_masked_in_app_modals():
     assert 'id="totp-qr-image"' in security_template
     assert 'id="passkey-add-modal"' in security_template
     assert 'id="passkey-delete-modal"' in security_template
+    assert '<input name="clear_secret"' not in security_template
+    assert 'type="submit" name="clear_secret" value="true" class="danger"' in security_template
 
 
 def test_login_page_does_not_prefill_admin_username():

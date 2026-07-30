@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.15.5] - 2026-07-30
+
+
+### Bug Fixes
+
+- replace the misaligned Turnstile secret checkbox with a direct clear button — 将错位的 Turnstile Secret Key 清除复选框替换为直接清除按钮
+
+
 ## [v1.15.4] - 2026-07-30
 
 
