@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.db.models import Base, PasskeyCredential
 from app.services.settings_service import SettingsService
-from app.web.routes import _consume_recovery_code, _verify_totp, setup_totp
+from app.web.routes import _consume_recovery_code, _verify_totp, passkey_registration_options, setup_totp
 
 
 def _session() -> Session:
@@ -29,6 +29,24 @@ def _request() -> Request:
             "headers": [],
             "session": {},
         }
+    )
+
+
+def _json_request(payload: dict[str, str]) -> Request:
+    body = json.dumps(payload).encode()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/console/security/passkeys/register/options",
+            "headers": [(b"content-type", b"application/json")],
+            "session": {},
+        },
+        receive,
     )
 
 
@@ -97,3 +115,28 @@ def test_totp_setup_generates_secret_only_after_password_verification() -> None:
     assert payload["secret"] == request.session["pending_totp_secret"]
     assert payload["qr_image"].startswith("data:image/png;base64,")
     assert request.session["pending_totp_started_at"] > 0
+
+
+def test_passkey_registration_options_support_webauthn_3_helpers() -> None:
+    previous_origin = settings.public_origin
+    previous_rp_id = settings.webauthn_rp_id
+    settings.public_origin = "https://calendar.example.com"
+    settings.webauthn_rp_id = "calendar.example.com"
+    try:
+        session = _session()
+        service = SettingsService(session)
+        service.set("admin_username", "admin")
+        service.set("admin_password_hash", hash_password("correct-password"))
+        service.commit()
+        request = _json_request({"name": "Laptop", "current_password": "correct-password"})
+
+        response = asyncio.run(passkey_registration_options(request, session, None))
+        payload = json.loads(response.body)
+
+        assert response.status_code == 200
+        assert payload["rp"]["id"] == "calendar.example.com"
+        assert payload["challenge"]
+        assert request.session["passkey_registration_challenge"]
+    finally:
+        settings.public_origin = previous_origin
+        settings.webauthn_rp_id = previous_rp_id

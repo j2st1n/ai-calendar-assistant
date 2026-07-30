@@ -1,5 +1,15 @@
 # Changelog
 
+## [v1.15.3] - 2026-07-30
+
+
+### Bug Fixes
+
+- use the WebAuthn 3 helper API for Base64URL encoding and show readable API errors — 使用 WebAuthn 3 辅助 API 进行 Base64URL 编码并显示可读接口错误
+
+- stop prefilling the administrator username on the login page — 登录页不再预填管理员用户名
+
+
 ## [v1.15.2] - 2026-07-30
 
 

@@ -133,6 +133,11 @@ function bufb64(value) {
   let binary = ''; bytes.forEach(b => binary += String.fromCharCode(b));
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
+async function apiPayload(response, fallback) {
+  const text = await response.text();
+  try { return text ? JSON.parse(text) : {}; }
+  catch (_error) { throw new Error(response.ok ? '服务器返回格式不正确' : fallback); }
+}
 function openModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
@@ -175,7 +180,7 @@ if (totpPasswordForm) {
     event.preventDefault();
     try {
       const response = await fetch('/console/security/totp/setup', {method: 'POST', body: new FormData(totpPasswordForm)});
-      const payload = await response.json();
+      const payload = await apiPayload(response, '服务器暂时无法开始 TOTP 设置');
       if (!response.ok) throw new Error(payload.detail || '无法开始设置');
       totpPasswordForm.elements.current_password.value = '';
       document.getElementById('totp-qr-image').src = payload.qr_image;
@@ -190,8 +195,8 @@ if (totpPasswordForm) {
 
 async function loadPasskeys() {
   const response = await fetch('/console/security/passkeys');
-  if (!response.ok) throw new Error('无法加载通行密钥');
-  const rows = await response.json();
+  const rows = await apiPayload(response, '服务器暂时无法加载通行密钥');
+  if (!response.ok) throw new Error(rows.detail || '无法加载通行密钥');
   const list = document.getElementById('passkey-list');
   if (!rows.length) { list.innerHTML = '<p class="muted">尚未添加通行密钥。</p>'; return; }
   list.innerHTML = '';
@@ -221,7 +226,7 @@ passkeyAddForm.addEventListener('submit', async event => {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: form.get('name'), current_password: form.get('current_password')})
     });
-    const options = await optionsResponse.json();
+    const options = await apiPayload(optionsResponse, '服务器暂时无法开始注册通行密钥');
     if (!optionsResponse.ok) throw new Error(options.detail || '无法开始注册');
     passkeyAddForm.elements.current_password.value = '';
     options.challenge = b64buf(options.challenge);
@@ -240,7 +245,7 @@ passkeyAddForm.addEventListener('submit', async event => {
     const verifyResponse = await fetch('/console/security/passkeys/register/verify', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
     });
-    const verified = await verifyResponse.json();
+    const verified = await apiPayload(verifyResponse, '服务器暂时无法验证通行密钥');
     if (!verifyResponse.ok) throw new Error(verified.detail || '注册失败');
     closeModal(document.getElementById('passkey-add-modal'));
     document.getElementById('passkey-status').textContent = '通行密钥已添加。';
@@ -257,7 +262,7 @@ passkeyDeleteForm.addEventListener('submit', async event => {
     const response = await fetch('/console/security/passkeys/' + passkeyDeleteForm.dataset.credentialId + '/delete', {
       method: 'POST', body: new FormData(passkeyDeleteForm)
     });
-    const payload = await response.json();
+    const payload = await apiPayload(response, '服务器暂时无法删除通行密钥');
     if (!response.ok) throw new Error(payload.detail || '删除失败');
     closeModal(document.getElementById('passkey-delete-modal'));
     document.getElementById('passkey-status').textContent = '通行密钥已删除。';

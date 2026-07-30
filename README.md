@@ -148,7 +148,7 @@ WeChat 后台运行时会自动轮询新消息；控制台可查看运行状态�
 在 `docker-compose.yml` 同目录创建 `.env`：
 
 ```env
-APP_VERSION=v1.15.2
+APP_VERSION=v1.15.3
 PUBLIC_ORIGIN=https://calendar.example.com
 WEBAUTHN_RP_ID=calendar.example.com
 TRUSTED_HOSTS=calendar.example.com,127.0.0.1,localhost
@@ -204,8 +204,8 @@ docker compose pull && docker compose up -d
 生产环境可固定到版本标签，避免 `latest` 变化：
 
 ```bash
-APP_VERSION=v1.15.2 docker compose pull app
-APP_VERSION=v1.15.2 docker compose up -d --force-recreate app
+APP_VERSION=v1.15.3 docker compose pull app
+APP_VERSION=v1.15.3 docker compose up -d --force-recreate app
 ```
 
 回滚时把 `APP_VERSION` 改为上一个版本并重复以上两条命令。容器可通过

@@ -669,6 +669,7 @@ async def passkey_registration_options(
     if not password_hash or not verify_password(current_password, password_hash):
         raise HTTPException(status_code=403, detail="当前密码不正确。")
     webauthn = importlib.import_module("webauthn")
+    webauthn_helpers = importlib.import_module("webauthn.helpers")
     structs = importlib.import_module("webauthn.helpers.structs")
     rows = session.execute(select(PasskeyCredential)).scalars().all()
     options = webauthn.generate_registration_options(
@@ -681,11 +682,11 @@ async def passkey_registration_options(
             user_verification=structs.UserVerificationRequirement.REQUIRED,
         ),
         exclude_credentials=[
-            structs.PublicKeyCredentialDescriptor(id=webauthn.base64url_to_bytes(row.credential_id))
+            structs.PublicKeyCredentialDescriptor(id=webauthn_helpers.base64url_to_bytes(row.credential_id))
             for row in rows
         ],
     )
-    request.session["passkey_registration_challenge"] = webauthn.bytes_to_base64url(options.challenge)
+    request.session["passkey_registration_challenge"] = webauthn_helpers.bytes_to_base64url(options.challenge)
     request.session["passkey_registration_name"] = str(body.get("name") or "我的通行密钥").strip()[:100]
     request.session["passkey_registration_started_at"] = int(time.time())
     return Response(webauthn.options_to_json(options), media_type="application/json")
@@ -704,24 +705,25 @@ async def verify_passkey_registration(
     if not challenge or time.time() - started_at > 300:
         raise HTTPException(status_code=400, detail="注册请求已过期，请重试。")
     webauthn = importlib.import_module("webauthn")
+    webauthn_helpers = importlib.import_module("webauthn.helpers")
     try:
         verified = webauthn.verify_registration_response(
             credential=await request.json(),
-            expected_challenge=webauthn.base64url_to_bytes(challenge),
+            expected_challenge=webauthn_helpers.base64url_to_bytes(challenge),
             expected_rp_id=rp_id,
             expected_origin=origin,
             require_user_verification=True,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail="通行密钥验证失败。") from exc
-    credential_id = webauthn.bytes_to_base64url(verified.credential_id)
+    credential_id = webauthn_helpers.bytes_to_base64url(verified.credential_id)
     if session.scalar(select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id)):
         raise HTTPException(status_code=409, detail="此通行密钥已注册。")
     session.add(
         PasskeyCredential(
             name=name or "我的通行密钥",
             credential_id=credential_id,
-            public_key=webauthn.bytes_to_base64url(verified.credential_public_key),
+            public_key=webauthn_helpers.bytes_to_base64url(verified.credential_public_key),
             sign_count=verified.sign_count,
         )
     )
@@ -752,6 +754,7 @@ async def delete_passkey(
 async def passkey_authentication_options(request: Request, session: Session = Depends(get_db)) -> Response:
     rp_id, _origin = _passkey_config()
     webauthn = importlib.import_module("webauthn")
+    webauthn_helpers = importlib.import_module("webauthn.helpers")
     structs = importlib.import_module("webauthn.helpers.structs")
     rows = session.execute(select(PasskeyCredential)).scalars().all()
     if not rows:
@@ -760,11 +763,11 @@ async def passkey_authentication_options(request: Request, session: Session = De
         rp_id=rp_id,
         user_verification=structs.UserVerificationRequirement.REQUIRED,
         allow_credentials=[
-            structs.PublicKeyCredentialDescriptor(id=webauthn.base64url_to_bytes(row.credential_id))
+            structs.PublicKeyCredentialDescriptor(id=webauthn_helpers.base64url_to_bytes(row.credential_id))
             for row in rows
         ],
     )
-    request.session["passkey_authentication_challenge"] = webauthn.bytes_to_base64url(options.challenge)
+    request.session["passkey_authentication_challenge"] = webauthn_helpers.bytes_to_base64url(options.challenge)
     request.session["passkey_authentication_started_at"] = int(time.time())
     return Response(webauthn.options_to_json(options), media_type="application/json")
 
@@ -782,13 +785,14 @@ async def verify_passkey_authentication(request: Request, session: Session = Dep
     if row is None:
         raise HTTPException(status_code=401, detail="未知的通行密钥。")
     webauthn = importlib.import_module("webauthn")
+    webauthn_helpers = importlib.import_module("webauthn.helpers")
     try:
         verified = webauthn.verify_authentication_response(
             credential=body,
-            expected_challenge=webauthn.base64url_to_bytes(challenge),
+            expected_challenge=webauthn_helpers.base64url_to_bytes(challenge),
             expected_rp_id=rp_id,
             expected_origin=origin,
-            credential_public_key=webauthn.base64url_to_bytes(row.public_key),
+            credential_public_key=webauthn_helpers.base64url_to_bytes(row.public_key),
             credential_current_sign_count=row.sign_count,
             require_user_verification=True,
         )

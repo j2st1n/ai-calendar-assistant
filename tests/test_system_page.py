@@ -28,6 +28,13 @@ def test_security_is_embedded_and_uses_masked_in_app_modals():
     assert 'id="passkey-delete-modal"' in security_template
 
 
+def test_login_page_does_not_prefill_admin_username():
+    template = Path("app/web/templates/login.html").read_text()
+
+    assert 'name="username" autocomplete="username" value="admin"' not in template
+    assert 'name="username" autocomplete="username" required' in template
+
+
 def test_backup_archive_contains_consistent_restorable_database(tmp_path):
     database_path = tmp_path / "app.db"
     connection = sqlite3.connect(database_path)
