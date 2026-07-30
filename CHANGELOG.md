@@ -1,5 +1,18 @@
 # Changelog
 
+## [v1.15.7] - 2026-07-30
+
+
+### Features
+
+- add a scrollable mobile navigation drawer with accessible close controls — 添加可滚动的移动端导航抽屉及无障碍关闭操作
+
+
+### Bug Fixes
+
+- serve the favicon from the standard root path and remove the missing icon reference — 从标准根路径提供网站图标并移除不存在的图标引用
+
+
 ## [v1.15.6] - 2026-07-30
 
 

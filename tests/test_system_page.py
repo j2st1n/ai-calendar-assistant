@@ -37,6 +37,30 @@ def test_login_page_does_not_prefill_admin_username():
     assert 'name="username" autocomplete="username" required' in template
 
 
+def test_mobile_navigation_uses_a_scrollable_drawer():
+    template = Path("app/web/templates/base.html").read_text()
+    styles = Path("app/web/static/styles.css").read_text()
+
+    assert 'href="/static/styles.css?v=4"' in template
+    assert 'data-mobile-menu-toggle' in template
+    assert 'id="console-sidebar"' in template
+    assert 'data-mobile-menu-close' in template
+    assert 'data-mobile-menu-backdrop' in template
+    assert "event.key === 'Escape'" in template
+    assert ".sidebar { display: none; }" not in styles
+    assert "body.sidebar-open .sidebar" in styles
+    assert "height: 100dvh" in styles
+    assert "overflow-y: auto" in styles
+
+
+def test_base_template_uses_the_standard_favicon_route():
+    template = Path("app/web/templates/base.html").read_text()
+
+    assert template.count('rel="icon"') == 1
+    assert 'href="/favicon.ico"' in template
+    assert "calendar-icon-alt.png" not in template
+
+
 def test_backup_archive_contains_consistent_restorable_database(tmp_path):
     database_path = tmp_path / "app.db"
     connection = sqlite3.connect(database_path)

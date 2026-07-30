@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -58,6 +58,11 @@ app = create_app()
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "version": read_version()}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse("app/web/static/favicon.ico", media_type="image/vnd.microsoft.icon")
 
 
 @app.get("/")

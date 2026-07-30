@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Calendar Assistant</title>
-  <link rel="icon" href="/static/favicon.ico">
+  <link rel="icon" href="/favicon.ico" sizes="any" type="image/vnd.microsoft.icon">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <link rel="stylesheet" href="/static/styles.css?v=4">
   <script>
   window.addEventListener('DOMContentLoaded', function(){
     document.querySelectorAll('.cs-wrap').forEach(function(w){
@@ -31,14 +31,41 @@
       var el = document.querySelector('.alert.success');
       if(el) el.remove();
     }, 3000);
+    var menuToggle = document.querySelector('[data-mobile-menu-toggle]');
+    var sidebar = document.getElementById('console-sidebar');
+    var menuClose = document.querySelector('[data-mobile-menu-close]');
+    var menuBackdrop = document.querySelector('[data-mobile-menu-backdrop]');
+    if (menuToggle && sidebar && menuClose && menuBackdrop) {
+      function setMobileMenu(open, restoreFocus) {
+        document.body.classList.toggle('sidebar-open', open);
+        menuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) menuClose.focus();
+        else if (restoreFocus) menuToggle.focus();
+      }
+      menuToggle.addEventListener('click', function(){ setMobileMenu(true, false); });
+      menuClose.addEventListener('click', function(){ setMobileMenu(false, true); });
+      menuBackdrop.addEventListener('click', function(){ setMobileMenu(false, true); });
+      sidebar.querySelectorAll('a').forEach(function(link){
+        link.addEventListener('click', function(){ setMobileMenu(false, false); });
+      });
+      document.addEventListener('keydown', function(event){
+        if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
+          setMobileMenu(false, true);
+        }
+      });
+    }
   });
   </script>
-  <link rel="icon" href="/static/favicon.ico" sizes="any">
-  <link rel="icon" href="/static/calendar-icon-alt.png" type="image/png">
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="topbar">
+    {% if request.session.get('admin_authenticated') %}
+    <button type="button" class="mobile-menu-toggle secondary" data-mobile-menu-toggle
+            aria-controls="console-sidebar" aria-expanded="false" aria-label="打开导航菜单">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+    </button>
+    {% endif %}
     <div class="topbar-brand">
       <img src="/static/calendar-icon-transparent.png" width="28" height="28" alt="" style="border-radius:6px;">
       <strong>AI Calendar Assistant</strong>
@@ -53,7 +80,11 @@
 
   {% if request.session.get('admin_authenticated') %}
   <div class="layout">
-    <aside class="sidebar">
+    <aside class="sidebar" id="console-sidebar" aria-label="控制台导航">
+      <div class="sidebar-mobile-header">
+        <strong>导航菜单</strong>
+        <button type="button" class="sidebar-close secondary" data-mobile-menu-close aria-label="关闭导航菜单">×</button>
+      </div>
       <!-- 系统 -->
       <div class="sidebar-section-label">系统</div>
       <a href="/console" class="sidebar-item {% if request.url.path == '/console' %}active{% endif %}">
@@ -99,6 +130,8 @@
         {{ app_version() or 'dev' }}
       </div>
     </aside>
+    <button type="button" class="sidebar-backdrop" data-mobile-menu-backdrop
+            aria-label="关闭导航菜单" tabindex="-1"></button>
     <main class="main">
       {% block content %}{% endblock %}
     </main>
