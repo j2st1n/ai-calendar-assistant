@@ -37,7 +37,13 @@ from app.integrations.ilink import ILinkAuthError, ILinkClient, ILinkError
 from app.services.settings_service import SettingsService
 from app.services.telegram_service import TelegramService
 from app.services.wechat_service import WechatService, get_wechat_bot_runtime
-from app.web.security import login_rate_limiter, verify_turnstile
+from app.web.security import (
+    client_ip,
+    login_rate_limiter,
+    passkey_failure_rate_limiter,
+    passkey_request_rate_limiter,
+    verify_turnstile,
+)
 
 
 router = APIRouter(prefix="/console")
@@ -757,6 +763,10 @@ async def delete_passkey(
 
 @router.post("/login/passkey/options")
 async def passkey_authentication_options(request: Request, session: Session = Depends(get_db)) -> Response:
+    limiter_key = client_ip(request)
+    if passkey_request_rate_limiter.blocked(limiter_key) or passkey_failure_rate_limiter.blocked(limiter_key):
+        raise HTTPException(status_code=429, detail="通行密钥登录尝试过于频繁，请 5 分钟后重试。")
+    passkey_request_rate_limiter.record(limiter_key)
     rp_id, _origin = _passkey_config()
     webauthn = importlib.import_module("webauthn")
     webauthn_helpers = importlib.import_module("webauthn.helpers")
@@ -779,15 +789,21 @@ async def passkey_authentication_options(request: Request, session: Session = De
 
 @router.post("/login/passkey/verify")
 async def verify_passkey_authentication(request: Request, session: Session = Depends(get_db)) -> JSONResponse:
+    limiter_key = client_ip(request)
+    if passkey_request_rate_limiter.blocked(limiter_key) or passkey_failure_rate_limiter.blocked(limiter_key):
+        raise HTTPException(status_code=429, detail="通行密钥登录尝试过于频繁，请 5 分钟后重试。")
+    passkey_request_rate_limiter.record(limiter_key)
     rp_id, origin = _passkey_config()
     challenge = request.session.pop("passkey_authentication_challenge", None)
     started_at = int(request.session.pop("passkey_authentication_started_at", 0))
     if not challenge or time.time() - started_at > 300:
+        passkey_failure_rate_limiter.record(limiter_key)
         raise HTTPException(status_code=400, detail="登录请求已过期，请重试。")
     body = await request.json()
     credential_id = str(body.get("id") or "")
     row = session.scalar(select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id))
     if row is None:
+        passkey_failure_rate_limiter.record(limiter_key)
         raise HTTPException(status_code=401, detail="未知的通行密钥。")
     webauthn = importlib.import_module("webauthn")
     webauthn_helpers = importlib.import_module("webauthn.helpers")
@@ -802,10 +818,12 @@ async def verify_passkey_authentication(request: Request, session: Session = Dep
             require_user_verification=True,
         )
     except Exception as exc:
+        passkey_failure_rate_limiter.record(limiter_key)
         raise HTTPException(status_code=401, detail="通行密钥验证失败。") from exc
     row.sign_count = verified.new_sign_count
     row.last_used_at = datetime.now().astimezone()
     session.commit()
+    passkey_failure_rate_limiter.success(limiter_key)
     settings_service = SettingsService(session)
     request.session.clear()
     request.session["admin_authenticated"] = True

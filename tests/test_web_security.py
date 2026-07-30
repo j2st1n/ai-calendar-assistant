@@ -3,7 +3,9 @@ import asyncio
 from starlette.responses import JSONResponse
 
 from app.core.config import settings
-from app.web.security import LoginRateLimiter, SameOriginMiddleware, SecurityHeadersMiddleware, verify_turnstile
+from fastapi import Request
+
+from app.web.security import LoginRateLimiter, SameOriginMiddleware, SecurityHeadersMiddleware, client_ip, verify_turnstile
 
 
 def _request(method: str, origin: str | None = None) -> tuple[int, dict[str, str]]:
@@ -76,6 +78,42 @@ def test_login_rate_limiter_blocks_and_resets() -> None:
     assert limiter.blocked("admin") is True
     limiter.success("admin")
     assert limiter.blocked("admin") is False
+
+
+def _resolve_client_ip(headers: list[tuple[bytes, bytes]], *, trust_proxy: bool) -> str:
+    previous = settings.trust_proxy_headers
+    settings.trust_proxy_headers = trust_proxy
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/console/login/passkey/options",
+            "headers": headers,
+            "client": ("192.0.2.10", 12345),
+        }
+    )
+    try:
+        return client_ip(request)
+    finally:
+        settings.trust_proxy_headers = previous
+
+
+def test_client_ip_prefers_valid_cloudflare_header() -> None:
+    assert _resolve_client_ip([(b"cf-connecting-ip", b"203.0.113.8")], trust_proxy=True) == "203.0.113.8"
+
+
+def test_client_ip_ignores_invalid_forwarded_headers() -> None:
+    assert (
+        _resolve_client_ip(
+            [(b"cf-connecting-ip", b"invalid"), (b"x-forwarded-for", b"also-invalid")],
+            trust_proxy=True,
+        )
+        == "192.0.2.10"
+    )
+
+
+def test_client_ip_ignores_forwarded_headers_when_proxy_trust_is_disabled() -> None:
+    assert _resolve_client_ip([(b"cf-connecting-ip", b"203.0.113.8")], trust_proxy=False) == "192.0.2.10"
 
 
 def test_turnstile_requires_matching_action_and_hostname(monkeypatch) -> None:

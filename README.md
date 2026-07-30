@@ -148,10 +148,11 @@ WeChat 后台运行时会自动轮询新消息；控制台可查看运行状态�
 在 `docker-compose.yml` 同目录创建 `.env`：
 
 ```env
-APP_VERSION=v1.15.5
+APP_VERSION=v1.15.6
 PUBLIC_ORIGIN=https://calendar.example.com
 WEBAUTHN_RP_ID=calendar.example.com
 TRUSTED_HOSTS=calendar.example.com,127.0.0.1,localhost
+TRUST_PROXY_HEADERS=true
 SECURE_COOKIES=true
 ```
 
@@ -162,6 +163,7 @@ SECURE_COOKIES=true
 | `PUBLIC_ORIGIN` | `https://calendar.example.com` | 浏览器访问控制台的完整 Origin，不要添加末尾 `/` |
 | `WEBAUTHN_RP_ID` | `calendar.example.com` | 通行密钥 RP ID，只填写域名，不包含协议、端口或路径 |
 | `TRUSTED_HOSTS` | `calendar.example.com,127.0.0.1,localhost` | 允许访问应用的 Host 列表 |
+| `TRUST_PROXY_HEADERS` | `true` | 仅在应用位于可信反向代理后时启用，用于按真实客户端 IP 限制通行密钥登录频率 |
 | `SECURE_COOKIES` | `true` | 只通过 HTTPS 发送会话 Cookie；公网部署必须启用 |
 
 修改后启动或重建容器：
@@ -204,8 +206,8 @@ docker compose pull && docker compose up -d
 生产环境可固定到版本标签，避免 `latest` 变化：
 
 ```bash
-APP_VERSION=v1.15.5 docker compose pull app
-APP_VERSION=v1.15.5 docker compose up -d --force-recreate app
+APP_VERSION=v1.15.6 docker compose pull app
+APP_VERSION=v1.15.6 docker compose up -d --force-recreate app
 ```
 
 回滚时把 `APP_VERSION` 改为上一个版本并重复以上两条命令。容器可通过

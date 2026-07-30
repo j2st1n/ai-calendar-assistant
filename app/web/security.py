@@ -1,6 +1,7 @@
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from ipaddress import ip_address
 from time import monotonic
 from urllib.parse import urlsplit
 
@@ -103,11 +104,28 @@ class LoginRateLimiter:
     def failure(self, key: str) -> None:
         self._prune(key, monotonic()).append(monotonic())
 
+    def record(self, key: str) -> None:
+        self.failure(key)
+
     def success(self, key: str) -> None:
         _ = self._attempts.pop(key, None)
 
 
 login_rate_limiter = LoginRateLimiter()
+passkey_request_rate_limiter = LoginRateLimiter(limit=20)
+passkey_failure_rate_limiter = LoginRateLimiter()
+
+
+def client_ip(request: Request) -> str:
+    if settings.trust_proxy_headers:
+        for header in ("cf-connecting-ip", "x-forwarded-for"):
+            value = request.headers.get(header, "").split(",", 1)[0].strip()
+            if value:
+                try:
+                    return str(ip_address(value))
+                except ValueError:
+                    pass
+    return request.client.host if request.client else "unknown"
 
 
 async def verify_turnstile(

@@ -6,6 +6,7 @@ services:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
       TRUSTED_HOSTS: ${TRUSTED_HOSTS:-127.0.0.1,localhost}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
     user: "1000:1000"
     restart: unless-stopped

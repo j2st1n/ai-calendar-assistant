@@ -14,13 +14,17 @@ from app.core.security import hash_password
 from app.db import session as db_session
 from app.db.models import Base, PasskeyCredential
 from app.services.settings_service import SettingsService
+from app.web import routes as web_routes
 from app.web.routes import (
     _consume_recovery_code,
     _verify_totp,
+    passkey_authentication_options,
     passkey_registration_options,
     setup_totp,
+    verify_passkey_authentication,
     verify_passkey_registration,
 )
+from app.web.security import LoginRateLimiter
 
 
 def _session() -> Session:
@@ -56,6 +60,19 @@ def _json_request(payload: dict[str, object]) -> Request:
             "session": {},
         },
         receive,
+    )
+
+
+def _passkey_login_request(path: str, port: int = 12345) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [],
+            "client": ("192.0.2.10", port),
+            "session": {},
+        }
     )
 
 
@@ -207,3 +224,43 @@ def test_passkey_registration_persists_authenticator_transports(monkeypatch) -> 
     finally:
         settings.public_origin = previous_origin
         settings.webauthn_rp_id = previous_rp_id
+
+
+def test_passkey_options_are_rate_limited_by_client_ip(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "public_origin", "https://calendar.example.com")
+    monkeypatch.setattr(settings, "webauthn_rp_id", "calendar.example.com")
+    request_limiter = LoginRateLimiter(limit=1)
+    failure_limiter = LoginRateLimiter()
+    monkeypatch.setattr(web_routes, "passkey_request_rate_limiter", request_limiter)
+    monkeypatch.setattr(web_routes, "passkey_failure_rate_limiter", failure_limiter)
+    session = _session()
+
+    first_request = _passkey_login_request("/console/login/passkey/options")
+    with pytest.raises(HTTPException) as first_error:
+        asyncio.run(passkey_authentication_options(first_request, session))
+    assert first_error.value.status_code == 404
+
+    second_request = _passkey_login_request("/console/login/passkey/options", 12346)
+    with pytest.raises(HTTPException) as second_error:
+        asyncio.run(passkey_authentication_options(second_request, session))
+    assert second_error.value.status_code == 429
+
+
+def test_passkey_verification_failure_blocks_further_attempts(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "public_origin", "https://calendar.example.com")
+    monkeypatch.setattr(settings, "webauthn_rp_id", "calendar.example.com")
+    request_limiter = LoginRateLimiter(limit=20)
+    failure_limiter = LoginRateLimiter(limit=1)
+    monkeypatch.setattr(web_routes, "passkey_request_rate_limiter", request_limiter)
+    monkeypatch.setattr(web_routes, "passkey_failure_rate_limiter", failure_limiter)
+    session = _session()
+
+    verify_request = _passkey_login_request("/console/login/passkey/verify")
+    with pytest.raises(HTTPException) as verify_error:
+        asyncio.run(verify_passkey_authentication(verify_request, session))
+    assert verify_error.value.status_code == 400
+
+    options_request = _passkey_login_request("/console/login/passkey/options", 12346)
+    with pytest.raises(HTTPException) as options_error:
+        asyncio.run(passkey_authentication_options(options_request, session))
+    assert options_error.value.status_code == 429

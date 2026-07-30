@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.15.6] - 2026-07-30
+
+
+### Security
+
+- rate-limit passkey login requests and repeated verification failures by trusted client IP — 按可信客户端 IP 限制通行密钥登录请求和连续验证失败次数
+
+
 ## [v1.15.5] - 2026-07-30
 
 

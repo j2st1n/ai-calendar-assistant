@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     public_origin: str = ""
     webauthn_rp_id: str = ""
     trusted_hosts: str = "127.0.0.1,localhost,testserver"
+    trust_proxy_headers: bool = False
     secure_cookies: bool = False
 
 
