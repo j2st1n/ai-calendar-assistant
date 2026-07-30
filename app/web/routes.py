@@ -706,9 +706,10 @@ async def verify_passkey_registration(
         raise HTTPException(status_code=400, detail="注册请求已过期，请重试。")
     webauthn = importlib.import_module("webauthn")
     webauthn_helpers = importlib.import_module("webauthn.helpers")
+    body = await request.json()
     try:
         verified = webauthn.verify_registration_response(
-            credential=await request.json(),
+            credential=body,
             expected_challenge=webauthn_helpers.base64url_to_bytes(challenge),
             expected_rp_id=rp_id,
             expected_origin=origin,
@@ -719,12 +720,16 @@ async def verify_passkey_registration(
     credential_id = webauthn_helpers.bytes_to_base64url(verified.credential_id)
     if session.scalar(select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id)):
         raise HTTPException(status_code=409, detail="此通行密钥已注册。")
+    response_payload = body.get("response") if isinstance(body, dict) else None
+    raw_transports = response_payload.get("transports") if isinstance(response_payload, dict) else None
+    transports = [item for item in raw_transports if isinstance(item, str)][:10] if isinstance(raw_transports, list) else []
     session.add(
         PasskeyCredential(
             name=name or "我的通行密钥",
             credential_id=credential_id,
             public_key=webauthn_helpers.bytes_to_base64url(verified.credential_public_key),
             sign_count=verified.sign_count,
+            transports=json.dumps(transports),
         )
     )
     session.commit()

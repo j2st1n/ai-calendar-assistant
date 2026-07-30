@@ -1,17 +1,26 @@
 import asyncio
 import json
+import time
+from types import SimpleNamespace
 
 import pyotp
 import pytest
 from fastapi import HTTPException, Request
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import hash_password
+from app.db import session as db_session
 from app.db.models import Base, PasskeyCredential
 from app.services.settings_service import SettingsService
-from app.web.routes import _consume_recovery_code, _verify_totp, passkey_registration_options, setup_totp
+from app.web.routes import (
+    _consume_recovery_code,
+    _verify_totp,
+    passkey_registration_options,
+    setup_totp,
+    verify_passkey_registration,
+)
 
 
 def _session() -> Session:
@@ -32,7 +41,7 @@ def _request() -> Request:
     )
 
 
-def _json_request(payload: dict[str, str]) -> Request:
+def _json_request(payload: dict[str, object]) -> Request:
     body = json.dumps(payload).encode()
 
     async def receive() -> dict[str, object]:
@@ -83,7 +92,26 @@ def test_passkey_credential_table_is_created() -> None:
     session = _session()
     session.add(PasskeyCredential(name="Laptop", credential_id="credential", public_key="public"))
     session.commit()
-    assert session.scalar(select(PasskeyCredential)).name == "Laptop"
+    row = session.scalar(select(PasskeyCredential))
+    assert row.name == "Laptop"
+    assert row.transports == "[]"
+
+
+def test_passkey_migration_adds_transports_to_legacy_table(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE passkey_credentials (id INTEGER PRIMARY KEY)"))
+    monkeypatch.setattr(db_session, "engine", engine)
+
+    db_session._migrate_passkey_credentials()
+
+    columns = {column["name"] for column in inspect(engine).get_columns("passkey_credentials")}
+    assert "transports" in columns
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO passkey_credentials (id) VALUES (1)"))
+        assert connection.execute(
+            text("SELECT transports FROM passkey_credentials WHERE id = 1")
+        ).scalar_one() == "[]"
 
 
 def test_totp_setup_rejects_password_before_generating_secret() -> None:
@@ -137,6 +165,45 @@ def test_passkey_registration_options_support_webauthn_3_helpers() -> None:
         assert payload["rp"]["id"] == "calendar.example.com"
         assert payload["challenge"]
         assert request.session["passkey_registration_challenge"]
+    finally:
+        settings.public_origin = previous_origin
+        settings.webauthn_rp_id = previous_rp_id
+
+
+def test_passkey_registration_persists_authenticator_transports(monkeypatch) -> None:
+    previous_origin = settings.public_origin
+    previous_rp_id = settings.webauthn_rp_id
+    settings.public_origin = "https://calendar.example.com"
+    settings.webauthn_rp_id = "calendar.example.com"
+    monkeypatch.setattr(
+        "webauthn.verify_registration_response",
+        lambda **_kwargs: SimpleNamespace(
+            credential_id=b"credential-id",
+            credential_public_key=b"public-key",
+            sign_count=0,
+        ),
+    )
+    try:
+        session = _session()
+        request = _json_request(
+            {
+                "id": "credential",
+                "response": {
+                    "clientDataJSON": "data",
+                    "attestationObject": "data",
+                    "transports": ["internal", "hybrid"],
+                },
+            }
+        )
+        request.session["passkey_registration_challenge"] = "Y2hhbGxlbmdl"
+        request.session["passkey_registration_name"] = "Phone"
+        request.session["passkey_registration_started_at"] = int(time.time())
+
+        response = asyncio.run(verify_passkey_registration(request, session, None))
+        row = session.scalar(select(PasskeyCredential))
+
+        assert response.status_code == 200
+        assert json.loads(row.transports) == ["internal", "hybrid"]
     finally:
         settings.public_origin = previous_origin
         settings.webauthn_rp_id = previous_rp_id

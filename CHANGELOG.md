@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.15.4] - 2026-07-30
+
+
+### Bug Fixes
+
+- migrate legacy passkey tables and persist authenticator transports during registration — 迁移旧版通行密钥表并在注册时保存验证器传输方式
+
+
 ## [v1.15.3] - 2026-07-30
 
 

@@ -14,6 +14,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_event_records()
+    _migrate_passkey_credentials()
 
 
 def _migrate_event_records() -> None:
@@ -37,3 +38,16 @@ def _migrate_event_records() -> None:
             "WHERE source = 'wechat' AND bot_message_id IS NOT NULL "
             "AND (bot_message_id = '' OR bot_message_id GLOB '*[^0-9]*')"
         ))
+
+
+def _migrate_passkey_credentials() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("passkey_credentials"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("passkey_credentials")}
+    if "transports" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE passkey_credentials "
+                "ADD COLUMN transports TEXT NOT NULL DEFAULT '[]'"
+            ))

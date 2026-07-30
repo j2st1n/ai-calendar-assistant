@@ -26,6 +26,7 @@ class PasskeyCredential(Base):
     credential_id: Mapped[str] = mapped_column(Text, unique=True)
     public_key: Mapped[str] = mapped_column(Text)
     sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    transports: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
