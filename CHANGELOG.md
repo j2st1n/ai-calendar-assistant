@@ -1,5 +1,20 @@
 # Changelog
 
+## [v1.16.0] - 2026-08-03
+
+
+### Features
+
+- lazy-load optional channels, AI providers, CalDAV, QR, HTTP, and encryption SDKs to reduce idle memory usage — 延迟加载可选渠道、AI Provider、CalDAV、二维码、HTTP 与加密 SDK，降低空闲内存占用
+
+- close OpenAI and Anthropic async clients after each operation to prevent resource accumulation — 每次操作后关闭 OpenAI 与 Anthropic 异步客户端，避免资源累积
+
+
+### Bug Fixes
+
+- await Telegram runtime reload in the compatibility startup helper — 在兼容启动辅助函数中正确等待 Telegram runtime 重载
+
+
 ## [v1.15.7] - 2026-07-30
 
 

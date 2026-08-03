@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from ipaddress import ip_address
 from time import monotonic
 from urllib.parse import urlsplit
+from typing import Any
 
-import httpx
 from fastapi import Request
 from starlette.responses import JSONResponse
 
@@ -116,6 +116,21 @@ passkey_request_rate_limiter = LoginRateLimiter(limit=20)
 passkey_failure_rate_limiter = LoginRateLimiter()
 
 
+def __getattr__(name: str) -> Any:
+    if name == "httpx":
+        import httpx
+
+        return httpx
+    raise AttributeError(name)
+
+
+def _httpx() -> Any:
+    module = globals().get("httpx")
+    if module is None:
+        import httpx as module
+    return module
+
+
 def client_ip(request: Request) -> str:
     if settings.trust_proxy_headers:
         for header in ("cf-connecting-ip", "x-forwarded-for"):
@@ -140,6 +155,7 @@ async def verify_turnstile(
     payload = {"secret": secret_key, "response": token}
     if remote_ip:
         payload["remoteip"] = remote_ip
+    httpx = _httpx()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(TURNSTILE_VERIFY_URL, data=payload)

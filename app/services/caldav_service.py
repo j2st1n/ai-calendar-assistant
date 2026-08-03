@@ -3,13 +3,8 @@ import logging
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Protocol, TypedDict, cast
+from typing import Any, Protocol, TypedDict, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-import caldav
-from caldav.lib.error import AuthorizationError, DAVError
-from dateutil.parser import parse as parse_date
-from icalendar import Calendar, Event
 
 from app.ai.schemas import Recurrence
 from app.calendar.recurrence import to_rrule
@@ -81,7 +76,17 @@ class EventDataPatch(TypedDict, total=False):
 CalDAVResult = dict[str, str]
 RecurrenceData = Recurrence | dict[str, object] | None
 
-_DAVClient = cast(Callable[..., DAVClientProtocol], caldav.DAVClient)
+def _DAVClient(**kwargs: object) -> DAVClientProtocol:
+    import caldav
+
+    factory = cast(Callable[..., DAVClientProtocol], caldav.DAVClient)
+    return factory(**kwargs)
+
+
+def _caldav_errors() -> tuple[type[Exception], type[Exception]]:
+    from caldav.lib.error import AuthorizationError, DAVError
+
+    return AuthorizationError, DAVError
 
 
 class CalDAVServiceError(Exception):
@@ -100,6 +105,7 @@ class CalDAVService:
     def _test_connection_sync(self, url: str, username: str, password: str, ssl_verify: bool) -> None:
         url = url.strip()
         client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=ssl_verify, timeout=120)
+        AuthorizationError, DAVError = _caldav_errors()
         try:
             principal = client.principal()
             if not principal:
@@ -107,7 +113,8 @@ class CalDAVService:
         except AuthorizationError:
             raise CalDAVServiceError("认证失败，请检查用户名和密码。")
         except DAVError as exc:
-            raise CalDAVServiceError(f"连接失败：{exc.reason if getattr(exc, 'reason', None) else exc}")
+            reason = getattr(exc, "reason", None)
+            raise CalDAVServiceError(f"连接失败：{reason or exc}")
 
     async def list_calendars(self, url: str, username: str, password: str, ssl_verify: bool = True) -> list[dict[str, str]]:
         try:
@@ -151,6 +158,9 @@ class CalDAVService:
                            location: str | None, description: str | None,
                            reminders: Sequence[ReminderData] | None, recurrence: RecurrenceData,
                            is_all_day: bool, ssl_verify: bool) -> CalDAVResult:
+        from dateutil.parser import parse as parse_date
+        from icalendar import Alarm, Calendar, Event
+
         client = _DAVClient(url=caldav_url.strip(), username=username, password=password,
                                     ssl_verify_cert=ssl_verify, timeout=120)
         calendars = client.get_calendars()
@@ -190,7 +200,6 @@ class CalDAVService:
         rrule = to_rrule(recurrence) if recurrence else None
         if rrule:
             _ical_add(event, "rrule", rrule)
-        from icalendar import Alarm
         for r in (reminders or []):
             alarm = Alarm()
             _ical_add(alarm, "action", "DISPLAY")
@@ -309,14 +318,14 @@ def _ical_add(component: object, name: str, value: object) -> None:
 
 
 def _ical_components(calendar: object) -> Sequence[ICalComponentProtocol]:
-    from icalendar import Calendar as ICal
-
-    typed_calendar = cast(ICal, calendar)
+    typed_calendar = cast(Any, calendar)
     walk = cast(Callable[[], Sequence[object]], typed_calendar.walk)
     return cast(Sequence[ICalComponentProtocol], walk())
 
 
 def _parse_caldav_datetime(value: str, timezone_str: str | None) -> datetime:
+    from dateutil.parser import parse as parse_date
+
     dt = parse_date(value)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_zoneinfo_or_default(timezone_str))

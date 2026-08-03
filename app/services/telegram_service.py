@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 import logging
 import secrets
 import time
@@ -10,14 +11,11 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 if TYPE_CHECKING:
     from telegram import Update
     from telegram.ext import ContextTypes
+    from app.channels.message_processor import ChannelContext
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.channels.commands import handle_command
-from app.channels.message_bindings import bind_bot_message
-from app.channels.message_processor import ChannelContext
-from app.channels.message_processor import MessageProcessor
 from app.db.models import TelegramIdentity
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
@@ -52,7 +50,7 @@ async def _retry_telegram_network(
                 retry_after = exc.retry_after
                 delay = (
                     retry_after.total_seconds()
-                    if hasattr(retry_after, "total_seconds")
+                    if isinstance(retry_after, timedelta)
                     else float(retry_after)
                 )
             else:
@@ -357,6 +355,9 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.channels.message_bindings import bind_bot_message
+    from app.channels.message_processor import MessageProcessor
+
     _ = context
     if update.effective_message is None or update.effective_message.text is None or update.effective_chat is None:
         return
@@ -402,6 +403,8 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.channels.commands import handle_command
+
     _ = context
     if update.effective_message is None or update.effective_chat is None:
         return
@@ -412,6 +415,9 @@ async def _handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.channels.message_bindings import bind_bot_message
+    from app.channels.message_processor import MessageProcessor
+
     if update.effective_message is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
@@ -483,6 +489,8 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.channels.commands import handle_command
+
     if update.effective_message is None or update.effective_chat is None:
         return
     user_id = str(update.effective_user.id) if update.effective_user else ""
@@ -498,6 +506,8 @@ async def _handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.channels.commands import handle_command
+
     _ = context
     if update.effective_message is None or update.effective_chat is None:
         return
@@ -514,6 +524,8 @@ async def _handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.channels.commands import handle_command
+
     _ = context
     if update.effective_message is None:
         return
@@ -530,12 +542,16 @@ async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def _telegram_context(update: Update, user_id: str, reply_to: str | None = None) -> ChannelContext:
+    from app.channels.message_processor import ChannelContext
+
     chat_id = str(update.effective_chat.id) if update.effective_chat else None
     message_id = str(update.effective_message.message_id) if update.effective_message else None
     return ChannelContext("telegram", user_id, chat_id, message_id, reply_to)
 
 
 async def _send_telegram_replies(update: Update, session: Session, replies: list[tuple[str, int | None]]) -> None:
+    from app.channels.message_bindings import bind_bot_message
+
     if update.effective_message is None:
         return
     for response, record_id in replies:

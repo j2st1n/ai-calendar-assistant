@@ -9,11 +9,28 @@ from app.core.bootstrap import read_version
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
-from app.services.telegram_service import TelegramService
-from app.services.discord_service import DiscordService
-from app.services.wechat_service import WechatService
 from app.web.routes import router as web_router
 from app.web.security import SameOriginMiddleware, SecurityHeadersMiddleware
+
+
+async def auto_start_bots() -> None:
+    with SessionLocal() as session:
+        service = SettingsService(session)
+        tg_token = service.get("telegram_bot_token")
+        dc_token = service.get("discord_bot_token")
+        wx_token = service.get("wechat_bot_token")
+    if tg_token:
+        from app.services.telegram_service import TelegramService
+
+        _ = await TelegramService().reload_bot(tg_token)
+    if dc_token:
+        from app.services.discord_service import DiscordService
+
+        _ = await DiscordService().reload_bot(dc_token)
+    if wx_token:
+        from app.services.wechat_service import WechatService
+
+        _ = await WechatService().reload_bot(wx_token)
 
 
 def create_app() -> FastAPI:
@@ -36,18 +53,8 @@ def create_app() -> FastAPI:
     app.include_router(web_router)
 
     @app.on_event("startup")
-    async def auto_start_bots():
-        with SessionLocal() as session:
-            s = SettingsService(session)
-            tg_token = s.get("telegram_bot_token")
-            dc_token = s.get("discord_bot_token")
-            wx_token = s.get("wechat_bot_token")
-        if tg_token:
-            _ = await TelegramService().reload_bot(tg_token)
-        if dc_token:
-            _ = await DiscordService().reload_bot(dc_token)
-        if wx_token:
-            _ = await WechatService().reload_bot(wx_token)
+    async def start_configured_bots() -> None:
+        await auto_start_bots()
 
     return app
 

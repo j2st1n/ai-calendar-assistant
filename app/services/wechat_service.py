@@ -1,18 +1,41 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.channels.wechat_handler import dispatch_wechat_message
 from app.db.session import SessionLocal
-from app.integrations.ilink import ILinkAuthError, ILinkClient, ILinkError
 from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
 _wechat_runtime: "WechatBotRuntime | None" = None
+
+_LAZY_COMPONENTS = {
+    "dispatch_wechat_message": ("app.channels.wechat_handler", "dispatch_wechat_message"),
+    "ILinkAuthError": ("app.integrations.ilink", "ILinkAuthError"),
+    "ILinkClient": ("app.integrations.ilink", "ILinkClient"),
+    "ILinkError": ("app.integrations.ilink", "ILinkError"),
+}
+
+
+def _load_component(name: str) -> Any:
+    existing = globals().get(name)
+    if existing is not None:
+        return existing
+    module_name, attribute = _LAZY_COMPONENTS[name]
+    value = getattr(importlib.import_module(module_name), attribute)
+    globals()[name] = value
+    return value
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_COMPONENTS:
+        return _load_component(name)
+    raise AttributeError(name)
 
 
 def get_wechat_bot_runtime() -> "WechatBotRuntime | None":
@@ -52,6 +75,10 @@ class WechatBotRuntime:
         return "started"
 
     async def _poll_loop(self, token: str) -> None:
+        ILinkAuthError = _load_component("ILinkAuthError")
+        ILinkClient = _load_component("ILinkClient")
+        ILinkError = _load_component("ILinkError")
+        dispatch_wechat_message = _load_component("dispatch_wechat_message")
         client = ILinkClient(token)
         try:
             while self.running:

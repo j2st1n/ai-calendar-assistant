@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Generator, MutableMapping
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -9,9 +11,10 @@ import json
 from pathlib import Path
 import secrets
 import sqlite3
+import sys
 import tempfile
 import time
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 from urllib.parse import urlsplit
 import zipfile
@@ -22,21 +25,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.channels.wechat_handler import dispatch_wechat_message
 from app.core.bootstrap import read_changes, read_version
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
-from app.services.telegram_service import get_telegram_bot_runtime
-from app.services.discord_service import get_discord_bot_runtime, DiscordService
 from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
 from app.db.models import EventRecord, PasskeyCredential
 from app.db.session import SessionLocal
-from app.services.ai_provider_service import AIProviderConfig, AIProviderError, AIProviderService
-from app.services.caldav_service import CalDAVService, CalDAVServiceError
-from app.integrations.ilink import ILinkAuthError, ILinkClient, ILinkError
 from app.services.settings_service import SettingsService
-from app.services.telegram_service import TelegramService
-from app.services.wechat_service import WechatService, get_wechat_bot_runtime
 from app.web.security import (
     client_ip,
     login_rate_limiter,
@@ -45,11 +40,81 @@ from app.web.security import (
     verify_turnstile,
 )
 
+if TYPE_CHECKING:
+    from app.services.ai_provider_service import AIProviderConfig
+
 
 router = APIRouter(prefix="/console")
 templates = Jinja2Templates(directory="app/web/templates")
 template_globals = cast(MutableMapping[str, object], templates.env.globals)
 template_globals["app_version"] = read_version
+
+_LAZY_COMPONENTS = {
+    "dispatch_wechat_message": ("app.channels.wechat_handler", "dispatch_wechat_message"),
+    "get_telegram_bot_runtime": ("app.services.telegram_service", "get_telegram_bot_runtime"),
+    "get_discord_bot_runtime": ("app.services.discord_service", "get_discord_bot_runtime"),
+    "get_wechat_bot_runtime": ("app.services.wechat_service", "get_wechat_bot_runtime"),
+    "TelegramService": ("app.services.telegram_service", "TelegramService"),
+    "DiscordService": ("app.services.discord_service", "DiscordService"),
+    "WechatService": ("app.services.wechat_service", "WechatService"),
+    "AIProviderConfig": ("app.services.ai_provider_service", "AIProviderConfig"),
+    "AIProviderError": ("app.services.ai_provider_service", "AIProviderError"),
+    "AIProviderService": ("app.services.ai_provider_service", "AIProviderService"),
+    "CalDAVService": ("app.services.caldav_service", "CalDAVService"),
+    "CalDAVServiceError": ("app.services.caldav_service", "CalDAVServiceError"),
+    "ILinkAuthError": ("app.integrations.ilink", "ILinkAuthError"),
+    "ILinkClient": ("app.integrations.ilink", "ILinkClient"),
+    "ILinkError": ("app.integrations.ilink", "ILinkError"),
+}
+
+
+def _load_component(name: str) -> Any:
+    existing = globals().get(name)
+    if existing is not None:
+        return existing
+    module_name, attribute = _LAZY_COMPONENTS[name]
+    value = getattr(importlib.import_module(module_name), attribute)
+    globals()[name] = value
+    return value
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_COMPONENTS:
+        return _load_component(name)
+    raise AttributeError(name)
+
+
+def _telegram_service() -> Any:
+    return _load_component("TelegramService")()
+
+
+def _discord_service() -> Any:
+    return _load_component("DiscordService")()
+
+
+def _wechat_service() -> Any:
+    return _load_component("WechatService")()
+
+
+def _ai_components() -> tuple[Any, type[Exception], Any]:
+    return (
+        _load_component("AIProviderConfig"),
+        _load_component("AIProviderError"),
+        _load_component("AIProviderService"),
+    )
+
+
+def _caldav_components() -> tuple[Any, type[Exception]]:
+    return _load_component("CalDAVService"), _load_component("CalDAVServiceError")
+
+
+def _runtime_if_loaded(component: str) -> Any | None:
+    existing = globals().get(component)
+    if existing is not None:
+        return existing()
+    module_name, attribute = _LAZY_COMPONENTS[component]
+    module = sys.modules.get(module_name)
+    return getattr(module, attribute)() if module is not None else None
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -206,7 +271,7 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
     week_end = week_start + timedelta(days=6)
     month_start = today.replace(day=1)
 
-    def count_records(*conditions: object) -> int:
+    def count_records(*conditions: Any) -> int:
         return session.scalar(
             select(func.count()).select_from(EventRecord).where(
                 EventRecord.created_at >= today,
@@ -358,9 +423,18 @@ def status_context(session: Session) -> dict[str, object]:
         "caldav_ok": caldav_ok,
         "caldav_name": caldav_cal if caldav_ok else "",
         "caldav_source": caldav_source,
-        "tg_running": (tg_runtime := get_telegram_bot_runtime()) is not None and tg_runtime.running,
-        "dc_running": (dc_runtime := get_discord_bot_runtime()) is not None and dc_runtime.running,
-        "wechat_running": (wechat_runtime := get_wechat_bot_runtime()) is not None and wechat_runtime.running,
+        "tg_running": (
+            (tg_runtime := _runtime_if_loaded("get_telegram_bot_runtime")) is not None
+            and tg_runtime.running
+        ),
+        "dc_running": (
+            (dc_runtime := _runtime_if_loaded("get_discord_bot_runtime")) is not None
+            and dc_runtime.running
+        ),
+        "wechat_running": (
+            (wechat_runtime := _runtime_if_loaded("get_wechat_bot_runtime")) is not None
+            and wechat_runtime.running
+        ),
         "recent_events": events,
         "version": read_version(),
         "changes": read_changes(),
@@ -978,6 +1052,7 @@ async def pull_ai_models(
     provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
     base_url = _normalize_url(base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1")
     api_key = api_key or settings_service.get("ai_api_key") or ""
+    AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key)
     try:
         models = await AIProviderService().list_models(config)
@@ -1020,6 +1095,7 @@ async def pull_vision_models(
     provider_type = vision_provider_type or settings_service.get("ai_vision_provider_type") or "openai_compatible"
     base_url = _normalize_url(vision_base_url or settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1")
     api_key = vision_api_key or settings_service.get("ai_vision_api_key") or ""
+    AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key)
     try:
         models = await AIProviderService().list_models(config)
@@ -1051,6 +1127,7 @@ async def test_ai_connection(
     base_url = _normalize_url(base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1")
     api_key = api_key or settings_service.get("ai_api_key") or ""
     model = model or settings_service.get("ai_model") or ""
+    AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
     try:
         await AIProviderService().test_connection(config)
@@ -1079,6 +1156,7 @@ async def test_vision_connection(
     base_url = _normalize_url(vision_base_url or settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1")
     api_key = vision_api_key or settings_service.get("ai_vision_api_key") or ""
     model = vision_model or settings_service.get("ai_vision_model") or ""
+    AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
     try:
         await AIProviderService().test_connection(config)
@@ -1090,6 +1168,7 @@ async def test_vision_connection(
 
 
 def current_ai_provider_config(settings_service: SettingsService) -> AIProviderConfig:
+    AIProviderConfig = _load_component("AIProviderConfig")
     return AIProviderConfig(
         provider_type=settings_service.get("ai_provider_type") or "openai_compatible",
         base_url=_normalize_url(settings_service.get("ai_base_url") or "https://api.openai.com/v1"),
@@ -1232,6 +1311,7 @@ async def test_caldav_connection(
     if not url:
         set_error_flash(request, "请填写 CalDAV Server URL。")
         return redirect("/console/caldav")
+    CalDAVService, CalDAVServiceError = _caldav_components()
     try:
         await CalDAVService().test_connection(url, username, password, ssl_verify=ssl_verify)
     except CalDAVServiceError as exc:
@@ -1262,6 +1342,7 @@ async def list_caldav_calendars(
     if not url:
         set_error_flash(request, "请填写 CalDAV Server URL。")
         return redirect("/console/caldav")
+    CalDAVService, CalDAVServiceError = _caldav_components()
     try:
         calendars = await CalDAVService().list_calendars(url, username, password, ssl_verify=ssl_verify)
     except CalDAVServiceError as exc:
@@ -1295,7 +1376,7 @@ async def telegram_settings(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> HTMLResponse:
-    service = TelegramService()
+    service = _telegram_service()
     payload = service.config_summary(session)
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
@@ -1318,7 +1399,7 @@ async def update_telegram_settings(
     token = bot_token.strip() or settings_service.get("telegram_bot_token") or ""
     username = bot_username.strip() or settings_service.get("telegram_bot_username") or ""
     if token:
-        service = TelegramService()
+        service = _telegram_service()
         service.save_token(session, token, username)
         if await service.reload_bot(token):
             pass
@@ -1340,7 +1421,7 @@ async def generate_bind_link(
     if not bot_username:
         set_error_flash(request, "请先配置 Bot Username。")
         return redirect("/console/telegram")
-    service = TelegramService()
+    service = _telegram_service()
     link, token = service.generate_bind_link(bot_username)
     set_flash(request, "绑定链接已生成。")
     return redirect_with_query("/console/telegram", bind_link=link, bind_token=token)
@@ -1350,7 +1431,7 @@ async def generate_bind_link(
 async def check_bind_status(token: str = "", _: None = Depends(require_admin)):
     if not token:
         return {"status": "expired"}
-    service = TelegramService()
+    service = _telegram_service()
     return {"status": service.check_bind_status(token)}
 
 
@@ -1363,7 +1444,7 @@ async def add_telegram_user(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    service = TelegramService()
+    service = _telegram_service()
     service.add_user(session, user_id.strip(), username.strip(), display_name.strip())
     set_flash(request, f"已添加用户 {user_id}。")
     return redirect("/console/telegram")
@@ -1376,7 +1457,7 @@ async def remove_telegram_user(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    service = TelegramService()
+    service = _telegram_service()
     service.remove_user(session, user_id.strip())
     set_flash(request, f"已删除用户 {user_id}。")
     return redirect("/console/telegram")
@@ -1388,7 +1469,7 @@ async def discord_settings(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> HTMLResponse:
-    service = DiscordService()
+    service = _discord_service()
     payload = service.config_summary(session)
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
@@ -1409,7 +1490,7 @@ async def update_discord_settings(
     if not token:
         set_error_flash(request, "请填写 Bot Token。")
         return redirect("/console/discord")
-    service = DiscordService()
+    service = _discord_service()
     service.save_token(session, token, application_id.strip())
     if await service.reload_bot(token):
         pass
@@ -1462,7 +1543,7 @@ async def wechat_settings(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> HTMLResponse:
-    service = WechatService()
+    service = _wechat_service()
     payload = service.config_summary(session)
     payload["wechat_configured"] = payload["wechat_token_set"]
     payload["request"] = request
@@ -1476,7 +1557,7 @@ async def wechat_status_json(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> dict[str, object]:
-    service = WechatService()
+    service = _wechat_service()
     summary = service.config_summary(session)
     return {
         "running": summary["wechat_running"],
@@ -1496,7 +1577,7 @@ async def start_wechat_runtime(
     if not token:
         set_error_flash(request, "WeChat Bot Token 未配置，请先扫码登录。")
         return redirect("/console/wechat")
-    service = WechatService()
+    service = _wechat_service()
     __ = await service.reload_bot(token)
     set_flash(request, "WeChat Bot 已启动。")
     return redirect("/console/wechat")
@@ -1507,7 +1588,7 @@ async def stop_wechat_runtime(
     request: Request,
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    service = WechatService()
+    service = _wechat_service()
     await service.stop_bot()
     set_flash(request, "WeChat Bot 已停止。")
     return redirect("/console/wechat")
@@ -1517,6 +1598,8 @@ async def stop_wechat_runtime(
 async def fetch_wechat_qr(
     _: None = Depends(require_admin),
 ) -> dict[str, object]:
+    ILinkClient = _load_component("ILinkClient")
+    ILinkError = _load_component("ILinkError")
     try:
         client = ILinkClient()
         detail = await client.get_qrcode_detail()
@@ -1538,6 +1621,8 @@ async def wechat_qr_status(
 ) -> dict[str, object]:
     if not qrcode:
         return {"status": "expired"}
+    ILinkClient = _load_component("ILinkClient")
+    ILinkError = _load_component("ILinkError")
     try:
         client = ILinkClient()
         detail = await client.get_qrcode_status_detail(qrcode)
@@ -1567,6 +1652,8 @@ async def save_wechat_token(
     qrcode = body.get("qrcode", "")
     if not qrcode:
         return {"error": "缺少 qrcode 参数"}
+    ILinkClient = _load_component("ILinkClient")
+    ILinkError = _load_component("ILinkError")
     try:
         client = ILinkClient()
         detail = await client.get_qrcode_status_detail(qrcode)
@@ -1577,7 +1664,7 @@ async def save_wechat_token(
         settings_service.set("wechat_bot_token", token, encrypted=True)
         settings_service.set("wechat_updates_buf", None)
         settings_service.commit()
-        __ = await WechatService().reload_bot(token)
+        __ = await _wechat_service().reload_bot(token)
         return {"ok": True}
     except ILinkError as exc:
         return {"error": str(exc)}
@@ -1589,7 +1676,7 @@ async def clear_wechat_token(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
-    await WechatService().stop_bot()
+    await _wechat_service().stop_bot()
     settings_service = SettingsService(session)
     settings_service.set("wechat_bot_token", None)
     settings_service.set("wechat_updates_buf", None)
@@ -1608,6 +1695,9 @@ async def probe_wechat_messages(
     if not token:
         return {"error": "WeChat Bot Token 未配置，请先扫码登录。"}
     cursor = settings_service.get("wechat_updates_buf") or ""
+    ILinkAuthError = _load_component("ILinkAuthError")
+    ILinkClient = _load_component("ILinkClient")
+    ILinkError = _load_component("ILinkError")
     try:
         messages, new_cursor = await ILinkClient(token).get_updates(cursor)
     except ILinkAuthError:
@@ -1633,6 +1723,10 @@ async def probe_and_process_wechat_messages(
     if not token:
         return {"error": "WeChat Bot Token 未配置，请先扫码登录。"}
     cursor = settings_service.get("wechat_updates_buf") or ""
+    ILinkAuthError = _load_component("ILinkAuthError")
+    ILinkClient = _load_component("ILinkClient")
+    ILinkError = _load_component("ILinkError")
+    dispatch_wechat_message = _load_component("dispatch_wechat_message")
     client = ILinkClient(token)
     try:
         messages, new_cursor = await client.get_updates(cursor)
