@@ -253,7 +253,10 @@ def test_poll_loop_handles_ilink_error_and_continues():
         with patch("app.services.wechat_service.ILinkClient", return_value=mgr), \
              patch("app.services.wechat_service.dispatch_wechat_message") as mock_dispatch, \
              patch("app.services.wechat_service.SettingsService") as MockSettings, \
-             patch("app.services.wechat_service.SessionLocal") as MockSessionLocal:
+             patch("app.services.wechat_service.SessionLocal") as MockSessionLocal, \
+             patch("app.services.wechat_service.WECHAT_TRANSIENT_BASE_SECONDS", 0.001), \
+             patch("app.services.wechat_service.WECHAT_TRANSIENT_MAX_SECONDS", 0.001), \
+             patch("app.services.wechat_service.WECHAT_SLOW_RETRY_INTERVAL", 0.001):
 
             settings_mock = MagicMock()
             settings_mock.get.return_value = ""
@@ -264,7 +267,7 @@ def test_poll_loop_handles_ilink_error_and_continues():
             rt.running = True
             task = asyncio.get_event_loop().create_task(rt._poll_loop("tok"))
 
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.05)
             rt.running = False
             await asyncio.wait_for(task, timeout=2.0)
 
@@ -304,6 +307,85 @@ def test_poll_loop_handles_dispatch_exception():
             await asyncio.wait_for(task, timeout=2.0)
 
         assert rt.running is False
+
+    asyncio.run(_run())
+
+
+def test_poll_loop_slow_retry_auto_recovers():
+    """瞬时错误多次后进入慢重试，网络恢复后应自动回活(无需手动重启)。"""
+    call_count = 0
+
+    async def fake_get_updates(_cursor):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 8:  # 超过快速退避阈值，触发慢重试
+            raise ILinkError("network down")
+        return [{"message_id": 1, "from_user_id": "u@im.wechat", "context_token": "ctx"}], "cursor"
+
+    async def _run():
+        mgr = MagicMock()
+        mgr.get_updates = AsyncMock(side_effect=fake_get_updates)
+
+        rt = WechatBotRuntime(poll_interval=0.001)
+
+        with patch("app.services.wechat_service.ILinkClient", return_value=mgr), \
+             patch("app.services.wechat_service.dispatch_wechat_message") as mock_dispatch, \
+             patch("app.services.wechat_service.SettingsService") as MockSettings, \
+             patch("app.services.wechat_service.SessionLocal") as MockSessionLocal, \
+             patch("app.services.wechat_service.WECHAT_TRANSIENT_BASE_SECONDS", 0.001), \
+             patch("app.services.wechat_service.WECHAT_TRANSIENT_MAX_SECONDS", 0.001), \
+             patch("app.services.wechat_service.WECHAT_SLOW_RETRY_INTERVAL", 0.002):
+
+            settings_mock = MagicMock()
+            settings_mock.get.return_value = ""
+            MockSettings.return_value = settings_mock
+            MockSessionLocal.return_value = MagicMock()
+            mock_dispatch.return_value = []
+
+            rt.running = True
+            task = asyncio.get_event_loop().create_task(rt._poll_loop("tok"))
+
+            await asyncio.sleep(0.15)
+            rt.running = False
+            await asyncio.wait_for(task, timeout=2.0)
+
+        # 慢重试后应自动恢复并 dispatch；错误文本保留但 running 结束。
+        assert mock_dispatch.awaited
+        assert call_count > 8
+        assert "network down" in rt.last_error
+
+    asyncio.run(_run())
+
+
+def test_poll_loop_auth_limited_retry_then_needs_relogin():
+    """token 失效(401/403)有限重试后仍失败 → 判定需重新扫码并停止。"""
+    async def fake_get_updates(_cursor):
+        raise ILinkAuthError("token expired")
+
+    async def _run():
+        mgr = MagicMock()
+        mgr.get_updates = AsyncMock(side_effect=fake_get_updates)
+
+        rt = WechatBotRuntime(poll_interval=0.0)
+
+        with patch("app.services.wechat_service.ILinkClient", return_value=mgr), \
+             patch("app.services.wechat_service.SettingsService") as MockSettings, \
+             patch("app.services.wechat_service.SessionLocal") as MockSessionLocal, \
+             patch("app.services.wechat_service.WECHAT_AUTH_RETRY_ATTEMPTS", 1), \
+             patch("app.services.wechat_service.WECHAT_AUTH_RETRY_BASE_SECONDS", 0.001):
+
+            settings_mock = MagicMock()
+            settings_mock.get.return_value = ""
+            MockSettings.return_value = settings_mock
+            MockSessionLocal.return_value = MagicMock()
+
+            rt.running = True
+            task = asyncio.get_event_loop().create_task(rt._poll_loop("tok"))
+            await asyncio.wait_for(task, timeout=2.0)
+
+        assert rt.running is False
+        assert rt._needs_relogin is True
+        assert "token expired" in rt.last_error
 
     asyncio.run(_run())
 
