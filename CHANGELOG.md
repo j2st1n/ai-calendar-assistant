@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.16.1] - 2026-08-15
+
+
+### Bug Fixes
+
+- self-heal WeChat bot polling: retry auth (401/403) before declaring needs re-login instead of permanent offline — 微信 bot 鉴权失败先有限重试再判需重扫，避免一次 401/403 就永久离线
+
+- handle network-layer errors (httpx.HTTPError) that were previously uncaught and caused permanent offline on transient network jitter — 捕获此前未处理的 httpx 网络异常，避免网络抖动导致永久离线
+
+- exponential backoff on transient ILink errors, falling back to a 30-second slow-retry loop that auto-recovers when the network returns — 瞬时错误指数退避，用尽后转 30s 慢重试自动回活，网络恢复无需手动重启
+
+- surface `needs_relogin` / `last_error_ts` in the WeChat status and add structured offline logging — 控制台暴露需重新扫码状态与最近错误时间，补全离线结构化日志
+
+
 ## [v1.16.0] - 2026-08-03
 
 
