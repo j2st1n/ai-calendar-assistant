@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.17.0] - 2026-08-16
+
+
+### Features
+
+- align WeChat long polling with Tencent's official reference behavior: continuous polling, server-directed timeouts, 2s retries and 30s backoff — 微信长轮询与腾讯官方参考实现对齐，采用连续轮询、服务端超时、2 秒重试与 30 秒退避
+
+- expose separate task and connection states with poll health, retry, cooldown and structured error details — 分离展示任务存活与微信连接状态，补充轮询健康度、重试、冷却和结构化错误信息
+
+- declare `ai-calendar-assistant/1.17.0` through the official `bot_agent` field for backend attribution — 通过官方 `bot_agent` 字段声明客户端身份，便于后端归因
+
+
+### Bug Fixes
+
+- stop treating HTTP 401/403 as proof that a QR re-login is required; only business code `-14` starts the official one-hour session cooldown — 不再将 HTTP 401/403 误判为必须重新扫码，仅业务码 `-14` 触发官方一小时会话冷却
+
+- reuse one HTTP client per runtime, treat long-poll read timeouts as normal empty polls, and cancel in-flight polls during stop/reload — 每个运行时复用一个 HTTP 客户端，将长轮询读取超时视为正常空轮询，并在停止或重载时立即取消请求
+
+- prevent diagnostic endpoints from starting a second poller while the WeChat bot is running — 微信 Bot 运行时禁止诊断接口启动第二个轮询任务
+
 ## [v1.16.1] - 2026-08-15
 
 
