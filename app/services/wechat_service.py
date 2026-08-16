@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
+import inspect
 import logging
 import time
+from dataclasses import asdict, dataclass
+from enum import Enum
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -13,24 +17,19 @@ from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
-_wechat_runtime: "WechatBotRuntime | None" = None
+_wechat_runtime: WechatBotRuntime | None = None
 
-# 轮询自愈/退避参数（风格对齐 telegram_service::_retry_telegram_network）。
-# token 失效(401/403)有限重试：排除微信网关瞬时 401 抖动；仍失败判 token 真失效。
-WECHAT_AUTH_RETRY_ATTEMPTS = 3
-WECHAT_AUTH_RETRY_BASE_SECONDS = 5.0
-# 瞬时错误(网络异常/一般 ILinkError)快速指数退避。
-WECHAT_TRANSIENT_RETRY_ATTEMPTS = 5
-WECHAT_TRANSIENT_BASE_SECONDS = 2.0
-WECHAT_TRANSIENT_MAX_SECONDS = 30.0
-# 瞬时错误快速退避用尽后，转入慢重试自动回活（网络恢复后无需手动重启）。
-WECHAT_SLOW_RETRY_INTERVAL = 30.0
+# Tencent's official openclaw-weixin monitor cadence.
+WECHAT_MAX_CONSECUTIVE_FAILURES = 3
+WECHAT_RETRY_DELAY_SECONDS = 2.0
+WECHAT_BACKOFF_DELAY_SECONDS = 30.0
+WECHAT_DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000
 
 _LAZY_COMPONENTS = {
     "dispatch_wechat_message": ("app.channels.wechat_handler", "dispatch_wechat_message"),
-    "ILinkAuthError": ("app.integrations.ilink", "ILinkAuthError"),
     "ILinkClient": ("app.integrations.ilink", "ILinkClient"),
     "ILinkError": ("app.integrations.ilink", "ILinkError"),
+    "ILinkStaleTokenError": ("app.integrations.ilink", "ILinkStaleTokenError"),
 }
 
 
@@ -50,161 +49,279 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(name)
 
 
-def get_wechat_bot_runtime() -> "WechatBotRuntime | None":
-    global _wechat_runtime
+def get_wechat_bot_runtime() -> WechatBotRuntime | None:
     return _wechat_runtime
 
 
-class WechatBotRuntime:
-    _task: asyncio.Task[None] | None
-    running: bool
-    _last_error: str
-    _poll_interval: float
-    _needs_relogin: bool
-    _last_error_ts: float | None
+class WechatRuntimeState(str, Enum):
+    STOPPED = "stopped"
+    STARTING = "starting"
+    POLLING = "polling"
+    RETRYING = "retrying"
+    PAUSED = "paused"
+    STOPPING = "stopping"
+    CRASHED = "crashed"
 
-    def __init__(self, poll_interval: float = 5.0) -> None:
-        self._task = None
-        self.running = False
-        self._last_error = ""
-        self._needs_relogin = False
-        self._last_error_ts = None
+
+STATE_LABELS: dict[WechatRuntimeState, str] = {
+    WechatRuntimeState.STOPPED: "已停止",
+    WechatRuntimeState.STARTING: "启动中",
+    WechatRuntimeState.POLLING: "在线",
+    WechatRuntimeState.RETRYING: "异常，自动恢复中",
+    WechatRuntimeState.PAUSED: "会话冷却中",
+    WechatRuntimeState.STOPPING: "正在停止",
+    WechatRuntimeState.CRASHED: "运行任务异常",
+}
+
+
+@dataclass(frozen=True)
+class WechatErrorInfo:
+    category: str
+    message: str
+    at: float
+    http_status: int | None = None
+    ret: int | None = None
+    errcode: int | None = None
+    code: str = ""
+
+
+@dataclass(frozen=True)
+class WechatRuntimeSnapshot:
+    state: str
+    state_label: str
+    task_alive: bool
+    consecutive_failures: int
+    last_poll_success_at: float | None
+    last_message_at: float | None
+    next_retry_at: float | None
+    pause_until: float | None
+    current_error: dict[str, object] | None
+    last_error: dict[str, object] | None
+
+
+def _error_info(exc: Exception, *, category: str | None = None) -> WechatErrorInfo:
+    inferred = category or str(getattr(exc, "category", "") or "")
+    if not inferred:
+        if hasattr(exc, "status_code"):
+            inferred = "http"
+        elif hasattr(exc, "ret") or hasattr(exc, "errcode"):
+            inferred = "protocol"
+        else:
+            inferred = "internal"
+    return WechatErrorInfo(
+        category=inferred,
+        message=str(exc),
+        at=time.time(),
+        http_status=getattr(exc, "status_code", None),
+        ret=getattr(exc, "ret", None),
+        errcode=getattr(exc, "errcode", None),
+        code=str(getattr(exc, "code", "") or ""),
+    )
+
+
+class WechatBotRuntime:
+    def __init__(self, poll_interval: float = 0.0) -> None:
+        # poll_interval is retained only as a deterministic test hook. Production
+        # uses zero: a completed long poll is followed immediately by the next.
         self._poll_interval = poll_interval
+        self._task: asyncio.Task[None] | None = None
+        self._lifecycle_lock = asyncio.Lock()
+        self.running = False
+        self.state = WechatRuntimeState.STOPPED
+        self.consecutive_failures = 0
+        self.last_poll_success_at: float | None = None
+        self.last_message_at: float | None = None
+        self.next_retry_at: float | None = None
+        self.pause_until: float | None = None
+        self.current_error: WechatErrorInfo | None = None
+        self.last_error_info: WechatErrorInfo | None = None
 
     @property
     def last_error(self) -> str:
-        return self._last_error
+        error = self.current_error or self.last_error_info
+        return error.message if error else ""
+
+    @property
+    def task_alive(self) -> bool:
+        return bool(self.running and self._task is not None and not self._task.done())
+
+    def snapshot(self) -> WechatRuntimeSnapshot:
+        state = self.state
+        if self.running and self._task is not None and self._task.done():
+            state = WechatRuntimeState.CRASHED
+        return WechatRuntimeSnapshot(
+            state=state.value,
+            state_label=STATE_LABELS[state],
+            task_alive=self.task_alive,
+            consecutive_failures=self.consecutive_failures,
+            last_poll_success_at=self.last_poll_success_at,
+            last_message_at=self.last_message_at,
+            next_retry_at=self.next_retry_at,
+            pause_until=self.pause_until,
+            current_error=asdict(self.current_error) if self.current_error else None,
+            last_error=asdict(self.last_error_info) if self.last_error_info else None,
+        )
 
     async def reload(self, token: str) -> str:
-        old_task = self._task
-        if old_task is not None and not old_task.done():
-            _ = old_task.cancel()
-            await asyncio.sleep(1.5)
-
-        self._task = None
-        self.running = False
-        self._last_error = ""
-        self._last_error_ts = None
-        self._needs_relogin = False
-
-        self.running = True
-        loop = asyncio.get_running_loop()
-        self._task = loop.create_task(self._poll_loop(token))
+        async with self._lifecycle_lock:
+            await self._stop_locked()
+            self.consecutive_failures = 0
+            self.last_poll_success_at = None
+            self.last_message_at = None
+            self.next_retry_at = None
+            self.pause_until = None
+            self.current_error = None
+            self.last_error_info = None
+            self.running = True
+            self.state = WechatRuntimeState.STARTING
+            self._task = asyncio.create_task(self._poll_loop(token))
         return "started"
 
+    async def stop(self) -> None:
+        async with self._lifecycle_lock:
+            await self._stop_locked()
+
+    async def _stop_locked(self) -> None:
+        task = self._task
+        if task is not None and not task.done():
+            self.state = WechatRuntimeState.STOPPING
+            self.running = False
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._task = None
+        self.running = False
+        self.state = WechatRuntimeState.STOPPED
+        self.next_retry_at = None
+
+    def _record_failure(self, exc: Exception, *, category: str | None = None) -> None:
+        info = _error_info(exc, category=category)
+        self.current_error = info
+        self.last_error_info = info
+
+    async def _sleep(self, seconds: float) -> None:
+        self.next_retry_at = time.time() + seconds
+        try:
+            await asyncio.sleep(seconds)
+        finally:
+            self.next_retry_at = None
+
     async def _poll_loop(self, token: str) -> None:
-        ILinkAuthError = _load_component("ILinkAuthError")
         ILinkClient = _load_component("ILinkClient")
         ILinkError = _load_component("ILinkError")
+        ILinkStaleTokenError = _load_component("ILinkStaleTokenError")
         dispatch_wechat_message = _load_component("dispatch_wechat_message")
-        import httpx as _httpx  # 用于捕获网络层异常，保持 lazy import
 
         client = ILinkClient(token)
-        transient_fails = 0  # 连续瞬时失败计数：快速退避用尽后转入慢重试
-        auth_fails = 0  # 401/403 鉴权连续失败次数
-
-        def _record_error(exc: Exception, /) -> None:
-            self._last_error = str(exc)
-            self._last_error_ts = time.time()
-
-        def _record_success() -> None:
-            # 保留最近一次错误文本/时间供诊断（控制台可结合 running 判断时效），
-            # 仅清除"需重新扫码"这类需人工处理的强信号。
-            self._needs_relogin = False
-
+        next_timeout_ms = WECHAT_DEFAULT_LONG_POLL_TIMEOUT_MS
+        cursor = ""
         try:
+            with SessionLocal() as session:
+                cursor = SettingsService(session).get("wechat_updates_buf") or ""
+            self.state = WechatRuntimeState.POLLING
+
             while self.running:
                 try:
-                    with SessionLocal() as session:
-                        settings_service = SettingsService(session)
-                        cursor = settings_service.get("wechat_updates_buf") or ""
-                    messages, new_cursor = await client.get_updates(cursor)
-                except ILinkAuthError as exc:
-                    # 鉴权失败：有限重试排除瞬时 401/403，仍失败判 token 真失效需重扫。
-                    auth_fails += 1
-                    _record_error(exc)
-                    if auth_fails >= WECHAT_AUTH_RETRY_ATTEMPTS:
-                        self._needs_relogin = True
-                        logger.error(
-                            "iLink auth failed %d consecutive times, bot offline, needs re-login: %s",
-                            auth_fails,
-                            exc,
-                        )
-                        self.running = False
-                        return
-                    delay = WECHAT_AUTH_RETRY_BASE_SECONDS * auth_fails
-                    logger.warning(
-                        "iLink auth transient attempt=%d/%d delay=%.1fs error=%s",
-                        auth_fails,
-                        WECHAT_AUTH_RETRY_ATTEMPTS,
-                        delay,
-                        exc,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                except (ILinkError, _httpx.HTTPError) as exc:
-                    # 瞬时错误：快速指数退避，用尽后转慢重试自动回活，恢复后无需手动重启。
-                    transient_fails += 1
-                    _record_error(exc)
-                    if transient_fails >= WECHAT_TRANSIENT_RETRY_ATTEMPTS:
-                        logger.error(
-                            "iLink transient failed %d consecutive times, entering slow retry every %.0fs: %s",
-                            transient_fails,
-                            WECHAT_SLOW_RETRY_INTERVAL,
-                            exc,
-                        )
-                        await asyncio.sleep(WECHAT_SLOW_RETRY_INTERVAL)
-                        continue
-                    delay = min(
-                        WECHAT_TRANSIENT_BASE_SECONDS * (2 ** (transient_fails - 1)),
-                        WECHAT_TRANSIENT_MAX_SECONDS,
-                    )
-                    logger.warning(
-                        "iLink poll transient error attempt=%d/%d delay=%.1fs error_type=%s error=%s",
-                        transient_fails,
-                        WECHAT_TRANSIENT_RETRY_ATTEMPTS,
-                        delay,
-                        type(exc).__name__,
-                        exc,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
+                    result = await client.get_updates(cursor, timeout_ms=next_timeout_ms)
+                    # Compatibility for local test doubles and old integrations.
+                    if isinstance(result, tuple):
+                        messages, new_cursor = result
+                        suggested_timeout = None
+                    else:
+                        messages = result.messages
+                        new_cursor = result.cursor
+                        suggested_timeout = result.next_timeout_ms
 
-                # 单次 get_updates 成功：重置错误计数（回到快速退避阈值）。
-                transient_fails = 0
-                auth_fails = 0
-                _record_success()
+                    if suggested_timeout is not None and suggested_timeout > 0:
+                        next_timeout_ms = suggested_timeout
 
-                for message in messages:
-                    if not isinstance(message, dict):
-                        continue
-                    try:
+                    if new_cursor and new_cursor != cursor:
                         with SessionLocal() as session:
-                            _ = await dispatch_wechat_message(message, session, client)
-                    except Exception:
-                        logger.exception("Error dispatching wechat message")
+                            settings_service = SettingsService(session)
+                            settings_service.set("wechat_updates_buf", new_cursor)
+                            settings_service.commit()
+                        cursor = new_cursor
 
-                if new_cursor != cursor:
-                    with SessionLocal() as session:
-                        settings_service = SettingsService(session)
-                        settings_service.set("wechat_updates_buf", new_cursor)
-                        settings_service.commit()
+                    self.consecutive_failures = 0
+                    self.current_error = None
+                    self.pause_until = None
+                    self.last_poll_success_at = time.time()
+                    self.state = WechatRuntimeState.POLLING
 
-                await asyncio.sleep(self._poll_interval)
+                    for message in messages:
+                        if not isinstance(message, dict):
+                            continue
+                        self.last_message_at = time.time()
+                        try:
+                            with SessionLocal() as session:
+                                await dispatch_wechat_message(message, session, client)
+                        except Exception:
+                            logger.exception("Error dispatching WeChat message")
+
+                    if self._poll_interval > 0:
+                        await asyncio.sleep(self._poll_interval)
+
+                except ILinkStaleTokenError as exc:
+                    self.consecutive_failures = 0
+                    self._record_failure(exc, category="stale_token")
+                    self.state = WechatRuntimeState.PAUSED
+                    self.pause_until = client.pause_until
+                    pause_seconds = max(0.0, (self.pause_until or time.time()) - time.time())
+                    logger.warning(
+                        "iLink stale token signal; pausing account requests for %.0fs ret=%s errcode=%s",
+                        pause_seconds,
+                        getattr(exc, "ret", None),
+                        getattr(exc, "errcode", None),
+                    )
+                    await self._sleep(pause_seconds)
+                    self.pause_until = None
+                    continue
+                except ILinkError as exc:
+                    await self._handle_retryable_error(exc)
+                except Exception as exc:
+                    # Match the official monitor: an unexpected iteration failure
+                    # is observable and backed off, but does not become a QR signal.
+                    logger.exception("Unexpected WeChat poll iteration failure")
+                    await self._handle_retryable_error(exc, category="internal")
 
         except asyncio.CancelledError:
-            self.running = False
+            raise
         except Exception as exc:
+            self._record_failure(exc, category="internal")
+            self.state = WechatRuntimeState.CRASHED
+            logger.exception("WeChat bot runtime crashed")
+        finally:
+            with contextlib.suppress(Exception):
+                await client.aclose()
+            if self.state not in (WechatRuntimeState.CRASHED, WechatRuntimeState.STOPPING):
+                self.state = WechatRuntimeState.STOPPED
             self.running = False
-            self._last_error = str(exc)
-            self._last_error_ts = time.time()
-            logger.exception("Wechat bot runtime stopped unexpectedly")
 
-    def stop(self) -> None:
-        self.running = False
-        if self._task:
-            _ = self._task.cancel()
-            self._task = None
+    async def _handle_retryable_error(self, exc: Exception, *, category: str | None = None) -> None:
+        self.consecutive_failures += 1
+        self._record_failure(exc, category=category)
+        self.state = WechatRuntimeState.RETRYING
+        if self.consecutive_failures >= WECHAT_MAX_CONSECUTIVE_FAILURES:
+            delay = WECHAT_BACKOFF_DELAY_SECONDS
+            logger.error(
+                "iLink poll failed %d consecutive times; backing off %.0fs category=%s error=%s",
+                self.consecutive_failures,
+                delay,
+                self.current_error.category if self.current_error else "unknown",
+                exc,
+            )
+            self.consecutive_failures = 0
+        else:
+            delay = WECHAT_RETRY_DELAY_SECONDS
+            logger.warning(
+                "iLink poll failed attempt=%d/%d retry_in=%.0fs category=%s error=%s",
+                self.consecutive_failures,
+                WECHAT_MAX_CONSECUTIVE_FAILURES,
+                delay,
+                self.current_error.category if self.current_error else "unknown",
+                exc,
+            )
+        await self._sleep(delay)
 
 
 class WechatService:
@@ -212,18 +329,39 @@ class WechatService:
         settings_service = SettingsService(session)
         token = settings_service.get("wechat_bot_token")
         token_masked = settings_service.get_masked("wechat_bot_token")
-        bot_running = _wechat_runtime is not None and _wechat_runtime.running
-        bot_error = _wechat_runtime.last_error if _wechat_runtime else ""
-        bot_needs_relogin = _wechat_runtime._needs_relogin if _wechat_runtime else False
-        bot_last_error_ts = _wechat_runtime._last_error_ts if _wechat_runtime else None
         cursor = settings_service.get("wechat_updates_buf") or ""
+        if _wechat_runtime is None:
+            snapshot = WechatRuntimeSnapshot(
+                state=WechatRuntimeState.STOPPED.value,
+                state_label=STATE_LABELS[WechatRuntimeState.STOPPED],
+                task_alive=False,
+                consecutive_failures=0,
+                last_poll_success_at=None,
+                last_message_at=None,
+                next_retry_at=None,
+                pause_until=None,
+                current_error=None,
+                last_error=None,
+            )
+        else:
+            snapshot = _wechat_runtime.snapshot()
+
+        current_error = snapshot.current_error or {}
         return {
             "wechat_token_set": bool(token),
             "wechat_token_masked": token_masked,
-            "wechat_running": bot_running,
-            "wechat_error": bot_error,
-            "wechat_needs_relogin": bot_needs_relogin,
-            "wechat_last_error_ts": bot_last_error_ts,
+            "wechat_running": snapshot.task_alive,
+            "wechat_task_alive": snapshot.task_alive,
+            "wechat_state": snapshot.state,
+            "wechat_state_label": snapshot.state_label,
+            "wechat_error": str(current_error.get("message") or ""),
+            "wechat_current_error": snapshot.current_error,
+            "wechat_last_error": snapshot.last_error,
+            "wechat_consecutive_failures": snapshot.consecutive_failures,
+            "wechat_last_poll_success_at": snapshot.last_poll_success_at,
+            "wechat_last_message_at": snapshot.last_message_at,
+            "wechat_next_retry_at": snapshot.next_retry_at,
+            "wechat_pause_until": snapshot.pause_until,
             "wechat_cursor_length": len(cursor),
         }
 
@@ -241,5 +379,7 @@ class WechatService:
     async def stop_bot(self) -> None:
         global _wechat_runtime
         if _wechat_runtime is not None:
-            _wechat_runtime.stop()
+            result = _wechat_runtime.stop()
+            if inspect.isawaitable(result):
+                await result
             _wechat_runtime = None

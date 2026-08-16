@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import base64
 import hashlib
 import importlib
+import inspect
 from io import BytesIO
 import json
 from pathlib import Path
@@ -62,7 +63,6 @@ _LAZY_COMPONENTS = {
     "AIProviderService": ("app.services.ai_provider_service", "AIProviderService"),
     "CalDAVService": ("app.services.caldav_service", "CalDAVService"),
     "CalDAVServiceError": ("app.services.caldav_service", "CalDAVServiceError"),
-    "ILinkAuthError": ("app.integrations.ilink", "ILinkAuthError"),
     "ILinkClient": ("app.integrations.ilink", "ILinkClient"),
     "ILinkError": ("app.integrations.ilink", "ILinkError"),
 }
@@ -94,6 +94,32 @@ def _discord_service() -> Any:
 
 def _wechat_service() -> Any:
     return _load_component("WechatService")()
+
+
+async def _close_ilink_client(client: object) -> None:
+    close = getattr(client, "aclose", None)
+    if not callable(close):
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
+
+
+def _unpack_ilink_updates(result: object) -> tuple[list[dict[str, object]], str]:
+    if isinstance(result, tuple):
+        messages, cursor = result
+    else:
+        messages = getattr(result, "messages", [])
+        cursor = getattr(result, "cursor", "")
+    typed_messages = [item for item in messages if isinstance(item, dict)]
+    return cast(list[dict[str, object]], typed_messages), str(cursor or "")
+
+
+def _wechat_probe_is_blocked() -> bool:
+    runtime = _load_component("get_wechat_bot_runtime")()
+    if runtime is None:
+        return False
+    return bool(getattr(runtime, "task_alive", getattr(runtime, "running", False)))
 
 
 def _ai_components() -> tuple[Any, type[Exception], Any]:
@@ -1545,6 +1571,16 @@ async def wechat_settings(
 ) -> HTMLResponse:
     service = _wechat_service()
     payload = service.config_summary(session)
+    payload.setdefault("wechat_task_alive", payload.get("wechat_running", False))
+    payload.setdefault("wechat_state", "polling" if payload["wechat_task_alive"] else "stopped")
+    payload.setdefault("wechat_state_label", "在线" if payload["wechat_task_alive"] else "已停止")
+    payload.setdefault("wechat_current_error", {"message": payload.get("wechat_error", "")} if payload.get("wechat_error") else None)
+    payload.setdefault("wechat_last_error", None)
+    payload.setdefault("wechat_consecutive_failures", 0)
+    payload.setdefault("wechat_last_poll_success_at", None)
+    payload.setdefault("wechat_last_message_at", None)
+    payload.setdefault("wechat_next_retry_at", None)
+    payload.setdefault("wechat_pause_until", None)
     payload["wechat_configured"] = payload["wechat_token_set"]
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
@@ -1559,9 +1595,22 @@ async def wechat_status_json(
 ) -> dict[str, object]:
     service = _wechat_service()
     summary = service.config_summary(session)
+    task_alive = bool(summary.get("wechat_task_alive", summary.get("wechat_running", False)))
+    state = str(summary.get("wechat_state") or ("polling" if task_alive else "stopped"))
+    legacy_error = str(summary.get("wechat_error") or "")
     return {
+        "configured": summary["wechat_token_set"],
         "running": summary["wechat_running"],
-        "last_error": summary["wechat_error"],
+        "task_alive": task_alive,
+        "state": state,
+        "state_label": summary.get("wechat_state_label") or ("在线" if task_alive else "已停止"),
+        "consecutive_failures": summary.get("wechat_consecutive_failures", 0),
+        "last_poll_success_at": summary.get("wechat_last_poll_success_at"),
+        "last_message_at": summary.get("wechat_last_message_at"),
+        "next_retry_at": summary.get("wechat_next_retry_at"),
+        "pause_until": summary.get("wechat_pause_until"),
+        "current_error": summary.get("wechat_current_error") or ({"message": legacy_error} if legacy_error else None),
+        "last_error": summary.get("wechat_last_error", legacy_error),
         "cursor_length": summary["wechat_cursor_length"],
     }
 
@@ -1600,8 +1649,8 @@ async def fetch_wechat_qr(
 ) -> dict[str, object]:
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
+    client = ILinkClient()
     try:
-        client = ILinkClient()
         detail = await client.get_qrcode_detail()
         qr_token = detail.get("qrcode")
         qr_payload = detail.get("qrcode_img_content") or detail.get("qrcode_url") or detail.get("url")
@@ -1612,6 +1661,8 @@ async def fetch_wechat_qr(
         return {"qr_payload": qr_payload, "qrcode": qr_token, "qr_image": _qr_image_data_url(qr_payload)}
     except ILinkError as exc:
         return {"error": str(exc)}
+    finally:
+        await _close_ilink_client(client)
 
 
 @router.get("/wechat/qr/status")
@@ -1623,8 +1674,8 @@ async def wechat_qr_status(
         return {"status": "expired"}
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
+    client = ILinkClient()
     try:
-        client = ILinkClient()
         detail = await client.get_qrcode_status_detail(qrcode)
         status = detail.get("status") or detail.get("qrcode_status") or detail.get("state") or "unknown"
         if isinstance(status, str):
@@ -1637,6 +1688,8 @@ async def wechat_qr_status(
         return {"status": status_str, "has_token": has_token, "qrcode": qrcode}
     except ILinkError:
         return {"status": "unknown", "qrcode": qrcode}
+    finally:
+        await _close_ilink_client(client)
 
 
 @router.post("/wechat/save")
@@ -1654,8 +1707,8 @@ async def save_wechat_token(
         return {"error": "缺少 qrcode 参数"}
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
+    client = ILinkClient()
     try:
-        client = ILinkClient()
         detail = await client.get_qrcode_status_detail(qrcode)
         token = detail.get("bot_token") or detail.get("token") or ""
         if not token:
@@ -1668,6 +1721,8 @@ async def save_wechat_token(
         return {"ok": True}
     except ILinkError as exc:
         return {"error": str(exc)}
+    finally:
+        await _close_ilink_client(client)
 
 
 @router.post("/wechat/clear")
@@ -1690,20 +1745,23 @@ async def probe_wechat_messages(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> dict[str, object]:
+    if _wechat_probe_is_blocked():
+        return {"error": "WeChat Bot 运行中，不能启动第二个消息轮询。"}
     settings_service = SettingsService(session)
     token = settings_service.get("wechat_bot_token") or ""
     if not token:
         return {"error": "WeChat Bot Token 未配置，请先扫码登录。"}
     cursor = settings_service.get("wechat_updates_buf") or ""
-    ILinkAuthError = _load_component("ILinkAuthError")
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
+    client = ILinkClient(token)
     try:
-        messages, new_cursor = await ILinkClient(token).get_updates(cursor)
-    except ILinkAuthError:
-        return {"error": "Token 无效或已过期，请重新扫码。"}
+        result = await client.get_updates(cursor)
+        messages, new_cursor = _unpack_ilink_updates(result)
     except ILinkError as exc:
         return {"error": str(exc)}
+    finally:
+        await _close_ilink_client(client)
     settings_service.set("wechat_updates_buf", new_cursor)
     settings_service.commit()
     return {
@@ -1718,36 +1776,40 @@ async def probe_and_process_wechat_messages(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> dict[str, object]:
+    if _wechat_probe_is_blocked():
+        return {"error": "WeChat Bot 运行中，不能启动第二个消息轮询。"}
     settings_service = SettingsService(session)
     token = settings_service.get("wechat_bot_token") or ""
     if not token:
         return {"error": "WeChat Bot Token 未配置，请先扫码登录。"}
     cursor = settings_service.get("wechat_updates_buf") or ""
-    ILinkAuthError = _load_component("ILinkAuthError")
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
     dispatch_wechat_message = _load_component("dispatch_wechat_message")
     client = ILinkClient(token)
     try:
-        messages, new_cursor = await client.get_updates(cursor)
-    except ILinkAuthError:
-        return {"error": "Token 无效或已过期，请重新扫码。"}
+        result = await client.get_updates(cursor)
+        messages, new_cursor = _unpack_ilink_updates(result)
     except ILinkError as exc:
+        await _close_ilink_client(client)
         return {"error": str(exc)}
 
-    processed: list[dict[str, object]] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        replies = await dispatch_wechat_message(cast(dict[str, object], message), session, client)
-        processed.append({
-            "message_id": str(message.get("message_id") or ""),
-            "from_user_id": str(message.get("from_user_id") or ""),
-            "replies": replies,
-        })
-    settings_service.set("wechat_updates_buf", new_cursor)
-    settings_service.commit()
-    return {"processed": processed, "cursor": new_cursor, "count": len(processed)}
+    try:
+        processed: list[dict[str, object]] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            replies = await dispatch_wechat_message(cast(dict[str, object], message), session, client)
+            processed.append({
+                "message_id": str(message.get("message_id") or ""),
+                "from_user_id": str(message.get("from_user_id") or ""),
+                "replies": replies,
+            })
+        settings_service.set("wechat_updates_buf", new_cursor)
+        settings_service.commit()
+        return {"processed": processed, "cursor": new_cursor, "count": len(processed)}
+    finally:
+        await _close_ilink_client(client)
 
 
 @router.post("/wechat/probe/clear-cursor")

@@ -19,12 +19,38 @@
   </div>
   {% if wechat_configured %}
   <div class="row" style="gap:8px;margin-top:10px;">
-    <span class="muted">运行状态：</span>
-    {% if wechat_running %}
+    <span class="muted">Bot 任务：</span>
+    {% if wechat_task_alive %}
     <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
     {% else %}
     <span class="status-badge"><span class="dot dot-error"></span>已停止</span>
     {% endif %}
+  </div>
+  <div class="row" style="gap:8px;margin-top:6px;">
+    <span class="muted">微信连接：</span>
+    <span id="wechat-state" class="status-badge">
+      <span class="dot {% if wechat_state == 'polling' %}dot-success{% elif wechat_state in ('retrying', 'paused', 'starting') %}dot-warning{% else %}dot-error{% endif %}"></span>{{ wechat_state_label }}
+    </span>
+  </div>
+  <div id="wechat-last-poll-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_last_poll_success_at %}display:none;{% endif %}">
+    <span class="muted">最后成功轮询：</span>
+    <span id="wechat-last-poll" data-ts="{{ wechat_last_poll_success_at or '' }}" style="font-size:12px;"></span>
+  </div>
+  <div id="wechat-last-message-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_last_message_at %}display:none;{% endif %}">
+    <span class="muted">最后收到消息：</span>
+    <span id="wechat-last-message" data-ts="{{ wechat_last_message_at or '' }}" style="font-size:12px;"></span>
+  </div>
+  <div id="wechat-retry-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_next_retry_at %}display:none;{% endif %}">
+    <span class="muted">下次重试：</span>
+    <span id="wechat-next-retry" data-ts="{{ wechat_next_retry_at or '' }}" style="font-size:12px;"></span>
+  </div>
+  <div id="wechat-pause-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_pause_until %}display:none;{% endif %}">
+    <span class="muted">冷却结束：</span>
+    <span id="wechat-pause-until" data-ts="{{ wechat_pause_until or '' }}" style="font-size:12px;"></span>
+  </div>
+  <div id="wechat-failures-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_consecutive_failures %}display:none;{% endif %}">
+    <span class="muted">连续失败：</span>
+    <span id="wechat-failures" style="font-size:12px;">{{ wechat_consecutive_failures }}</span>
   </div>
   {% if wechat_cursor_length is defined and wechat_cursor_length %}
   <div class="row" style="gap:8px;margin-top:6px;">
@@ -32,14 +58,16 @@
     <span style="font-size:12px;">{{ wechat_cursor_length }}</span>
   </div>
   {% endif %}
-  {% if wechat_error %}
-  <div class="row" style="gap:8px;margin-top:6px;">
-    <span class="muted">上次错误：</span>
-    <span style="font-size:12px;color:#e74c3c;">{{ wechat_error }}</span>
+  <div id="wechat-current-error-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_current_error %}display:none;{% endif %}">
+    <span class="muted">当前错误：</span>
+    <span id="wechat-current-error" style="font-size:12px;color:#e74c3c;">{% if wechat_current_error %}{{ wechat_current_error.message }}{% endif %}</span>
   </div>
-  {% endif %}
+  <div id="wechat-last-error-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_last_error or wechat_current_error %}display:none;{% endif %}">
+    <span class="muted">最近已恢复错误：</span>
+    <span id="wechat-last-error" style="font-size:12px;">{% if wechat_last_error %}{{ wechat_last_error.message }}{% endif %}</span>
+  </div>
   <div style="margin-top:14px;">
-    {% if wechat_running %}
+    {% if wechat_task_alive %}
     <form method="post" action="/console/wechat/stop" style="display:inline;">
       <button type="submit" class="danger">停止 Bot</button>
     </form>
@@ -96,6 +124,63 @@
 <script>
 (function(){
   var pollTimer = null;
+
+  function formatTime(value) {
+    if (!value) return '';
+    return new Date(Number(value) * 1000).toLocaleString();
+  }
+
+  function setTimedRow(rowId, valueId, value) {
+    var row = document.getElementById(rowId);
+    var el = document.getElementById(valueId);
+    if (!row || !el) return;
+    row.style.display = value ? '' : 'none';
+    el.textContent = formatTime(value);
+  }
+
+  function renderWechatStatus(d) {
+    var state = document.getElementById('wechat-state');
+    if (!state) return;
+    var dotClass = d.state === 'polling' ? 'dot-success' :
+      (d.state === 'retrying' || d.state === 'paused' || d.state === 'starting' ? 'dot-warning' : 'dot-error');
+    state.innerHTML = '<span class="dot ' + dotClass + '"></span>' + (d.state_label || d.state || '未知');
+    setTimedRow('wechat-last-poll-row', 'wechat-last-poll', d.last_poll_success_at);
+    setTimedRow('wechat-last-message-row', 'wechat-last-message', d.last_message_at);
+    setTimedRow('wechat-retry-row', 'wechat-next-retry', d.next_retry_at);
+    setTimedRow('wechat-pause-row', 'wechat-pause-until', d.pause_until);
+
+    var failuresRow = document.getElementById('wechat-failures-row');
+    var failures = document.getElementById('wechat-failures');
+    if (failuresRow && failures) {
+      failuresRow.style.display = d.consecutive_failures ? '' : 'none';
+      failures.textContent = d.consecutive_failures || 0;
+    }
+
+    var currentRow = document.getElementById('wechat-current-error-row');
+    var current = document.getElementById('wechat-current-error');
+    if (currentRow && current) {
+      currentRow.style.display = d.current_error ? '' : 'none';
+      current.textContent = d.current_error ? d.current_error.message : '';
+    }
+    var lastRow = document.getElementById('wechat-last-error-row');
+    var last = document.getElementById('wechat-last-error');
+    if (lastRow && last) {
+      lastRow.style.display = (!d.current_error && d.last_error) ? '' : 'none';
+      last.textContent = d.last_error ? d.last_error.message : '';
+    }
+  }
+
+  document.querySelectorAll('[data-ts]').forEach(function(el){
+    el.textContent = formatTime(el.getAttribute('data-ts'));
+  });
+  if (document.getElementById('wechat-state')) {
+    setInterval(function(){
+      fetch('/console/wechat/status')
+        .then(function(r){ return r.json(); })
+        .then(renderWechatStatus)
+        .catch(function(){});
+    }, 5000);
+  }
 
   window.fetchQR = function() {
     var btn = document.getElementById('btn-fetch-qr');

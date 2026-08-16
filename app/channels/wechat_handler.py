@@ -365,7 +365,7 @@ async def dispatch_wechat_message(message: dict[str, Any], session: Session, cli
 
     typing_ticket: str | None = None
     try:
-        typing_ticket = await client.get_typing_ticket(ctx.source_user_id)
+        typing_ticket = await client.get_typing_ticket(ctx.source_user_id, context_token)
         _ = await client.send_typing(ctx.source_user_id, typing_ticket, 1)
     except Exception:
         logger.debug("Failed to start typing indicator", exc_info=True)

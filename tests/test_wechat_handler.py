@@ -403,7 +403,7 @@ def test_dispatch_starts_and_cancels_typing():
         replies = await dispatch_wechat_message(_message("/status"), session, client)
 
         assert str(replies[0]["text"]).startswith("🤖 主模型")
-        client.get_typing_ticket.assert_awaited_once_with("u@im.wechat")
+        client.get_typing_ticket.assert_awaited_once_with("u@im.wechat", "ctx")
         client.send_typing.assert_has_awaits([
             call("u@im.wechat", "ticket-abc", 1),
             call("u@im.wechat", "ticket-abc", 2),

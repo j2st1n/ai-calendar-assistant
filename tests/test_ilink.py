@@ -4,7 +4,29 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.integrations.ilink import CHANNEL_VERSION, ILinkAuthError, ILinkClient, ILinkError
+from app.integrations.ilink import (
+    BOT_AGENT,
+    CHANNEL_VERSION,
+    GetUpdatesResult,
+    ILinkAuthError,
+    ILinkClient,
+    ILinkError,
+    ILinkHttpError,
+    ILinkStaleTokenError,
+    ILinkTransportError,
+    STALE_TOKEN_ERRCODE,
+    _reset_session_pauses_for_test,
+)
+
+
+BASE_INFO = {"channel_version": CHANNEL_VERSION, "bot_agent": BOT_AGENT}
+
+
+@pytest.fixture(autouse=True)
+def reset_session_pauses():
+    _reset_session_pauses_for_test()
+    yield
+    _reset_session_pauses_for_test()
 
 
 class FakeAsyncClient:
@@ -22,8 +44,13 @@ class FakeAsyncClient:
         return None
 
     async def request(self, method, url, **kwargs):
+        if isinstance(self.response, Exception):
+            raise self.response
         self.requests.append({"method": method, "url": url, "kwargs": kwargs, "client_kwargs": self.kwargs})
         return self.response
+
+    async def aclose(self):
+        return None
 
 
 def _patch_client(monkeypatch, response):
@@ -65,17 +92,18 @@ def test_get_qrcode_status_returns_status(monkeypatch):
 def test_get_updates_posts_cursor_and_returns_new_cursor(monkeypatch):
     async def run():
         _patch_client(monkeypatch, httpx.Response(200, json={"msgs": [{"id": "m1"}], "get_updates_buf": "next"}))
-        msgs, buf = await ILinkClient("token", base_url="https://example.test").get_updates("old")
+        result = await ILinkClient("token", base_url="https://example.test").get_updates("old")
         req = FakeAsyncClient.requests[0]
-        assert msgs == [{"id": "m1"}]
-        assert buf == "next"
+        assert isinstance(result, GetUpdatesResult)
+        assert result.messages == [{"id": "m1"}]
+        assert result.cursor == "next"
         assert req["method"] == "POST"
         assert req["url"].endswith("/ilink/bot/getupdates")
         assert req["kwargs"]["json"] == {
             "get_updates_buf": "old",
-            "base_info": {"channel_version": CHANNEL_VERSION},
+            "base_info": BASE_INFO,
         }
-        assert req["client_kwargs"]["timeout"] == 45.0
+        assert req["kwargs"]["timeout"] == 35.0
 
     asyncio.run(run())
 
@@ -83,9 +111,73 @@ def test_get_updates_posts_cursor_and_returns_new_cursor(monkeypatch):
 def test_get_updates_preserves_cursor_when_response_omits_it(monkeypatch):
     async def run():
         _patch_client(monkeypatch, httpx.Response(200, json={"msgs": []}))
-        msgs, buf = await ILinkClient("token", base_url="https://example.test").get_updates("old")
-        assert msgs == []
-        assert buf == "old"
+        result = await ILinkClient("token", base_url="https://example.test").get_updates("old")
+        assert result.messages == []
+        assert result.cursor == "old"
+
+    asyncio.run(run())
+
+
+def test_get_updates_uses_server_suggested_timeout(monkeypatch):
+    async def run():
+        _patch_client(
+            monkeypatch,
+            httpx.Response(200, json={"ret": 0, "msgs": [], "longpolling_timeout_ms": 42000}),
+        )
+        result = await ILinkClient("token", base_url="https://example.test").get_updates("old")
+        assert result.next_timeout_ms == 42000
+
+    asyncio.run(run())
+
+
+def test_get_updates_read_timeout_is_normal_empty_poll(monkeypatch):
+    async def run():
+        request = httpx.Request("POST", "https://example.test/ilink/bot/getupdates")
+        _patch_client(monkeypatch, httpx.ReadTimeout("long poll timeout", request=request))
+        result = await ILinkClient("token", base_url="https://example.test").get_updates("old")
+        assert result.messages == []
+        assert result.cursor == "old"
+        assert result.ret == 0
+
+    asyncio.run(run())
+
+
+def test_connect_error_is_classified_as_transport_error(monkeypatch):
+    async def run():
+        request = httpx.Request("POST", "https://example.test/ilink/bot/getupdates")
+        _patch_client(monkeypatch, httpx.ConnectError("connection refused", request=request))
+        with pytest.raises(ILinkTransportError) as raised:
+            await ILinkClient("token", base_url="https://example.test").get_updates()
+        assert raised.value.category == "tcp"
+
+    asyncio.run(run())
+
+
+def test_stale_token_business_code_pauses_session(monkeypatch):
+    async def run():
+        _patch_client(
+            monkeypatch,
+            httpx.Response(200, json={"ret": STALE_TOKEN_ERRCODE, "errmsg": "stale token"}),
+        )
+        client = ILinkClient("token", base_url="https://example.test")
+        with pytest.raises(ILinkStaleTokenError) as raised:
+            await client.get_updates()
+        assert raised.value.ret == STALE_TOKEN_ERRCODE
+        assert client.pause_until is not None
+        with pytest.raises(ILinkStaleTokenError):
+            await client.send_message("u1", "hello", "ctx")
+        replacement_client = ILinkClient("token", base_url="https://example.test")
+        with pytest.raises(ILinkStaleTokenError):
+            await replacement_client.get_updates()
+
+    asyncio.run(run())
+
+
+def test_nonzero_business_code_is_protocol_error(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"ret": 123, "errmsg": "busy"}))
+        with pytest.raises(ILinkError, match="busy"):
+            await ILinkClient("token", base_url="https://example.test").get_updates()
 
     asyncio.run(run())
 
@@ -99,7 +191,7 @@ def test_send_message_posts_required_body(monkeypatch):
         assert response == {"ok": True}
         assert req["method"] == "POST"
         assert req["url"].endswith("/ilink/bot/sendmessage")
-        assert body["base_info"] == {"channel_version": CHANNEL_VERSION}
+        assert body["base_info"] == BASE_INFO
         assert body["msg"]["to_user_id"] == "u1"
         assert body["msg"]["message_type"] == 2
         assert body["msg"]["message_state"] == 2
@@ -129,12 +221,13 @@ def test_http_error_raises_ilink_error(monkeypatch):
     asyncio.run(run())
 
 
-def test_auth_error_raises_auth_error(monkeypatch):
+def test_http_401_is_not_mapped_to_relogin(monkeypatch):
     async def run():
         _patch_client(monkeypatch, httpx.Response(401, json={"error": "auth"}))
-        with pytest.raises(ILinkAuthError):
+        with pytest.raises(ILinkHttpError) as raised:
             result = await ILinkClient("token", base_url="https://example.test").get_updates()
             assert result is None
+        assert raised.value.status_code == 401
 
     asyncio.run(run())
 
@@ -237,8 +330,19 @@ def test_get_typing_ticket_posts_expected_body_and_returns_ticket(monkeypatch):
         assert req["url"].endswith("/ilink/bot/getconfig")
         assert req["kwargs"]["json"] == {
             "ilink_user_id": "u@im.wechat",
-            "base_info": {"channel_version": CHANNEL_VERSION},
+            "base_info": BASE_INFO,
         }
+
+    asyncio.run(run())
+
+
+def test_get_typing_ticket_passes_context_token(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"typing_ticket": "ticket-abc"}))
+        await ILinkClient("token", base_url="https://example.test").get_typing_ticket(
+            "u@im.wechat", "ctx"
+        )
+        assert FakeAsyncClient.requests[0]["kwargs"]["json"]["context_token"] == "ctx"
 
     asyncio.run(run())
 
@@ -281,7 +385,7 @@ def test_send_typing_posts_expected_body(monkeypatch):
             "ilink_user_id": "u@im.wechat",
             "typing_ticket": "ticket-abc",
             "status": 1,
-            "base_info": {"channel_version": CHANNEL_VERSION},
+            "base_info": BASE_INFO,
         }
 
     asyncio.run(run())

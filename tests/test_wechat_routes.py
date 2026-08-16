@@ -250,6 +250,18 @@ class TestClearToken:
 
 class TestWechatProbe:
     @pytest.mark.anyio
+    @patch("app.web.routes.get_wechat_bot_runtime")
+    async def test_probe_refuses_second_poller(self, mock_get_runtime):
+        runtime = MagicMock()
+        runtime.task_alive = True
+        mock_get_runtime.return_value = runtime
+        app = _make_app()
+
+        resp = await _post_json(app, "/console/wechat/probe", {})
+
+        assert resp.json() == {"error": "WeChat Bot 运行中，不能启动第二个消息轮询。"}
+
+    @pytest.mark.anyio
     @patch("app.web.routes.SettingsService")
     @patch("app.web.routes.ILinkClient")
     async def test_probe_returns_messages_and_saves_cursor(self, MockClient, MockSettings):
@@ -285,7 +297,7 @@ class TestWechatProbe:
     @pytest.mark.anyio
     @patch("app.web.routes.SettingsService")
     @patch("app.web.routes.ILinkClient")
-    async def test_probe_auth_error_prompts_rescan(self, MockClient, MockSettings):
+    async def test_probe_auth_error_does_not_invent_rescan_instruction(self, MockClient, MockSettings):
         from app.integrations.ilink import ILinkAuthError
 
         mock_inst = MockClient.return_value
@@ -296,7 +308,7 @@ class TestWechatProbe:
         resp = await _post_json(app, "/console/wechat/probe", {})
         data = resp.json()
 
-        assert data["error"] == "Token 无效或已过期，请重新扫码。"
+        assert data["error"] == "expired"
 
     @pytest.mark.anyio
     @patch("app.web.routes.SettingsService")
@@ -473,7 +485,17 @@ class TestWechatStatusJSON:
             "wechat_token_set": True,
             "wechat_token_masked": "tok-***",
             "wechat_running": True,
+            "wechat_task_alive": True,
+            "wechat_state": "retrying",
+            "wechat_state_label": "异常，自动恢复中",
             "wechat_error": "some error",
+            "wechat_current_error": {"category": "tcp", "message": "some error"},
+            "wechat_last_error": {"category": "tcp", "message": "some error"},
+            "wechat_consecutive_failures": 2,
+            "wechat_last_poll_success_at": 123.0,
+            "wechat_last_message_at": 120.0,
+            "wechat_next_retry_at": 130.0,
+            "wechat_pause_until": None,
             "wechat_cursor_length": 99,
         })
         app = _make_app()
@@ -481,5 +503,8 @@ class TestWechatStatusJSON:
         assert resp.status_code == 200
         data = resp.json()
         assert data["running"] is True
-        assert data["last_error"] == "some error"
+        assert data["state"] == "retrying"
+        assert data["task_alive"] is True
+        assert data["current_error"]["category"] == "tcp"
+        assert data["consecutive_failures"] == 2
         assert data["cursor_length"] == 99
