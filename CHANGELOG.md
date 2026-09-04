@@ -1,53 +1,39 @@
 # Changelog
 
-## [Unreleased]
+## [v1.17.1] - 2026-09-04
+
 
 ### Bug Fixes
 
-- identify OpenAI-compatible requests with the application's own User-Agent so Cloudflare bot rules do not block the OpenAI Python SDK signature before requests reach self-hosted gateways — 为 OpenAI 兼容请求使用应用自身 User-Agent，避免 Cloudflare 机器人规则在请求到达自建网关前拦截 OpenAI Python SDK 特征
+- make AI settings updates transactional
 
-- apply provider presets to Base URL and protocol type for both main and vision models, and replace stale models after the available model list changes — 主模型与识图模型选择供应商时同步填充 Base URL 和协议类型，并在模型列表变化后替换失效的旧模型
-
-- keep model discovery and connection tests as non-persistent draft operations, preserve fetched model lists on save, and remove model data from cookie sessions — 将模型拉取与连接测试改为不落库的草稿操作，保存时保留模型列表，并移除 Cookie Session 中的模型数据
-
-- add explicit API key clearing and prevent credentials from being reused after switching providers — 支持显式清除 API Key，并避免切换供应商后误用旧密钥
-
-- use native accessible controls, inline progress and errors, searchable model inputs, strict Base URL validation, and bounded provider timeouts on the AI settings page — AI 设置页改用原生无障碍控件、行内进度与错误、可搜索模型输入、严格 Base URL 校验及有限超时
-
-- honor custom Anthropic Base URLs for production calls, fetch Anthropic models from the configured provider, and support native Anthropic image messages — 正式调用使用自定义 Anthropic Base URL，从已配置 Provider 拉取模型，并支持 Anthropic 原生识图消息
 
 ## [v1.17.0] - 2026-08-16
 
 
 ### Features
 
-- align WeChat long polling with Tencent's official reference behavior: continuous polling, server-directed timeouts, 2s retries and 30s backoff — 微信长轮询与腾讯官方参考实现对齐，采用连续轮询、服务端超时、2 秒重试与 30 秒退避
-
-- expose separate task and connection states with poll health, retry, cooldown and structured error details — 分离展示任务存活与微信连接状态，补充轮询健康度、重试、冷却和结构化错误信息
-
-- declare `ai-calendar-assistant/1.17.0` through the official `bot_agent` field for backend attribution — 通过官方 `bot_agent` 字段声明客户端身份，便于后端归因
+- align WeChat runtime with official iLink behavior
 
 
-### Bug Fixes
 
-- stop treating HTTP 401/403 as proof that a QR re-login is required; only business code `-14` starts the official one-hour session cooldown — 不再将 HTTP 401/403 误判为必须重新扫码，仅业务码 `-14` 触发官方一小时会话冷却
+### Maintenance
 
-- reuse one HTTP client per runtime, treat long-poll read timeouts as normal empty polls, and cancel in-flight polls during stop/reload — 每个运行时复用一个 HTTP 客户端，将长轮询读取超时视为正常空轮询，并在停止或重载时立即取消请求
+- bump version to v1.17.0
 
-- prevent diagnostic endpoints from starting a second poller while the WeChat bot is running — 微信 Bot 运行时禁止诊断接口启动第二个轮询任务
 
 ## [v1.16.1] - 2026-08-15
 
 
 ### Bug Fixes
 
-- self-heal WeChat bot polling: retry auth (401/403) before declaring needs re-login instead of permanent offline — 微信 bot 鉴权失败先有限重试再判需重扫，避免一次 401/403 就永久离线
+- self-heal wechat bot polling with exponential backoff and logging
 
-- handle network-layer errors (httpx.HTTPError) that were previously uncaught and caused permanent offline on transient network jitter — 捕获此前未处理的 httpx 网络异常，避免网络抖动导致永久离线
 
-- exponential backoff on transient ILink errors, falling back to a 30-second slow-retry loop that auto-recovers when the network returns — 瞬时错误指数退避，用尽后转 30s 慢重试自动回活，网络恢复无需手动重启
 
-- surface `needs_relogin` / `last_error_ts` in the WeChat status and add structured offline logging — 控制台暴露需重新扫码状态与最近错误时间，补全离线结构化日志
+### Maintenance
+
+- bump version to v1.16.1
 
 
 ## [v1.16.0] - 2026-08-03
@@ -55,14 +41,7 @@
 
 ### Features
 
-- lazy-load optional channels, AI providers, CalDAV, QR, HTTP, and encryption SDKs to reduce idle memory usage — 延迟加载可选渠道、AI Provider、CalDAV、二维码、HTTP 与加密 SDK，降低空闲内存占用
-
-- close OpenAI and Anthropic async clients after each operation to prevent resource accumulation — 每次操作后关闭 OpenAI 与 Anthropic 异步客户端，避免资源累积
-
-
-### Bug Fixes
-
-- await Telegram runtime reload in the compatibility startup helper — 在兼容启动辅助函数中正确等待 Telegram runtime 重载
+- reduce idle memory with lazy integrations
 
 
 ## [v1.15.7] - 2026-07-30
@@ -70,20 +49,15 @@
 
 ### Features
 
-- add a scrollable mobile navigation drawer with accessible close controls — 添加可滚动的移动端导航抽屉及无障碍关闭操作
-
-
-### Bug Fixes
-
-- serve the favicon from the standard root path and remove the missing icon reference — 从标准根路径提供网站图标并移除不存在的图标引用
+- add mobile navigation drawer
 
 
 ## [v1.15.6] - 2026-07-30
 
 
-### Security
+### Other
 
-- rate-limit passkey login requests and repeated verification failures by trusted client IP — 按可信客户端 IP 限制通行密钥登录请求和连续验证失败次数
+- rate limit passkey login
 
 
 ## [v1.15.5] - 2026-07-30
@@ -91,7 +65,7 @@
 
 ### Bug Fixes
 
-- replace the misaligned Turnstile secret checkbox with a direct clear button — 将错位的 Turnstile Secret Key 清除复选框替换为直接清除按钮
+- replace secret clear checkbox
 
 
 ## [v1.15.4] - 2026-07-30
@@ -99,7 +73,7 @@
 
 ### Bug Fixes
 
-- migrate legacy passkey tables and persist authenticator transports during registration — 迁移旧版通行密钥表并在注册时保存验证器传输方式
+- migrate legacy passkey transports
 
 
 ## [v1.15.3] - 2026-07-30
@@ -107,9 +81,7 @@
 
 ### Bug Fixes
 
-- use the WebAuthn 3 helper API for Base64URL encoding and show readable API errors — 使用 WebAuthn 3 辅助 API 进行 Base64URL 编码并显示可读接口错误
-
-- stop prefilling the administrator username on the login page — 登录页不再预填管理员用户名
+- support WebAuthn 3 registration helpers
 
 
 ## [v1.15.2] - 2026-07-30
@@ -117,7 +89,7 @@
 
 ### Bug Fixes
 
-- invalidate cached console styles for the new in-app security dialogs — 更新控制台样式缓存版本以确保站内安全弹窗立即生效
+- invalidate cached console styles
 
 
 ## [v1.15.1] - 2026-07-30
@@ -125,17 +97,15 @@
 
 ### Bug Fixes
 
-- merge login security into system settings and require masked in-app reauthentication before generating TOTP setup data or changing passkeys — 将登录安全合并到系统设置，并在生成 TOTP 配置或变更通行密钥前使用站内遮蔽密码复核
+- improve login security settings flow
 
 
-## [v1.15.0] - 2026-07-29
+## [v1.15.0] - 2026-07-30
 
 
 ### Features
 
-- secure the public console with Turnstile, TOTP 2FA, recovery codes, and WebAuthn passkeys — 使用 Turnstile、TOTP 两步验证、恢复码和 WebAuthn 通行密钥保护公网后台
-
-- enforce trusted hosts, same-origin writes, secure cookies, login throttling, security headers, and private console caching — 强制可信域名、同源写请求、安全 Cookie、登录限流、安全响应头及后台禁止缓存
+- secure public console authentication
 
 
 ## [v1.14.0] - 2026-07-29
@@ -143,21 +113,7 @@
 
 ### Features
 
-- add container health checks and daily processing metrics — 增加容器健康检查与每日处理指标
-
-
-### Bug Fixes
-
-- retry transient Telegram network failures — 重试Telegram临时网络错误
-
-- create consistent restorable SQLite backups — 创建可恢复的一致性SQLite备份
-
-- reject and clean definitely invalid WeChat message IDs — 拒绝并清理确定无效的微信消息ID
-
-
-### Maintenance
-
-- publish one versioned Docker image per release — 每个版本仅构建一次版本化Docker镜像
+- add operational resilience
 
 
 ## [v1.13.6] - 2026-07-29
@@ -165,7 +121,7 @@
 
 ### Maintenance
 
-- require full tests before Docker image builds — Docker镜像构建前强制通过全量测试
+- require tests before image build
 
 
 ## [v1.13.5] - 2026-07-29
@@ -173,7 +129,7 @@
 
 ### Bug Fixes
 
-- reject unrelated IDs in WeChat reply binding — 拒绝微信回复绑定中的非消息ID
+- reject unrelated WeChat reply ids
 
 
 ## [v1.13.4] - 2026-07-29
@@ -181,7 +137,7 @@
 
 ### Bug Fixes
 
-- add privacy-safe WeChat quote diagnostics — 增加脱敏微信引用诊断日志
+- add privacy-safe WeChat quote diagnostics
 
 
 ## [v1.13.3] - 2026-07-29
@@ -189,7 +145,7 @@
 
 ### Bug Fixes
 
-- target WeChat quoted messages by item message ID — 通过消息ID定位微信引用日程
+- target WeChat quotes by message id
 
 
 ## [v1.13.2] - 2026-07-29
@@ -197,11 +153,29 @@
 
 ### Bug Fixes
 
-- recognize nested WeChat quoted messages — 兼容嵌套微信引用消息
+- harden WeChat quotes and AI event parsing
 
-- normalize single-object AI reminders — 兼容AI单对象提醒字段
+- fix telegram bind status auth
 
-- redact API keys and bot tokens from event records — 事件记录脱敏密钥和Bot Token
+- fix ghcr package publish auth
+
+- fix ghcr actions auth
+
+- fix console caldav auth
+
+
+
+### Documentation
+
+- note custom backup paths
+
+
+
+### Maintenance
+
+- update actions for node 24
+
+- bump version to 1.13.1 [skip ci]
 
 
 ## [v1.13.1] - 2026-06-06
@@ -1278,3 +1252,5 @@
 - ai-driven intent routing, remove keyword matching
 
 - rename web console routes
+
+
