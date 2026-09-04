@@ -1,11 +1,31 @@
 # Changelog
 
+## [v1.17.2] - 2026-09-04
+
+
+### Bug Fixes
+
+- chain releases to image publishing
+
+
+
+### Features
+
+- improve model picker interactions
+
+
 ## [v1.17.1] - 2026-09-04
 
 
 ### Bug Fixes
 
 - make AI settings updates transactional
+
+
+
+### Maintenance
+
+- release v1.17.1
 
 
 ## [v1.17.0] - 2026-08-16
