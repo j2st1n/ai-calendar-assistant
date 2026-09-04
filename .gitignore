@@ -6,3 +6,11 @@ data/*
 !data/.gitkeep
 .sisyphus/
 .omo/
+
+# Local architecture review artifacts (not validated project documentation)
+/architecture.candidate.json
+/architecture.html
+/architecture.visual-check.json
+
+# Dependency installation is currently managed by requirements.txt + pip
+/uv.lock

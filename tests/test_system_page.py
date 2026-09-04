@@ -95,9 +95,14 @@ def test_docker_image_has_healthcheck_and_version_override():
     assert "${APP_VERSION:-latest}" in compose
 
 
-def test_docker_workflow_builds_only_version_tags_after_tests():
-    workflow = Path(".github/workflows/docker-build.yml").read_text()
+def test_release_reuses_docker_workflow_after_creating_version_tag():
+    docker_workflow = Path(".github/workflows/docker-build.yml").read_text()
+    release_workflow = Path(".github/workflows/release.yml").read_text()
 
-    assert "needs: test" in workflow
-    assert "if: startsWith(github.ref, 'refs/tags/v')" in workflow
-    assert "${{ github.ref_name }}" in workflow
+    assert "workflow_call:" in docker_workflow
+    assert "needs: test" in docker_workflow
+    assert "if: startsWith(github.ref, 'refs/tags/v') || inputs.publish" in docker_workflow
+    assert "${{ inputs.image_tag || github.ref_name }}" in docker_workflow
+    assert "new_version: ${{ steps.version.outputs.version }}" in release_workflow
+    assert "uses: ./.github/workflows/docker-build.yml" in release_workflow
+    assert "image_tag: ${{ needs.release.outputs.new_version }}" in release_workflow

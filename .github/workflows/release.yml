@@ -15,6 +15,8 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.version.outputs.version }}
     permissions:
       contents: write
     steps:
@@ -23,6 +25,7 @@ jobs:
           fetch-depth: 0
 
       - name: Calculate new version
+        id: version
         run: |
           LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           LATEST=${LATEST#v}
@@ -34,6 +37,7 @@ jobs:
           esac
           NEW="v${MAJOR}.${MINOR}.${PATCH}"
           echo "NEW_VERSION=$NEW" >> $GITHUB_ENV
+          echo "version=$NEW" >> $GITHUB_OUTPUT
           echo "New version: $NEW"
 
       - name: Generate changelog
@@ -51,3 +55,15 @@ jobs:
           git commit -m "chore: release $NEW_VERSION"
           git tag -a "$NEW_VERSION" -m "Release $NEW_VERSION"
           git push --atomic origin HEAD:main "$NEW_VERSION"
+
+  publish:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      ref: ${{ needs.release.outputs.new_version }}
+      image_tag: ${{ needs.release.outputs.new_version }}
+      publish: true
+    secrets: inherit
