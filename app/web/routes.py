@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from app.core.bootstrap import read_changes, read_version
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
-from app.ai.providers import CLAUDE_MODELS, PROVIDER_PRESETS
+from app.ai.providers import PROVIDER_PRESETS
 from app.db.models import EventRecord, PasskeyCredential
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
@@ -480,9 +480,7 @@ def ai_settings_payload(settings_service: SettingsService) -> dict[str, object]:
     )
     model = settings_service.get("ai_model") or ""
     api_key_masked = settings_service.get_masked("ai_api_key")
-    available_models = settings_service.get("ai_available_models") or (
-        ",".join(CLAUDE_MODELS) if provider_type == "anthropic" else ""
-    )
+    available_models = settings_service.get("ai_available_models") or ""
     return {
         "provider_name": provider_name,
         "provider_type": provider_type,
@@ -495,6 +493,46 @@ def ai_settings_payload(settings_service: SettingsService) -> dict[str, object]:
             for preset in PROVIDER_PRESETS
         ],
     }
+
+
+def _probe_api_key(
+    settings_service: SettingsService,
+    submitted_key: str,
+    submitted_provider_name: str,
+    provider_setting: str,
+    key_setting: str,
+    clear_requested: str = "",
+    submitted_provider_type: str = "",
+    type_setting: str = "",
+) -> str:
+    if submitted_key:
+        return submitted_key
+    if clear_requested == "1":
+        return ""
+    stored_provider = settings_service.get(provider_setting) or ""
+    if submitted_provider_name and submitted_provider_name != stored_provider:
+        return ""
+    stored_type = settings_service.get(type_setting) if type_setting else ""
+    if submitted_provider_type and stored_type and submitted_provider_type != stored_type:
+        return ""
+    return settings_service.get(key_setting) or ""
+
+
+def _model_list_value(raw: str) -> str:
+    return ",".join(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _validated_provider_type(value: str, provider_name: str = "") -> str:
+    preset = next((item for item in PROVIDER_PRESETS if item.name == provider_name), None)
+    if preset is not None and preset.name != "Custom":
+        return preset.provider_type
+    if value not in {"openai_compatible", "anthropic"}:
+        raise ValueError("不支持的 Provider 类型。")
+    return value
+
+
+def _probe_error(message: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": message}, status_code=status_code)
 
 
 @router.get("", response_class=HTMLResponse)
@@ -973,18 +1011,14 @@ async def ai_settings(
         "message": get_flash(request) or request.query_params.get("message"),
         "error": get_error_flash(request) or request.query_params.get("error"),
     })
-    stored_models = request.session.get("ai_models", [])
-    if stored_models:
-        payload["available_models"] = stored_models
-    vision_models = request.session.get("ai_vision_models", [])
-    if vision_models:
-        payload["vision_models"] = vision_models
     payload["vision_use_main"] = settings_service.get("ai_vision_use_main") or "true"
     payload["vision_provider_name"] = settings_service.get("ai_vision_provider_name") or ""
     payload["vision_provider_type"] = settings_service.get("ai_vision_provider_type") or "openai_compatible"
     payload["vision_base_url"] = settings_service.get("ai_vision_base_url") or ""
     payload["vision_api_key_masked"] = settings_service.get_masked("ai_vision_api_key")
     payload["vision_model"] = settings_service.get("ai_vision_model") or ""
+    vision_models = settings_service.get("ai_vision_available_models") or ""
+    payload["vision_models"] = [item for item in vision_models.split(",") if item]
     return templates.TemplateResponse(request, "ai.html", payload)
 
 
@@ -995,34 +1029,41 @@ async def update_ai_settings(
     provider_type: str = Form(...),
     base_url: str = Form(...),
     api_key: str = Form(""),
+    clear_api_key: str = Form(""),
     model: str = Form(""),
     available_models_raw: str = Form(""),
-    vision_use_main: str = Form("1"),
-    vision_provider_name: str = Form(""),
-    vision_provider_type: str = Form(""),
-    vision_base_url: str = Form(""),
-    vision_api_key: str = Form(""),
-    vision_model: str = Form(""),
+    vision_use_main: str = Form("false"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
+    try:
+        if not provider_name.strip():
+            raise ValueError("请选择供应商。")
+        if not model.strip():
+            raise ValueError("请选择或输入模型。")
+        provider_type = _validated_provider_type(provider_type, provider_name)
+        normalized_base_url = _normalize_url(base_url)
+    except ValueError as exc:
+        set_error_flash(request, str(exc))
+        return redirect("/console/ai")
+
+    previous_provider = settings_service.get("ai_provider_name") or ""
+    previous_provider_type = settings_service.get("ai_provider_type") or ""
     settings_service.set("ai_provider_name", provider_name)
     settings_service.set("ai_provider_type", provider_type)
-    settings_service.set("ai_base_url", _normalize_url(base_url))
+    settings_service.set("ai_base_url", normalized_base_url)
     if api_key:
         settings_service.set("ai_api_key", api_key, encrypted=True)
+    elif (
+        clear_api_key == "1"
+        or (previous_provider and previous_provider != provider_name)
+        or (previous_provider_type and previous_provider_type != provider_type)
+    ):
+        settings_service.set("ai_api_key", None, encrypted=True)
     settings_service.set("ai_model", model)
-    settings_service.set("ai_available_models", available_models_raw)
-
-    settings_service.set("ai_vision_use_main", vision_use_main)
-    if vision_use_main != "1":
-        settings_service.set("ai_vision_provider_name", vision_provider_name)
-        settings_service.set("ai_vision_provider_type", vision_provider_type)
-        settings_service.set("ai_vision_base_url", _normalize_url(vision_base_url))
-        if vision_api_key:
-            settings_service.set("ai_vision_api_key", vision_api_key, encrypted=True)
-        settings_service.set("ai_vision_model", vision_model)
+    settings_service.set("ai_available_models", _model_list_value(available_models_raw))
+    settings_service.set("ai_vision_use_main", "true" if vision_use_main == "1" else "false")
     settings_service.commit()
     set_flash(request, "AI 设置已保存。")
     return redirect("/console/ai")
@@ -1036,19 +1077,41 @@ async def update_vision_settings(
     vision_provider_type: str = Form(""),
     vision_base_url: str = Form(""),
     vision_api_key: str = Form(""),
+    clear_vision_api_key: str = Form(""),
     vision_model: str = Form(""),
+    vision_available_models_raw: str = Form(""),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
     settings_service = SettingsService(session)
-    settings_service.set("ai_vision_use_main", vision_use_main)
     if vision_use_main != "1":
+        try:
+            if not vision_provider_name.strip():
+                raise ValueError("请选择识图供应商。")
+            if not vision_model.strip():
+                raise ValueError("请选择或输入识图模型。")
+            vision_provider_type = _validated_provider_type(vision_provider_type, vision_provider_name)
+            normalized_base_url = _normalize_url(vision_base_url)
+        except ValueError as exc:
+            set_error_flash(request, str(exc))
+            return redirect("/console/ai")
+
+        previous_provider = settings_service.get("ai_vision_provider_name") or ""
+        previous_provider_type = settings_service.get("ai_vision_provider_type") or ""
         settings_service.set("ai_vision_provider_name", vision_provider_name)
         settings_service.set("ai_vision_provider_type", vision_provider_type)
-        settings_service.set("ai_vision_base_url", _normalize_url(vision_base_url))
+        settings_service.set("ai_vision_base_url", normalized_base_url)
         if vision_api_key:
             settings_service.set("ai_vision_api_key", vision_api_key, encrypted=True)
+        elif (
+            clear_vision_api_key == "1"
+            or (previous_provider and previous_provider != vision_provider_name)
+            or (previous_provider_type and previous_provider_type != vision_provider_type)
+        ):
+            settings_service.set("ai_vision_api_key", None, encrypted=True)
         settings_service.set("ai_vision_model", vision_model)
+        settings_service.set("ai_vision_available_models", _model_list_value(vision_available_models_raw))
+    settings_service.set("ai_vision_use_main", "true" if vision_use_main == "1" else "false")
     settings_service.commit()
     set_flash(request, "识图模型设置已保存。")
     return redirect("/console/ai")
@@ -1061,38 +1124,38 @@ async def pull_ai_models(
     provider_type: str = Form(""),
     base_url: str = Form(""),
     api_key: str = Form(""),
+    clear_api_key: str = Form(""),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
+) -> JSONResponse:
     settings_service = SettingsService(session)
-    if provider_name:
-        settings_service.set("ai_provider_name", provider_name)
-    if provider_type:
-        settings_service.set("ai_provider_type", provider_type)
-    if base_url:
-        settings_service.set("ai_base_url", _normalize_url(base_url))
-    if api_key:
-        settings_service.set("ai_api_key", api_key, encrypted=True)
-    settings_service.commit()
-
-    provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
-    base_url = _normalize_url(base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1")
-    api_key = api_key or settings_service.get("ai_api_key") or ""
+    try:
+        provider_type = _validated_provider_type(
+            provider_type or settings_service.get("ai_provider_type") or "openai_compatible",
+            provider_name,
+        )
+        base_url = _normalize_url(
+            base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1"
+        )
+    except ValueError as exc:
+        return _probe_error(str(exc))
+    api_key = _probe_api_key(
+        settings_service,
+        api_key,
+        provider_name,
+        "ai_provider_name",
+        "ai_api_key",
+        clear_api_key,
+        provider_type,
+        "ai_provider_type",
+    )
     AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key)
     try:
         models = await AIProviderService().list_models(config)
     except AIProviderError as exc:
-        set_error_flash(request, str(exc))
-        return redirect("/console/ai")
-
-    settings_service.set("ai_available_models", ",".join(models))
-    if models and not settings_service.get("ai_model"):
-        settings_service.set("ai_model", models[0])
-    settings_service.commit()
-    request.session["ai_models"] = models
-    set_flash(request, f"模型列表已更新，共 {len(models)} 个。")
-    return redirect("/console/ai")
+        return _probe_error(str(exc), 502)
+    return JSONResponse({"ok": True, "models": models, "message": f"模型列表已更新，共 {len(models)} 个。"})
 
 
 @router.post("/ai/vision-models")
@@ -1102,95 +1165,128 @@ async def pull_vision_models(
     vision_provider_type: str = Form(""),
     vision_base_url: str = Form(""),
     vision_api_key: str = Form(""),
-    vision_use_main: str = Form("1"),
+    clear_vision_api_key: str = Form(""),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
+) -> JSONResponse:
     settings_service = SettingsService(session)
-    settings_service.set("ai_vision_use_main", vision_use_main)
-    if vision_provider_name:
-        settings_service.set("ai_vision_provider_name", vision_provider_name)
-    if vision_provider_type:
-        settings_service.set("ai_vision_provider_type", vision_provider_type)
-    if vision_base_url:
-        settings_service.set("ai_vision_base_url", _normalize_url(vision_base_url))
-    if vision_api_key:
-        settings_service.set("ai_vision_api_key", vision_api_key, encrypted=True)
-    settings_service.commit()
-
-    provider_type = vision_provider_type or settings_service.get("ai_vision_provider_type") or "openai_compatible"
-    base_url = _normalize_url(vision_base_url or settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1")
-    api_key = vision_api_key or settings_service.get("ai_vision_api_key") or ""
+    try:
+        provider_type = _validated_provider_type(
+            vision_provider_type or settings_service.get("ai_vision_provider_type") or "openai_compatible",
+            vision_provider_name,
+        )
+        base_url = _normalize_url(
+            vision_base_url
+            or settings_service.get("ai_vision_base_url")
+            or "https://api.openai.com/v1"
+        )
+    except ValueError as exc:
+        return _probe_error(str(exc))
+    api_key = _probe_api_key(
+        settings_service,
+        vision_api_key,
+        vision_provider_name,
+        "ai_vision_provider_name",
+        "ai_vision_api_key",
+        clear_vision_api_key,
+        provider_type,
+        "ai_vision_provider_type",
+    )
     AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key)
     try:
         models = await AIProviderService().list_models(config)
     except AIProviderError as exc:
-        set_error_flash(request, str(exc))
-        return redirect("/console/ai")
-
-    settings_service.set("ai_vision_available_models", ",".join(models))
-    if models and not settings_service.get("ai_vision_model"):
-        settings_service.set("ai_vision_model", models[0])
-    settings_service.commit()
-    request.session["ai_vision_models"] = models
-    set_flash(request, f"识图模型列表已更新，共 {len(models)} 个。")
-    return redirect("/console/ai")
+        return _probe_error(str(exc), 502)
+    return JSONResponse({"ok": True, "models": models, "message": f"识图模型列表已更新，共 {len(models)} 个。"})
 
 
 @router.post("/ai/test")
 async def test_ai_connection(
     request: Request,
+    provider_name: str = Form(""),
     provider_type: str = Form(""),
     base_url: str = Form(""),
     api_key: str = Form(""),
+    clear_api_key: str = Form(""),
     model: str = Form(""),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
+) -> JSONResponse:
     settings_service = SettingsService(session)
-    provider_type = provider_type or settings_service.get("ai_provider_type") or "openai_compatible"
-    base_url = _normalize_url(base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1")
-    api_key = api_key or settings_service.get("ai_api_key") or ""
+    try:
+        provider_type = _validated_provider_type(
+            provider_type or settings_service.get("ai_provider_type") or "openai_compatible",
+            provider_name,
+        )
+        base_url = _normalize_url(
+            base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1"
+        )
+    except ValueError as exc:
+        return _probe_error(str(exc))
+    api_key = _probe_api_key(
+        settings_service,
+        api_key,
+        provider_name,
+        "ai_provider_name",
+        "ai_api_key",
+        clear_api_key,
+        provider_type,
+        "ai_provider_type",
+    )
     model = model or settings_service.get("ai_model") or ""
     AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
     try:
         await AIProviderService().test_connection(config)
     except AIProviderError as exc:
-        set_error_flash(request, str(exc))
-        return redirect("/console/ai")
-    set_flash(request, "AI 连接测试成功。")
-    return redirect("/console/ai")
+        return _probe_error(str(exc), 502)
+    return JSONResponse({"ok": True, "message": "AI 连接测试成功。"})
 
 
 @router.post("/ai/vision-test")
 async def test_vision_connection(
     request: Request,
-    vision_use_main: str = Form("1"),
+    vision_provider_name: str = Form(""),
     vision_provider_type: str = Form(""),
     vision_base_url: str = Form(""),
     vision_api_key: str = Form(""),
+    clear_vision_api_key: str = Form(""),
     vision_model: str = Form(""),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
+) -> JSONResponse:
     settings_service = SettingsService(session)
-    settings_service.set("ai_vision_use_main", vision_use_main)
-    settings_service.commit()
-    provider_type = vision_provider_type or settings_service.get("ai_vision_provider_type") or "openai_compatible"
-    base_url = _normalize_url(vision_base_url or settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1")
-    api_key = vision_api_key or settings_service.get("ai_vision_api_key") or ""
+    try:
+        provider_type = _validated_provider_type(
+            vision_provider_type or settings_service.get("ai_vision_provider_type") or "openai_compatible",
+            vision_provider_name,
+        )
+        base_url = _normalize_url(
+            vision_base_url
+            or settings_service.get("ai_vision_base_url")
+            or "https://api.openai.com/v1"
+        )
+    except ValueError as exc:
+        return _probe_error(str(exc))
+    api_key = _probe_api_key(
+        settings_service,
+        vision_api_key,
+        vision_provider_name,
+        "ai_vision_provider_name",
+        "ai_vision_api_key",
+        clear_vision_api_key,
+        provider_type,
+        "ai_vision_provider_type",
+    )
     model = vision_model or settings_service.get("ai_vision_model") or ""
     AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
     config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
     try:
         await AIProviderService().test_connection(config)
     except AIProviderError as exc:
-        set_error_flash(request, str(exc))
-        return redirect("/console/ai")
-    set_flash(request, "识图模型连接测试成功。")
-    return redirect("/console/ai")
+        return _probe_error(str(exc), 502)
+    return JSONResponse({"ok": True, "message": "识图模型连接测试成功。"})
 
 
 def current_ai_provider_config(settings_service: SettingsService) -> AIProviderConfig:
@@ -1204,10 +1300,21 @@ def current_ai_provider_config(settings_service: SettingsService) -> AIProviderC
 
 
 def _normalize_url(url: str) -> str:
-    url = url.strip().rstrip("/")
-    if url and not url.startswith("http"):
-        url = "https://" + url
-    return url
+    normalized = url.strip()
+    if not normalized:
+        raise ValueError("请输入 Base URL。")
+    if "://" not in normalized:
+        normalized = "https://" + normalized
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Base URL 必须是有效的 HTTP 或 HTTPS 地址。")
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("Base URL 包含无效端口。") from exc
+    if parsed.username or parsed.password:
+        raise ValueError("Base URL 不能包含用户名或密码。")
+    return normalized.rstrip("/")
 
 
 def _normalize_caldav_int_setting(value: str, default: int, minimum: int, integer_error: str, minimum_error: str) -> tuple[int | None, str | None]:

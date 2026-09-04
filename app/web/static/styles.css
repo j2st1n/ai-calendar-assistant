@@ -258,6 +258,7 @@ button.secondary, .button-link.secondary {
 button.secondary:hover { background: rgba(255,255,255,0.05); }
 button.danger { background: rgba(239,68,68,0.15); color: #fca5a5; }
 button.danger:hover { background: rgba(239,68,68,0.25); }
+button:disabled { cursor: wait; opacity: 0.6; }
 
 /* ── Layout utilities ── */
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
@@ -265,6 +266,11 @@ button.danger:hover { background: rgba(239,68,68,0.25); }
 .muted { color: #8a8f98; }
 .muted-secondary { color: #62666d; }
 .hidden { display: none !important; }
+.inline-check { display: flex; align-items: center; gap: 8px; width: fit-content; }
+.inline-check input { margin: 0; }
+.form-status { margin: 0; font-size: 12px; }
+.form-status.success { color: #6ee7b7; }
+.form-status.error { color: #fca5a5; }
 
 /* ── Modal dialogs ── */
 .modal-backdrop {

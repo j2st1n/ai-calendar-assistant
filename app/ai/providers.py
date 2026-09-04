@@ -19,10 +19,3 @@ PROVIDER_PRESETS = [
     ProviderPreset("Custom", "openai_compatible", ""),
     ProviderPreset("Anthropic", "anthropic", "https://api.anthropic.com"),
 ]
-
-
-CLAUDE_MODELS = [
-    "claude-3-5-haiku-20241022",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-7-sonnet-20250219",
-]

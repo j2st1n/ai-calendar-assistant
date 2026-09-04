@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Bug Fixes
+
+- identify OpenAI-compatible requests with the application's own User-Agent so Cloudflare bot rules do not block the OpenAI Python SDK signature before requests reach self-hosted gateways — 为 OpenAI 兼容请求使用应用自身 User-Agent，避免 Cloudflare 机器人规则在请求到达自建网关前拦截 OpenAI Python SDK 特征
+
+- apply provider presets to Base URL and protocol type for both main and vision models, and replace stale models after the available model list changes — 主模型与识图模型选择供应商时同步填充 Base URL 和协议类型，并在模型列表变化后替换失效的旧模型
+
+- keep model discovery and connection tests as non-persistent draft operations, preserve fetched model lists on save, and remove model data from cookie sessions — 将模型拉取与连接测试改为不落库的草稿操作，保存时保留模型列表，并移除 Cookie Session 中的模型数据
+
+- add explicit API key clearing and prevent credentials from being reused after switching providers — 支持显式清除 API Key，并避免切换供应商后误用旧密钥
+
+- use native accessible controls, inline progress and errors, searchable model inputs, strict Base URL validation, and bounded provider timeouts on the AI settings page — AI 设置页改用原生无障碍控件、行内进度与错误、可搜索模型输入、严格 Base URL 校验及有限超时
+
+- honor custom Anthropic Base URLs for production calls, fetch Anthropic models from the configured provider, and support native Anthropic image messages — 正式调用使用自定义 Anthropic Base URL，从已配置 Provider 拉取模型，并支持 Anthropic 原生识图消息
+
 ## [v1.17.0] - 2026-08-16
 
 

@@ -1,30 +1,132 @@
 {% extends "base.html" %}
 {% block content %}
 <script>
-const providerUrls = {
-  {% for provider in providers %}
-  "{{ provider.name }}": "{{ provider.base_url }}",
-  {% endfor %}
-};
-function fillUrl(sel, inputName) {
-  const url = providerUrls[sel.value];
-  if (url) {
-    const input = document.querySelector('input[name="' + inputName + '"]');
-    if (input) input.value = url;
+const providerPresets = {{ providers | tojson }};
+const providerPresetByName = Object.fromEntries(providerPresets.map(function(provider) {
+  return [provider.name, provider];
+}));
+
+function fieldsFor(prefix) {
+  const vision = prefix === 'vision';
+  return {
+    provider: vision ? 'vision_provider_name' : 'provider_name',
+    type: vision ? 'vision_provider_type' : 'provider_type',
+    baseUrl: vision ? 'vision_base_url' : 'base_url',
+    apiKey: vision ? 'vision_api_key' : 'api_key',
+    clearKey: vision ? 'clear_vision_api_key' : 'clear_api_key',
+    model: vision ? 'vision_model' : 'model',
+    modelsRaw: vision ? 'vision_available_models_raw' : 'available_models_raw',
+    modelOptions: vision ? 'vision-model-options' : 'main-model-options'
+  };
+}
+
+function resetProviderDraft(form, fields, message) {
+  form.elements[fields.model].value = '';
+  form.elements[fields.modelsRaw].value = '';
+  document.getElementById(fields.modelOptions).replaceChildren();
+  const keyInput = form.elements[fields.apiKey];
+  keyInput.value = '';
+  keyInput.placeholder = '配置已切换，请输入新的 API Key';
+  const clearKey = form.elements[fields.clearKey];
+  if (clearKey) clearKey.checked = false;
+  setFormStatus(form, message, false);
+}
+
+function applyProviderPreset(select, prefix) {
+  const preset = providerPresetByName[select.value];
+  if (!preset) return;
+  const fields = fieldsFor(prefix);
+  const form = select.closest('form');
+  const previousProvider = select.dataset.currentValue || '';
+  form.elements[fields.type].value = preset.provider_type;
+  form.elements[fields.baseUrl].value = preset.base_url;
+  if (previousProvider && previousProvider !== select.value) {
+    resetProviderDraft(form, fields, '供应商已切换，请重新拉取模型并保存。');
+  }
+  select.dataset.currentValue = select.value;
+}
+
+function applyProviderType(select, prefix) {
+  const fields = fieldsFor(prefix);
+  const form = select.closest('form');
+  const providerName = form.elements[fields.provider].value;
+  const preset = providerPresetByName[providerName];
+  if (preset && providerName !== 'Custom') {
+    select.value = preset.provider_type;
+    return;
+  }
+  const previousType = select.dataset.currentValue || '';
+  if (previousType && previousType !== select.value) {
+    resetProviderDraft(form, fields, '接口协议已切换，请重新拉取模型并保存。');
+  }
+  select.dataset.currentValue = select.value;
+}
+
+function toggleVision() {
+  const checkbox = document.getElementById('vision-use-main');
+  const card = document.getElementById('vision-card');
+  if (card) card.hidden = Boolean(checkbox && checkbox.checked);
+}
+
+function setFormStatus(form, message, isError) {
+  const status = form.querySelector('[data-form-status]');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', Boolean(isError));
+  status.classList.toggle('success', !isError);
+  status.hidden = !message;
+}
+
+function updateModelOptions(form, prefix, models) {
+  const fields = fieldsFor(prefix);
+  const input = form.elements[fields.model];
+  const currentModel = input.value;
+  const datalist = document.getElementById(fields.modelOptions);
+  datalist.replaceChildren(...models.map(function(model) {
+    const option = document.createElement('option');
+    option.value = model;
+    return option;
+  }));
+  form.elements[fields.modelsRaw].value = models.join(',');
+  if (!models.includes(currentModel)) input.value = '';
+  input.placeholder = models.length ? '输入关键词或从列表中选择' : 'Provider 未返回模型';
+}
+
+async function runProbe(button, prefix, operation) {
+  const form = button.closest('form');
+  const fields = fieldsFor(prefix);
+  const baseUrl = form.elements[fields.baseUrl];
+  const model = form.elements[fields.model];
+  if (!baseUrl.reportValidity()) return;
+  if (operation === 'test' && !model.reportValidity()) return;
+
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = operation === 'models' ? '正在拉取…' : '正在测试…';
+  setFormStatus(form, button.textContent, false);
+  try {
+    const response = await fetch(button.dataset.endpoint, {
+      method: 'POST',
+      body: new FormData(form),
+      headers: {'Accept': 'application/json'}
+    });
+    const payload = await response.json().catch(function() {
+      return {ok: false, error: '服务返回了无法解析的响应。'};
+    });
+    if (!response.ok || !payload.ok) throw new Error(payload.error || '操作失败，请稍后重试。');
+    if (operation === 'models') updateModelOptions(form, prefix, payload.models || []);
+    const suffix = operation === 'models' ? '请选择模型后点击保存。' : '当前表单尚未保存。';
+    setFormStatus(form, payload.message + ' ' + suffix, false);
+  } catch (error) {
+    setFormStatus(form, error.message || '操作失败，请稍后重试。', true);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
   }
 }
-function selectModel(sel) {
-  const input = document.querySelector('input[name="model"]');
-  if (input) input.value = sel.value;
-}
-function toggleVision() {
-  var cb = document.querySelector('input[name="vision_use_main"]');
-  var el = document.getElementById('vision-card');
-  if (el) el.style.display = cb && cb.checked ? 'none' : 'block';
-}
-window.addEventListener('DOMContentLoaded', function(){
-  var cb = document.querySelector('input[name="vision_use_main"]');
-  if (cb) { toggleVision(); cb.addEventListener('change', toggleVision); }
+
+window.addEventListener('DOMContentLoaded', function() {
+  toggleVision();
 });
 </script>
 
@@ -35,138 +137,120 @@ window.addEventListener('DOMContentLoaded', function(){
 
 <div class="card">
   <h2>主模型</h2>
-  <p class="muted" style="margin-bottom:12px;">用于日程提取的 AI 模型。</p>
+  <p class="muted" style="margin-bottom:12px;">用于日程提取的 AI 模型。拉取和测试不会保存配置。</p>
   <form method="post" action="/console/ai" class="stack">
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
         <span>供应商</span>
-        <div class="cs-wrap">
-          <div class="cs-trigger">{{ provider_name }}</div>
-          <div class="cs-drop">
-            {% for provider in providers %}
-            <div class="cs-opt {% if provider.name == provider_name %}sel{% endif %}" data-value="{{ provider.name }}">{{ provider.name }}</div>
-            {% endfor %}
-          </div>
-          <input type="hidden" name="provider_name" value="{{ provider_name }}">
-        </div>
+        <select name="provider_name" data-current-value="{{ provider_name }}" onchange="applyProviderPreset(this, 'main')">
+          {% for provider in providers %}
+          <option value="{{ provider.name }}" {% if provider.name == provider_name %}selected{% endif %}>{{ provider.name }}</option>
+          {% endfor %}
+        </select>
       </label>
-      <label style="max-width:180px;">
-        <span>类型</span>
-        <div class="cs-wrap">
-          <div class="cs-trigger">{{ 'Anthropic' if provider_type == 'anthropic' else 'OpenAI Compatible' }}</div>
-          <div class="cs-drop">
-            <div class="cs-opt {% if provider_type == 'openai_compatible' %}sel{% endif %}" data-value="openai_compatible">OpenAI Compatible</div>
-            <div class="cs-opt {% if provider_type == 'anthropic' %}sel{% endif %}" data-value="anthropic">Anthropic</div>
-          </div>
-          <input type="hidden" name="provider_type" value="{{ provider_type }}">
-        </div>
+      <label style="max-width:220px;">
+        <span>接口协议</span>
+        <select name="provider_type" data-current-value="{{ provider_type }}" onchange="applyProviderType(this, 'main')">
+          <option value="openai_compatible" {% if provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
+          <option value="anthropic" {% if provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
+        </select>
       </label>
     </div>
     <label>
       <span>Base URL</span>
-      <input name="base_url" value="{{ base_url }}" required>
+      <input name="base_url" type="url" value="{{ base_url }}" required>
     </label>
     <label>
       <span>API Key</span>
-      <input name="api_key" type="password" value="" placeholder="{{ api_key_masked or '留空表示保持现有值' }}" autocomplete="off">
+      <input name="api_key" type="password" value="" placeholder="{{ api_key_masked or '请输入 API Key；本地免鉴权服务可留空' }}" autocomplete="new-password">
     </label>
+    {% if api_key_masked %}
+    <label class="inline-check">
+      <input type="checkbox" name="clear_api_key" value="1">
+      <span>清除已保存的 API Key</span>
+    </label>
+    {% endif %}
     <div class="row" style="align-items:flex-end;">
       <label style="flex:1;">
         <span>模型</span>
-        {% if available_models %}
-        <div class="cs-wrap" data-onchange="selectModel">
-          <div class="cs-trigger">{{ model or '选择模型' }}</div>
-          <div class="cs-drop">
-            {% for m in available_models %}
-            <div class="cs-opt {% if model == m %}sel{% endif %}" data-value="{{ m }}">{{ m }}</div>
-            {% endfor %}
-          </div>
-          <input type="hidden" name="model" value="{{ model }}">
-        </div>
-        {% else %}
-        <input name="model" value="{{ model }}" placeholder="先拉取模型列表后选择">
-        {% endif %}
+        <input name="model" list="main-model-options" value="{{ model }}" placeholder="输入模型 ID，或先拉取模型列表" required>
+        <datalist id="main-model-options">
+          {% for model_id in available_models %}<option value="{{ model_id }}"></option>{% endfor %}
+        </datalist>
+        <input type="hidden" name="available_models_raw" value="{{ available_models | join(',') }}">
       </label>
-      <button type="submit" formaction="/console/ai/models" class="secondary">拉取模型列表</button>
+      <button type="button" class="secondary" data-endpoint="/console/ai/models" onclick="runProbe(this, 'main', 'models')">拉取模型列表</button>
     </div>
     <label class="toggle-row" style="margin-top:12px;">
       <div>
         <div style="font-size:13px;font-weight:510;margin-bottom:2px;">用于图片识别</div>
         <div class="muted" style="font-size:12px;">收到图片时使用当前模型提取文字内容</div>
       </div>
-      <label class="toggle-switch">
-        <input type="checkbox" name="vision_use_main" value="1" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
+      <span class="toggle-switch">
+        <input id="vision-use-main" type="checkbox" name="vision_use_main" value="1" onchange="toggleVision()" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
         <span class="toggle-slider"></span>
-      </label>
+      </span>
     </label>
+    <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
     <div class="row" style="margin-top:4px;">
-      <button type="submit" formaction="/console/ai/test" class="secondary">测试连接</button>
-      <button type="submit">保存</button>
+      <button type="button" class="secondary" data-endpoint="/console/ai/test" onclick="runProbe(this, 'main', 'test')">测试连接</button>
+      <button type="submit">保存主模型</button>
     </div>
   </form>
 </div>
 
-<div class="card" id="vision-card" style="display:none;">
+<div class="card" id="vision-card" hidden>
   <h2>识图模型</h2>
-  <p class="muted" style="margin-bottom:12px;">当收到图片时，调用该识图模型识别文字。</p>
+  <p class="muted" style="margin-bottom:12px;">收到图片时使用独立模型识别文字。拉取和测试不会保存配置。</p>
   <form method="post" action="/console/ai/vision" class="stack">
     <input type="hidden" name="vision_use_main" value="false">
     <div class="row" style="gap:16px;">
       <label style="flex:1;">
-          <span>供应商</span>
-          <div class="cs-wrap" data-onchange="fillUrl" data-arg="vision_base_url">
-            <div class="cs-trigger">{{ vision_provider_name or providers[0].name }}</div>
-            <div class="cs-drop">
-              {% for provider in providers %}
-              <div class="cs-opt {% if provider.name == vision_provider_name %}sel{% endif %}" data-value="{{ provider.name }}">{{ provider.name }}</div>
-              {% endfor %}
-            </div>
-            <input type="hidden" name="vision_provider_name" value="{{ vision_provider_name }}">
-          </div>
-        </label>
-      <label style="max-width:180px;">
-          <span>类型</span>
-          <div class="cs-wrap">
-            <div class="cs-trigger">{{ 'Anthropic' if vision_provider_type == 'anthropic' else 'OpenAI Compatible' }}</div>
-            <div class="cs-drop">
-              <div class="cs-opt {% if vision_provider_type == 'openai_compatible' %}sel{% endif %}" data-value="openai_compatible">OpenAI Compatible</div>
-              <div class="cs-opt {% if vision_provider_type == 'anthropic' %}sel{% endif %}" data-value="anthropic">Anthropic</div>
-            </div>
-            <input type="hidden" name="vision_provider_type" value="{{ vision_provider_type }}">
-          </div>
-        </label>
+        <span>供应商</span>
+        <select name="vision_provider_name" data-current-value="{{ vision_provider_name or providers[0].name }}" onchange="applyProviderPreset(this, 'vision')">
+          {% for provider in providers %}
+          <option value="{{ provider.name }}" {% if provider.name == (vision_provider_name or providers[0].name) %}selected{% endif %}>{{ provider.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label style="max-width:220px;">
+        <span>接口协议</span>
+        <select name="vision_provider_type" data-current-value="{{ vision_provider_type }}" onchange="applyProviderType(this, 'vision')">
+          <option value="openai_compatible" {% if vision_provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
+          <option value="anthropic" {% if vision_provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
+        </select>
+      </label>
     </div>
     <label>
       <span>Base URL</span>
-      <input name="vision_base_url" value="{{ vision_base_url }}">
+      <input name="vision_base_url" type="url" value="{{ vision_base_url or providers[0].base_url }}" required>
     </label>
     <label>
       <span>API Key</span>
-      <input name="vision_api_key" type="password" value="" placeholder="{{ vision_api_key_masked or '留空表示保持现有值' }}" autocomplete="off">
+      <input name="vision_api_key" type="password" value="" placeholder="{{ vision_api_key_masked or '请输入 API Key；本地免鉴权服务可留空' }}" autocomplete="new-password">
     </label>
+    {% if vision_api_key_masked %}
+    <label class="inline-check">
+      <input type="checkbox" name="clear_vision_api_key" value="1">
+      <span>清除已保存的识图 API Key</span>
+    </label>
+    {% endif %}
     <div class="row" style="align-items:flex-end;">
       <label style="flex:1;">
-          <span>模型</span>
-          {% if vision_models %}
-          <div class="cs-wrap">
-            <div class="cs-trigger">{{ vision_model or '选择模型' }}</div>
-            <div class="cs-drop">
-              {% for m in vision_models %}
-              <div class="cs-opt {% if vision_model == m %}sel{% endif %}" data-value="{{ m }}">{{ m }}</div>
-              {% endfor %}
-            </div>
-            <input type="hidden" name="vision_model" value="{{ vision_model }}">
-          </div>
-          {% else %}
-           <input name="vision_model" value="{{ vision_model }}" placeholder="先拉取模型列表后选择">
-           {% endif %}
-         </label>
-       <button type="submit" formaction="/console/ai/vision-models" class="secondary">拉取模型列表</button>
-     </div>
-     <div class="row" style="margin-top:4px;">
-       <button type="submit" formaction="/console/ai/vision-test" class="secondary">测试连接</button>
-       <button type="submit">保存</button>
-     </div>
-   </form>
- </div>
- {% endblock %}
+        <span>模型</span>
+        <input name="vision_model" list="vision-model-options" value="{{ vision_model }}" placeholder="输入模型 ID，或先拉取模型列表" required>
+        <datalist id="vision-model-options">
+          {% for model_id in vision_models %}<option value="{{ model_id }}"></option>{% endfor %}
+        </datalist>
+        <input type="hidden" name="vision_available_models_raw" value="{{ vision_models | join(',') }}">
+      </label>
+      <button type="button" class="secondary" data-endpoint="/console/ai/vision-models" onclick="runProbe(this, 'vision', 'models')">拉取模型列表</button>
+    </div>
+    <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
+    <div class="row" style="margin-top:4px;">
+      <button type="button" class="secondary" data-endpoint="/console/ai/vision-test" onclick="runProbe(this, 'vision', 'test')">测试连接</button>
+      <button type="submit">保存识图模型</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

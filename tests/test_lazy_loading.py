@@ -6,7 +6,13 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.ai_provider_service import AIProviderConfig, AIProviderService
+from app.services.ai_provider_service import (
+    CLIENT_MAX_RETRIES,
+    COMPLETION_TIMEOUT_SECONDS,
+    PROBE_TIMEOUT_SECONDS,
+    AIProviderConfig,
+    AIProviderService,
+)
 
 
 HEAVY_MODULES = (
@@ -91,6 +97,7 @@ def test_configured_channels_are_started() -> None:
 
 def test_first_openai_call_uses_and_closes_lazy_client(monkeypatch) -> None:
     instances = []
+    client_kwargs = []
 
     class FakeCompletions:
         async def create(self, **_kwargs):
@@ -98,10 +105,11 @@ def test_first_openai_call_uses_and_closes_lazy_client(monkeypatch) -> None:
             return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     class FakeClient:
-        def __init__(self, **_kwargs):
+        def __init__(self, **kwargs):
             self.chat = SimpleNamespace(completions=FakeCompletions())
             self.closed = False
             instances.append(self)
+            client_kwargs.append(kwargs)
 
         async def __aenter__(self):
             return self
@@ -119,20 +127,25 @@ def test_first_openai_call_uses_and_closes_lazy_client(monkeypatch) -> None:
     assert result == "{\"ok\": true}"
     assert len(instances) == 1
     assert instances[0].closed is True
+    assert client_kwargs[0]["default_headers"] == {"User-Agent": "ai-calendar-assistant"}
+    assert client_kwargs[0]["timeout"] == COMPLETION_TIMEOUT_SECONDS
+    assert client_kwargs[0]["max_retries"] == CLIENT_MAX_RETRIES
 
 
 def test_first_anthropic_call_uses_and_closes_lazy_client(monkeypatch) -> None:
     instances = []
+    client_kwargs = []
 
     class FakeMessages:
         async def create(self, **_kwargs):
             return SimpleNamespace(content=[SimpleNamespace(type="text", text="{\"ok\": true}")])
 
     class FakeClient:
-        def __init__(self, **_kwargs):
+        def __init__(self, **kwargs):
             self.messages = FakeMessages()
             self.closed = False
             instances.append(self)
+            client_kwargs.append(kwargs)
 
         async def __aenter__(self):
             return self
@@ -150,6 +163,81 @@ def test_first_anthropic_call_uses_and_closes_lazy_client(monkeypatch) -> None:
     assert result == "{\"ok\": true}"
     assert len(instances) == 1
     assert instances[0].closed is True
+    assert client_kwargs[0]["base_url"] == "https://api.anthropic.com"
+    assert client_kwargs[0]["timeout"] == COMPLETION_TIMEOUT_SECONDS
+    assert client_kwargs[0]["max_retries"] == CLIENT_MAX_RETRIES
+
+
+def test_anthropic_vision_uses_native_image_message_and_custom_base_url(monkeypatch) -> None:
+    calls = []
+    client_kwargs = []
+
+    class FakeMessages:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="识别结果")])
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.messages = FakeMessages()
+            client_kwargs.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    import app.services.ai_provider_service as provider_module
+
+    monkeypatch.setattr(provider_module, "_anthropic_sdk", lambda: (FakeClient, RuntimeError))
+    config = AIProviderConfig("anthropic", "https://anthropic-gateway.example", "test", "claude-test")
+
+    result = asyncio.run(AIProviderService().vision_completion(config, "iVBORw0KGgo="))
+
+    assert result == "识别结果"
+    assert client_kwargs[0]["base_url"] == "https://anthropic-gateway.example"
+    image_block = calls[0]["messages"][0]["content"][0]
+    assert image_block == {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgo=",
+        },
+    }
+
+
+def test_anthropic_model_list_comes_from_provider(monkeypatch) -> None:
+    client_kwargs = []
+
+    class FakeModels:
+        async def list(self):
+            return SimpleNamespace(
+                data=[SimpleNamespace(id="claude-z"), SimpleNamespace(id="claude-a")]
+            )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.models = FakeModels()
+            client_kwargs.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    import app.services.ai_provider_service as provider_module
+
+    monkeypatch.setattr(provider_module, "_anthropic_sdk", lambda: (FakeClient, RuntimeError))
+    config = AIProviderConfig("anthropic", "https://anthropic-gateway.example", "test")
+
+    models = asyncio.run(AIProviderService().list_models(config))
+
+    assert models == ["claude-a", "claude-z"]
+    assert client_kwargs[0]["base_url"] == "https://anthropic-gateway.example"
+    assert client_kwargs[0]["timeout"] == PROBE_TIMEOUT_SECONDS
 
 
 def test_telegram_reload_bot_creates_and_reuses_runtime() -> None:
