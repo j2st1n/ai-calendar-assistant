@@ -41,7 +41,7 @@ def test_mobile_navigation_uses_a_scrollable_drawer():
     template = Path("app/web/templates/base.html").read_text()
     styles = Path("app/web/static/styles.css").read_text()
 
-    assert 'href="/static/styles.css?v=4"' in template
+    assert 'href="/static/styles.css?v=5"' in template
     assert 'data-mobile-menu-toggle' in template
     assert 'id="console-sidebar"' in template
     assert 'data-mobile-menu-close' in template

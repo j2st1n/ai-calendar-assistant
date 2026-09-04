@@ -33,11 +33,16 @@ def test_main_and_vision_forms_use_native_controls_and_draft_probes() -> None:
 
     assert '<select name="provider_name"' in template
     assert '<select name="vision_provider_name"' in template
-    assert 'type="button" class="secondary" data-endpoint="/console/ai/models"' in template
-    assert 'type="button" class="secondary" data-endpoint="/console/ai/vision-models"' in template
+    assert 'data-endpoint="/console/ai/models"' in template
+    assert 'data-endpoint="/console/ai/vision-models"' in template
     assert "body: new FormData(form)" in template
     assert 'name="available_models_raw"' in template
     assert 'name="vision_available_models_raw"' in template
+    assert template.count('role="combobox"') == 2
+    assert template.count('role="listbox"') == 2
+    assert "aria-activedescendant" in template
+    assert "data-model-toggle" in template
+    assert "<datalist" not in template
     routes = (Path(__file__).parents[1] / "app/web/routes.py").read_text()
     assert 'request.session["ai_models"]' not in routes
     assert 'request.session["ai_vision_models"]' not in routes

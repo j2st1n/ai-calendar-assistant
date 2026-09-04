@@ -15,15 +15,13 @@ function fieldsFor(prefix) {
     apiKey: vision ? 'vision_api_key' : 'api_key',
     clearKey: vision ? 'clear_vision_api_key' : 'clear_api_key',
     model: vision ? 'vision_model' : 'model',
-    modelsRaw: vision ? 'vision_available_models_raw' : 'available_models_raw',
-    modelOptions: vision ? 'vision-model-options' : 'main-model-options'
+    modelsRaw: vision ? 'vision_available_models_raw' : 'available_models_raw'
   };
 }
 
 function resetProviderDraft(form, fields, message) {
   form.elements[fields.model].value = '';
-  form.elements[fields.modelsRaw].value = '';
-  document.getElementById(fields.modelOptions).replaceChildren();
+  setModelPickerModels(form.elements[fields.model], [], false);
   const keyInput = form.elements[fields.apiKey];
   keyInput.value = '';
   keyInput.placeholder = '配置已切换，请输入新的 API Key';
@@ -77,19 +75,206 @@ function setFormStatus(form, message, isError) {
   status.hidden = !message;
 }
 
+function normalizeModelIds(models) {
+  const seen = new Set();
+  return (models || []).map(String).map(function(model) {
+    return model.trim();
+  }).filter(function(model) {
+    if (!model || seen.has(model)) return false;
+    seen.add(model);
+    return true;
+  });
+}
+
+function modelPickerParts(input) {
+  const picker = input.closest('[data-model-picker]');
+  return {
+    picker: picker,
+    list: picker.querySelector('[data-model-list]'),
+    toggle: picker.querySelector('[data-model-toggle]'),
+    raw: picker.querySelector('[data-model-raw]'),
+    count: picker.closest('.model-picker-field').querySelector('[data-model-count]'),
+    meta: picker.querySelector('[data-model-meta]')
+  };
+}
+
+function modelIdsFor(input) {
+  return normalizeModelIds(modelPickerParts(input).raw.value.split(','));
+}
+
+function updateModelMeta(input, models) {
+  const parts = modelPickerParts(input);
+  const value = input.value.trim();
+  parts.count.textContent = models.length ? models.length + ' 个候选' : '暂无候选';
+  if (!models.length) {
+    parts.meta.textContent = '可直接输入模型 ID，或先拉取模型列表。';
+  } else if (models.includes(value)) {
+    parts.meta.textContent = '已选择已拉取的模型；也可以搜索或输入自定义 ID。';
+  } else if (value) {
+    parts.meta.textContent = '当前为自定义模型 ID；另有 ' + models.length + ' 个已拉取候选。';
+  } else {
+    parts.meta.textContent = '可搜索 ' + models.length + ' 个候选，也可以直接输入自定义模型 ID。';
+  }
+}
+
+function setActiveModelOption(input, index) {
+  const parts = modelPickerParts(input);
+  const options = Array.from(parts.list.querySelectorAll('[role="option"]'));
+  if (!options.length) {
+    input.removeAttribute('aria-activedescendant');
+    parts.picker.dataset.activeIndex = '-1';
+    return;
+  }
+  const boundedIndex = Math.max(0, Math.min(index, options.length - 1));
+  options.forEach(function(option, optionIndex) {
+    option.classList.toggle('active', optionIndex === boundedIndex);
+  });
+  parts.picker.dataset.activeIndex = String(boundedIndex);
+  input.setAttribute('aria-activedescendant', options[boundedIndex].id);
+  options[boundedIndex].scrollIntoView({block: 'nearest'});
+}
+
+function chooseModelOption(input, value) {
+  input.value = value;
+  closeModelPicker(input);
+  updateModelMeta(input, modelIdsFor(input));
+  input.dispatchEvent(new Event('change', {bubbles: true}));
+  input.focus();
+}
+
+function renderModelOptions(input, query) {
+  const parts = modelPickerParts(input);
+  const models = modelIdsFor(input);
+  const normalizedQuery = (query || '').trim().toLocaleLowerCase();
+  const filteredModels = normalizedQuery ? models.filter(function(model) {
+    return model.toLocaleLowerCase().includes(normalizedQuery);
+  }) : models;
+  parts.list.replaceChildren();
+
+  if (!filteredModels.length) {
+    const empty = document.createElement('div');
+    empty.className = 'model-option-empty';
+    empty.textContent = models.length
+      ? '没有匹配项，仍可直接使用当前输入的自定义模型 ID。'
+      : '尚未拉取模型，可直接输入模型 ID。';
+    parts.list.appendChild(empty);
+    setActiveModelOption(input, -1);
+    return;
+  }
+
+  filteredModels.forEach(function(model, index) {
+    const option = document.createElement('div');
+    option.id = parts.list.id + '-option-' + index;
+    option.className = 'model-option';
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(model === input.value));
+    option.title = model;
+
+    const name = document.createElement('span');
+    name.className = 'model-option-name';
+    name.textContent = model;
+    option.appendChild(name);
+    if (model === input.value) {
+      const selected = document.createElement('span');
+      selected.className = 'model-option-selected';
+      selected.textContent = '已选';
+      option.appendChild(selected);
+    }
+    option.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      chooseModelOption(input, model);
+    });
+    option.addEventListener('mousemove', function() {
+      setActiveModelOption(input, index);
+    });
+    parts.list.appendChild(option);
+  });
+
+  const selectedIndex = filteredModels.indexOf(input.value);
+  setActiveModelOption(input, selectedIndex >= 0 ? selectedIndex : 0);
+}
+
+function openModelPicker(input, query) {
+  const parts = modelPickerParts(input);
+  parts.list.hidden = false;
+  renderModelOptions(input, query);
+  input.setAttribute('aria-expanded', 'true');
+  parts.toggle.setAttribute('aria-expanded', 'true');
+}
+
+function closeModelPicker(input) {
+  const parts = modelPickerParts(input);
+  parts.list.hidden = true;
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-activedescendant');
+  parts.toggle.setAttribute('aria-expanded', 'false');
+  parts.picker.dataset.activeIndex = '-1';
+}
+
+function setModelPickerModels(input, models, openAfterUpdate) {
+  const normalizedModels = normalizeModelIds(models);
+  const parts = modelPickerParts(input);
+  parts.raw.value = normalizedModels.join(',');
+  updateModelMeta(input, normalizedModels);
+  if (openAfterUpdate) openModelPicker(input, '');
+  else closeModelPicker(input);
+}
+
+function initializeModelPicker(input) {
+  const parts = modelPickerParts(input);
+  setModelPickerModels(input, parts.raw.value.split(','), false);
+  parts.toggle.addEventListener('click', function() {
+    const expanded = input.getAttribute('aria-expanded') === 'true';
+    if (expanded) closeModelPicker(input);
+    else openModelPicker(input, '');
+    input.focus();
+  });
+  input.addEventListener('click', function() {
+    openModelPicker(input, '');
+  });
+  input.addEventListener('input', function() {
+    updateModelMeta(input, modelIdsFor(input));
+    openModelPicker(input, input.value);
+  });
+  input.addEventListener('keydown', function(event) {
+    const expanded = input.getAttribute('aria-expanded') === 'true';
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!expanded) openModelPicker(input, '');
+      const options = parts.list.querySelectorAll('[role="option"]');
+      if (!options.length) return;
+      const currentIndex = Number(parts.picker.dataset.activeIndex || '-1');
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      setActiveModelOption(input, currentIndex < 0 ? 0 : currentIndex + direction);
+    } else if (event.key === 'Enter' && expanded) {
+      const activeIndex = Number(parts.picker.dataset.activeIndex || '-1');
+      const options = parts.list.querySelectorAll('[role="option"]');
+      if (activeIndex >= 0 && options[activeIndex]) {
+        event.preventDefault();
+        chooseModelOption(input, options[activeIndex].querySelector('.model-option-name').textContent);
+      }
+    } else if (event.key === 'Escape' && expanded) {
+      event.preventDefault();
+      closeModelPicker(input);
+    } else if (event.key === 'Tab') {
+      closeModelPicker(input);
+    }
+  });
+  input.addEventListener('blur', function() {
+    window.setTimeout(function() {
+      if (!parts.picker.contains(document.activeElement)) closeModelPicker(input);
+    }, 0);
+  });
+}
+
 function updateModelOptions(form, prefix, models) {
   const fields = fieldsFor(prefix);
   const input = form.elements[fields.model];
   const currentModel = input.value;
-  const datalist = document.getElementById(fields.modelOptions);
-  datalist.replaceChildren(...models.map(function(model) {
-    const option = document.createElement('option');
-    option.value = model;
-    return option;
-  }));
-  form.elements[fields.modelsRaw].value = models.join(',');
-  if (!models.includes(currentModel)) input.value = '';
-  input.placeholder = models.length ? '输入关键词或从列表中选择' : 'Provider 未返回模型';
+  const normalizedModels = normalizeModelIds(models);
+  if (!normalizedModels.includes(currentModel)) input.value = '';
+  input.placeholder = normalizedModels.length ? '搜索或输入模型 ID' : '输入模型 ID，或先拉取模型列表';
+  setModelPickerModels(input, normalizedModels, true);
 }
 
 async function runProbe(button, prefix, operation) {
@@ -127,6 +312,12 @@ async function runProbe(button, prefix, operation) {
 
 window.addEventListener('DOMContentLoaded', function() {
   toggleVision();
+  document.querySelectorAll('[data-model-input]').forEach(initializeModelPicker);
+  document.addEventListener('pointerdown', function(event) {
+    document.querySelectorAll('[data-model-picker]').forEach(function(picker) {
+      if (!picker.contains(event.target)) closeModelPicker(picker.querySelector('[data-model-input]'));
+    });
+  });
 });
 </script>
 
@@ -170,16 +361,25 @@ window.addEventListener('DOMContentLoaded', function() {
       <span>清除已保存的 API Key</span>
     </label>
     {% endif %}
-    <div class="row" style="align-items:flex-end;">
-      <label style="flex:1;">
-        <span>模型</span>
-        <input name="model" list="main-model-options" value="{{ model }}" placeholder="输入模型 ID，或先拉取模型列表" required>
-        <datalist id="main-model-options">
-          {% for model_id in available_models %}<option value="{{ model_id }}"></option>{% endfor %}
-        </datalist>
-        <input type="hidden" name="available_models_raw" value="{{ available_models | join(',') }}">
-      </label>
-      <button type="button" class="secondary" data-endpoint="/console/ai/models" onclick="runProbe(this, 'main', 'models')">拉取模型列表</button>
+    <div class="model-picker-row">
+      <div class="model-picker-field">
+        <div class="model-picker-label-row">
+          <label for="main-model-input">模型</label>
+          <span class="model-picker-count" data-model-count>{{ available_models | length }} 个候选</span>
+        </div>
+        <div class="model-picker" data-model-picker>
+          <div class="model-picker-shell">
+            <div class="model-picker-control">
+              <input id="main-model-input" class="model-picker-input mono" name="model" value="{{ model }}" placeholder="输入模型 ID，或先拉取模型列表" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="main-model-list" aria-describedby="main-model-meta" autocomplete="off" spellcheck="false" data-model-input required>
+              <button type="button" class="model-picker-toggle" data-model-toggle aria-label="浏览主模型候选" aria-haspopup="listbox" aria-controls="main-model-list" aria-expanded="false">浏览</button>
+            </div>
+            <div id="main-model-list" class="model-picker-list" role="listbox" aria-label="主模型候选" data-model-list hidden></div>
+          </div>
+          <p id="main-model-meta" class="model-picker-meta" data-model-meta aria-live="polite"></p>
+          <input type="hidden" name="available_models_raw" value="{{ available_models | join(',') }}" data-model-raw>
+        </div>
+      </div>
+      <button type="button" class="secondary model-pull-button" data-endpoint="/console/ai/models" onclick="runProbe(this, 'main', 'models')">拉取模型列表</button>
     </div>
     <label class="toggle-row" style="margin-top:12px;">
       <div>
@@ -235,16 +435,25 @@ window.addEventListener('DOMContentLoaded', function() {
       <span>清除已保存的识图 API Key</span>
     </label>
     {% endif %}
-    <div class="row" style="align-items:flex-end;">
-      <label style="flex:1;">
-        <span>模型</span>
-        <input name="vision_model" list="vision-model-options" value="{{ vision_model }}" placeholder="输入模型 ID，或先拉取模型列表" required>
-        <datalist id="vision-model-options">
-          {% for model_id in vision_models %}<option value="{{ model_id }}"></option>{% endfor %}
-        </datalist>
-        <input type="hidden" name="vision_available_models_raw" value="{{ vision_models | join(',') }}">
-      </label>
-      <button type="button" class="secondary" data-endpoint="/console/ai/vision-models" onclick="runProbe(this, 'vision', 'models')">拉取模型列表</button>
+    <div class="model-picker-row">
+      <div class="model-picker-field">
+        <div class="model-picker-label-row">
+          <label for="vision-model-input">模型</label>
+          <span class="model-picker-count" data-model-count>{{ vision_models | length }} 个候选</span>
+        </div>
+        <div class="model-picker" data-model-picker>
+          <div class="model-picker-shell">
+            <div class="model-picker-control">
+              <input id="vision-model-input" class="model-picker-input mono" name="vision_model" value="{{ vision_model }}" placeholder="输入模型 ID，或先拉取模型列表" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="vision-model-list" aria-describedby="vision-model-meta" autocomplete="off" spellcheck="false" data-model-input required>
+              <button type="button" class="model-picker-toggle" data-model-toggle aria-label="浏览识图模型候选" aria-haspopup="listbox" aria-controls="vision-model-list" aria-expanded="false">浏览</button>
+            </div>
+            <div id="vision-model-list" class="model-picker-list" role="listbox" aria-label="识图模型候选" data-model-list hidden></div>
+          </div>
+          <p id="vision-model-meta" class="model-picker-meta" data-model-meta aria-live="polite"></p>
+          <input type="hidden" name="vision_available_models_raw" value="{{ vision_models | join(',') }}" data-model-raw>
+        </div>
+      </div>
+      <button type="button" class="secondary model-pull-button" data-endpoint="/console/ai/vision-models" onclick="runProbe(this, 'vision', 'models')">拉取模型列表</button>
     </div>
     <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
     <div class="row" style="margin-top:4px;">
