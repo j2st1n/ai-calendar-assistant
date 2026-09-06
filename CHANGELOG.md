@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.21.3] - 2026-09-06
+
+
+### Other
+
+- run real CalDAV thread calls on asyncio backend
+
+
 ## [v1.21.2] - 2026-09-06
 
 
@@ -12,6 +20,12 @@
 ### Documentation
 
 - update TODO.md with v1.21.1 deployment and verification record
+
+
+
+### Maintenance
+
+- release v1.21.2
 
 
 ## [v1.21.1] - 2026-09-06
