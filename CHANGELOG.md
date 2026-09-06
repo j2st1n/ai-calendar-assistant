@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.21.2] - 2026-09-06
+
+
+### Bug Fixes
+
+- scope undo targets and handle CalDAV failures safely
+
+
+
+### Documentation
+
+- update TODO.md with v1.21.1 deployment and verification record
+
+
 ## [v1.21.1] - 2026-09-06
 
 
@@ -12,6 +26,12 @@
 ### Documentation
 
 - update TODO.md with v1.21.0 deployment and verification record
+
+
+
+### Maintenance
+
+- release v1.21.1
 
 
 ## [v1.21.0] - 2026-09-06
