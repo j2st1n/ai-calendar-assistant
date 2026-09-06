@@ -592,8 +592,9 @@ async def test_undo_update_delete_failure_compensates(cleanup_ok):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
 @pytest.mark.parametrize("failure_at", ["discovery", "lookup", "listing", "load"])
-async def test_undo_delete_blocks_real_service_query_failures(failure_at):
+async def test_undo_delete_blocks_real_service_query_failures(failure_at, anyio_backend):
     with _session() as session:
         session.add(EventRecord(source="telegram", source_user_id="u1", conversation_id="c1",
                                 operation="delete", title="Deleted", status="success", caldav_uid="original",
@@ -627,7 +628,8 @@ async def test_undo_delete_blocks_real_service_query_failures(failure_at):
 
 
 @pytest.mark.anyio
-async def test_get_event_confirmed_not_found_is_none():
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_get_event_confirmed_not_found_is_none(anyio_backend):
     from caldav.lib.error import NotFoundError
     client = MagicMock()
     cal = MagicMock()
