@@ -1,11 +1,31 @@
 # Changelog
 
+## [v1.19.1] - 2026-09-06
+
+
+### Bug Fixes
+
+- hide wizard card when configured and improve caldav multi-calendar discovery
+
+
+
+### Documentation
+
+- update TODO.md with v1.19.0 deployment and verification record
+
+
 ## [v1.19.0] - 2026-09-06
 
 
 ### Features
 
 - add onboarding wizard, failure inbox with retry, config versioning, probes and multi-theme support
+
+
+
+### Maintenance
+
+- release v1.19.0
 
 
 ## [v1.18.1] - 2026-09-06
