@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.20.0] - 2026-09-06
+
+
+### Documentation
+
+- update TODO.md with v1.19.2 deployment and verification record
+
+
+
+### Features
+
+- implement dual-column calendar settings, dashboard tray convergence and unified channels page
+
+
 ## [v1.19.2] - 2026-09-06
 
 
@@ -12,6 +26,12 @@
 ### Features
 
 - add core services status cards, harden caldav e2e and finalize phase 3.1
+
+
+
+### Maintenance
+
+- release v1.19.2
 
 
 ## [v1.19.1] - 2026-09-06
