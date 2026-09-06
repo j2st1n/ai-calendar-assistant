@@ -78,3 +78,9 @@ Phase 3.1 优化与实测验收（2026-09-06）：377 项 pytest 100% 通过（�
 3) 生产备份包（pre-v1.19.1）解密还原灾备演练：从 andnode 生产备份获取快照，SQLite PRAGMA integrity_check / quick_check / foreign_key_check 全部通过；基于生产密钥成功对 settings 中 8 项核心加密凭据 100% 完整无损解密，345 条历史 EventRecord 业务数据与 Passkey 凭据完整无损冷恢复；
 4) 首页全量服务状态指示灯卡片与视觉优化：app/web/routes.py 结构化汇总 5 大服务（AI 模型、CalDAV 日历、微信、TG、Discord）实时健康度与运行态；app/web/static/styles.css 扩充 .dot-muted 灰点与卡片悬停微交互；dashboard.html 首屏呈现统一服务运行状态卡片（dashboard-services-card）与状态指示灯；
 5) 至此，TODO.md 中全部 P1 阶段任务 100% 全部完成验收闭环。
+
+v1.19.2 发布与生产验收（2026-09-06）：代码提交 434159a，发布提交 45dbe73，Release run 34033119556 自动化生成 tag v1.19.2，Docker 镜像 ghcr.io/j2st1n/ai-calendar-assistant:v1.19.2 构建发布。andnode 生产环境灾备与升级切换完成（备份 pre-v1.19.2-20260906、保留 v1.19.1 回滚镜像 2661fee53d95）。线上生产环境全量验收通过：
+1) 容器 healthy，0 重启，启动与运行日志无 traceback 或异常错误；
+2) 内部 (http://127.0.0.1:9527/health) 与公网 (https://cal.3313107.xyz/health) 均返回 HTTP 200 及 {"status":"ok","version":"v1.19.2"}；
+3) Web 控制台首页「服务运行状态」（dashboard-services-card）卡片在生产真实环境下完整渲染 5 项核心服务（AI 主模型 / CalDAV 日历 / 微信 / Telegram / Discord），指示灯状态（AI 绿灯已验证、CalDAV 黄灯需复核、微信/TG/Discord 灰灯未启动/Token 已保存）准确，5 项服务一键跳转对应管理页（/console/ai, /console/caldav, /console/wechat, /console/telegram, /console/discord）均返回 HTTP 200；
+4) 本地分支代码与远端 Release v1.19.2 保持完全同步。
