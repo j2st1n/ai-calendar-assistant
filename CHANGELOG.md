@@ -1,11 +1,25 @@
 # Changelog
 
+## [v1.19.0] - 2026-09-06
+
+
+### Features
+
+- add onboarding wizard, failure inbox with retry, config versioning, probes and multi-theme support
+
+
 ## [v1.18.1] - 2026-09-06
 
 
 ### Bug Fixes
 
 - surface daily dashboard metrics and remove duplicate action
+
+
+
+### Maintenance
+
+- release v1.18.1
 
 
 ## [v1.18.0] - 2026-09-06
