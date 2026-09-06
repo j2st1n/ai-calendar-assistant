@@ -103,3 +103,10 @@ Phase 3.2 交互韧性与全量待办彻底闭环回归（2026-09-06）：459 �
 1) 限时撤销机制与远端最新状态校验防覆盖（Task t1）：在 `EventRecord` 模型与增量迁移中扩展 `snapshot_json` 与 `remote_etag` 字段；全链路持久化前置快照与远端 ETag 指纹（带 sha256 降级容错）；自然语言及快捷指令（撤销/undo/恢复/回退）拦截，严格执行 10 分钟 TTL 时效；执行逆向操作前主动核验远端状态与 ETag，检测到外部变动坚决阻断防覆盖；状态匹配时精准逆向补偿（create->delete, delete->create, update->update原快照）并记录审计日志；新增 16 项针对性测试；
 2) 批量日程清单化反馈与局部精准防重重试（Task t2）：在 `EventRecord` 中扩展 `batch_id` 与 `batch_index` 字段及索引并自动迁移；实现基于 RFC 4122 UUIDv5 的 `derive_batch_uid` 确定性算法，确保重发与重试时 UID 恒等幂等；多日程由逐条刷屏改为单条结构化批处理聚合报告；支持聊天自然语言重试与 Web 端 POST `/console/events/batch/{batch_id}/retry` 局部精准重试，跳过成功项仅重试失败项；新增 5 项针对性测试；
 3) 项目全部待办达成：至此，TODO.md 中全部 24 项待办 100% 全部完成验收，无任何遗留待办！全量 459 项 pytest 100% 通过，`git diff --check` 0 警告通过。
+
+v1.21.0 发布与生产验收（2026-09-06）：代码提交 a24a233，发布提交 3dc078e，Release run 34040444139 自动化生成 tag v1.21.0，Docker 镜像 ghcr.io/j2st1n/ai-calendar-assistant:v1.21.0 构建发布。andnode 生产环境灾备与升级切换完成（备份 pre-v1.21.0-20260906、保留 v1.20.0 回滚镜像 7e13e8e4224b）。线上生产环境全量验收通过：
+1) 容器 healthy，0 重启，启动与运行日志无 traceback 或异常错误；
+2) 内部 (http://127.0.0.1:9527/health) 与公网 (https://cal.3313107.xyz/health) 均返回 HTTP 200 及 {"status":"ok","version":"v1.21.0"}；
+3) 生产数据库 SQLite PRAGMA integrity_check 与 foreign_key_check 100% 通过，增量迁移平滑生效（新增 snapshot_json, remote_etag, batch_id, batch_index 四项关键字段）；
+4) 限时撤销机制、ETag 校验防覆盖、批量日程聚合清单与局部精准防重重试全链路生产基线部署完毕；
+5) 本地分支代码与远端 Release v1.21.0 保持完全同步。
