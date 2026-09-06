@@ -1250,9 +1250,20 @@ async def _do_undo(
 
     status_condition = or_(EventRecord.status == "success", EventRecord.operation == "delete")
 
+    # Platform message IDs must be resolved within their originating conversation.
+    scope = [
+        EventRecord.source == ctx.source,
+        EventRecord.conversation_id == ctx.conversation_id,
+    ]
+    if not ctx.conversation_id:
+        if not ctx.source_user_id:
+            return [("🤔 缺少会话信息，无法安全定位要撤销的日程。", None)]
+        scope.append(EventRecord.source_user_id == ctx.source_user_id)
+
     if ctx.reply_to_message_id:
         target = session.execute(
             select(EventRecord).where(
+                *scope,
                 EventRecord.bot_message_id == ctx.reply_to_message_id,
                 status_condition,
                 EventRecord.operation.in_(["create", "update", "delete"]),
@@ -1263,6 +1274,7 @@ async def _do_undo(
         quoted_title, _ = _parse_title_and_start_from_quote(ctx.quoted_text)
         if quoted_title:
             base_q = [
+                *scope,
                 status_condition,
                 EventRecord.operation.in_(["create", "update", "delete"]),
                 EventRecord.title == quoted_title,
@@ -1274,6 +1286,9 @@ async def _do_undo(
             target = session.execute(
                 select(EventRecord).where(*base_q).order_by(EventRecord.created_at.desc())
             ).scalar()
+
+    if not target and (ctx.reply_to_message_id or ctx.quoted_text or ctx.quote_reference_present):
+        return [("🤔 未在当前会话找到引用的日程，请回复当前会话中的日程消息后再撤销。", None)]
 
     if not target:
         query_title = _extract_undo_target_title(text)
@@ -1427,10 +1442,27 @@ async def _do_undo(
             result = await _write_caldav_dict(old_snapshot, caldav)
             if not result:
                 return [(f"⚠️ 恢复日程「{target_title}」至原快照失败，请稍后重试。", None)]
-            await cal.delete_event(
+            deleted = await cal.delete_event(
                 caldav["url"], caldav["user"], caldav["pw"],
                 target.caldav_uid, target.caldav_href, ssl_verify=caldav["ssl"]
             )
+            if not deleted:
+                # Compensate the new snapshot copy; never record an incomplete restore as success.
+                cleaned_up = await cal.delete_event(
+                    caldav["url"], caldav["user"], caldav["pw"],
+                    result.get("uid"), result.get("href"), ssl_verify=caldav["ssl"]
+                )
+                if cleaned_up:
+                    return [(f"⚠️ 原日程「{target_title}」删除失败，已清理恢复副本，本次撤销未完成，请检查日历后重试。", None)]
+                _record(
+                    session, ctx, "update", target_title, text, "failed",
+                    json.dumps(old_snapshot, ensure_ascii=False), cr=result,
+                    event_id=target.event_id,
+                    err="[UNDO] 原日程删除失败，恢复副本清理失败，需人工检查重复日程",
+                    snapshot_json=target.event_json,
+                )
+                session.commit()
+                return [(f"⚠️ 原日程「{target_title}」删除失败，恢复副本也未能清理。日历可能存在重复日程，请先手动核对，勿重复撤销。", None)]
 
         restored_title = old_snapshot.get("title") or target_title
         rec_id = _record(

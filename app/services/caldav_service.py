@@ -542,8 +542,7 @@ class CalDAVService:
                 ssl_verify,
             )
         except Exception as exc:
-            logger.warning("get_event failed: %s", exc)
-            return None
+            raise CalDAVServiceError("远端日程查询失败，无法确认日程是否存在") from exc
 
     def _get_event_sync(
         self,
@@ -563,51 +562,39 @@ class CalDAVService:
             ssl_verify_cert=ssl_verify,
             timeout=120,
         )
+        from caldav.lib.error import NotFoundError
+
         calendars = client.get_calendars()
+        if not calendars:
+            raise CalDAVServiceError("未发现可查询的日历，无法确认日程是否存在")
         for cal in calendars:
-            try:
-                if uid and hasattr(cal, "event_by_uid"):
-                    try:
-                        obj = cal.event_by_uid(uid)
-                        if obj:
-                            info = self._extract_event_info(obj)
-                            if info:
-                                return info
-                    except Exception:
-                        pass
+            if uid and hasattr(cal, "event_by_uid"):
+                try:
+                    obj = cal.event_by_uid(uid)
+                except NotFoundError:
+                    obj = None
+                if obj:
+                    return self._extract_event_info(obj)
 
-                objects = []
-                if hasattr(cal, "objects"):
-                    try:
-                        objects = cal.objects()
-                    except Exception:
-                        objects = []
-                elif hasattr(cal, "events"):
-                    try:
-                        objects = cal.events()
-                    except Exception:
-                        objects = []
-
-                for obj in objects:
-                    obj_url = str(getattr(obj, "url", "") or "")
-                    obj_uid = str(getattr(obj, "id", "") or "")
-                    if (href and obj_url == href) or (uid and obj_uid == uid):
-                        info = self._extract_event_info(obj)
-                        if info:
-                            return info
-            except Exception:
-                continue
+            if hasattr(cal, "objects"):
+                objects = cal.objects()
+            elif hasattr(cal, "events"):
+                objects = cal.events()
+            else:
+                raise CalDAVServiceError("日历不支持日程查询")
+            for obj in objects:
+                obj_url = str(getattr(obj, "url", "") or "")
+                obj_uid = str(getattr(obj, "id", "") or "")
+                if (href and obj_url == href) or (uid and obj_uid == uid):
+                    return self._extract_event_info(obj)
         return None
 
     def _extract_event_info(self, obj: Any) -> dict[str, Any]:
         import hashlib
         data = getattr(obj, "data", None)
         if data is None and hasattr(obj, "load"):
-            try:
-                obj.load()
-                data = getattr(obj, "data", None)
-            except Exception:
-                pass
+            obj.load()
+            data = getattr(obj, "data", None)
         if isinstance(data, bytes):
             data_str = data.decode("utf-8", errors="replace")
         else:

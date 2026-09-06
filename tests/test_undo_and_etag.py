@@ -465,7 +465,7 @@ async def test_undo_target_by_quote_reference():
     await _write_one(session, _ctx(), "开会", event, caldav)
     session.commit()
 
-    quote_ctx = _ctx(quoted_text="📌 引用测试会议\n🕒 时间：2026-06-05 10:00")
+    quote_ctx = _ctx(quoted_text="📌 标题：引用测试会议\n🕒 时间：2026-06-05 10:00")
     replies = await _do_undo(session, quote_ctx, "撤销", caldav)
     assert len(replies) == 1
     assert "引用测试会议" in replies[0][0]
@@ -501,3 +501,138 @@ def test_caldav_service_extract_event_info_fallback_hash():
     assert info["uid"] == "event-uid-888"
     assert info["etag"].startswith("sha256:")
 
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("foreign_source,foreign_conversation", [
+    ("telegram", "c2"), ("discord", "c1"),
+])
+@pytest.mark.parametrize("local_message_id", ["42", "different"])
+async def test_undo_reply_is_scoped_and_never_falls_back(foreign_source, foreign_conversation, local_message_id):
+    with _session() as session:
+        now = datetime.now(timezone.utc)
+        local = EventRecord(source="telegram", source_user_id="u1", conversation_id="c1",
+                            bot_message_id=local_message_id, event_id="local-event", operation="create",
+                            title="Local", status="success", created_at=now - timedelta(seconds=1))
+        foreign = EventRecord(source=foreign_source, source_user_id="u1", conversation_id=foreign_conversation,
+                              bot_message_id="42", event_id="foreign-event", operation="create",
+                              title="Foreign", status="success", created_at=now)
+        session.add_all([local, foreign])
+        session.commit()
+        replies = await _do_undo(session, _ctx(reply_to_message_id="42"), "撤销", _caldav())
+        undo_id = replies[0][1]
+        if local_message_id == "42":
+            assert session.get(EventRecord, undo_id).event_id == "local-event"
+        else:
+            assert undo_id is None
+            assert len(session.execute(select(EventRecord)).scalars().all()) == 2
+
+
+@pytest.mark.anyio
+async def test_undo_reply_missing_conversation_does_not_match_other_user():
+    with _session() as session:
+        session.add(EventRecord(source="telegram", source_user_id="other", conversation_id=None,
+                                bot_message_id="42", operation="create", title="Other",
+                                status="success", created_at=datetime.now(timezone.utc)))
+        session.commit()
+        replies = await _do_undo(session, _ctx(conversation_id=None, reply_to_message_id="42"), "撤销", _caldav())
+        assert replies[0][1] is None
+
+
+@pytest.mark.anyio
+async def test_undo_quote_does_not_cross_channels():
+    with _session() as session:
+        session.add(EventRecord(source="discord", source_user_id="u1", conversation_id="c1",
+                                operation="create", title="周会", status="success",
+                                created_at=datetime.now(timezone.utc)))
+        session.commit()
+        replies = await _do_undo(session, _ctx(quoted_text="📌 标题：周会\n🕒 时间：2026-06-05 10:00"), "撤销", _caldav())
+        assert replies[0][1] is None
+
+
+@pytest.mark.anyio
+async def test_undo_unreadable_quote_does_not_undo_latest_event():
+    with _session() as session:
+        session.add(EventRecord(source="telegram", source_user_id="u1", conversation_id="c1",
+                                operation="create", title="Unrelated", status="success",
+                                created_at=datetime.now(timezone.utc)))
+        session.commit()
+        replies = await _do_undo(session, _ctx(quoted_text="unreadable quote"), "撤销", _caldav())
+        assert replies[0][1] is None
+        assert len(session.execute(select(EventRecord)).scalars().all()) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cleanup_ok", [True, False])
+async def test_undo_update_delete_failure_compensates(cleanup_ok):
+    with _session() as session:
+        snapshot = json.dumps({"title": "Before", "start_time": "2026-06-01T10:00:00+08:00"})
+        session.add(EventRecord(source="telegram", source_user_id="u1", conversation_id="c1",
+                                operation="update", title="After", status="success", event_id="event",
+                                caldav_uid="original", caldav_href="/original", remote_etag="v2",
+                                snapshot_json=snapshot, event_json=snapshot,
+                                created_at=datetime.now(timezone.utc)))
+        session.commit()
+        cal = AsyncMock()
+        cal.get_event.return_value = {"etag": "v2"}
+        cal.delete_event.side_effect = [False, cleanup_ok]
+        with patch("app.channels.message_processor.CalDAVService", return_value=cal), patch(
+            "app.channels.message_processor._write_caldav_dict", new=AsyncMock(return_value={"uid": "copy", "href": "/copy"})
+        ):
+            replies = await _do_undo(session, _ctx(), "撤销", _caldav(True))
+        assert replies[0][1] is None
+        assert "失败" in replies[0][0]
+        assert cal.delete_event.await_args_list[0].args[3:5] == ("original", "/original")
+        assert cal.delete_event.await_args_list[1].args[3:5] == ("copy", "/copy")
+        records = session.execute(select(EventRecord)).scalars().all()
+        assert not any(r.status == "success" and (r.error_message or "").startswith("[UNDO]") for r in records)
+        if not cleanup_ok:
+            assert records[-1].status == "failed"
+            assert records[-1].caldav_uid == "copy"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure_at", ["discovery", "lookup", "listing", "load"])
+async def test_undo_delete_blocks_real_service_query_failures(failure_at):
+    with _session() as session:
+        session.add(EventRecord(source="telegram", source_user_id="u1", conversation_id="c1",
+                                operation="delete", title="Deleted", status="success", caldav_uid="original",
+                                snapshot_json=json.dumps({"title": "Deleted", "start_time": "2026-06-01T10:00:00+08:00"}),
+                                created_at=datetime.now(timezone.utc)))
+        session.commit()
+        client = MagicMock()
+        cal = MagicMock()
+        client.get_calendars.return_value = [cal]
+        cal.event_by_uid.return_value = None
+        cal.objects.return_value = []
+        if failure_at == "discovery":
+            client.get_calendars.side_effect = ConnectionError("test failure")
+        elif failure_at == "lookup":
+            cal.event_by_uid.side_effect = ConnectionError("test failure")
+        elif failure_at == "listing":
+            cal.objects.side_effect = ConnectionError("test failure")
+        else:
+            obj = MagicMock()
+            obj.data = None
+            obj.load.side_effect = ConnectionError("test failure")
+            cal.event_by_uid.return_value = obj
+        with patch("app.services.caldav_service._DAVClient", return_value=client), patch(
+            "app.channels.message_processor._write_caldav_dict", new_callable=AsyncMock
+        ) as writer:
+            replies = await _do_undo(session, _ctx(), "撤销", _caldav(True))
+        assert "撤销已阻断" in replies[0][0]
+        assert replies[0][1] is None
+        writer.assert_not_awaited()
+        assert len(session.execute(select(EventRecord)).scalars().all()) == 1
+
+
+@pytest.mark.anyio
+async def test_get_event_confirmed_not_found_is_none():
+    from caldav.lib.error import NotFoundError
+    client = MagicMock()
+    cal = MagicMock()
+    client.get_calendars.return_value = [cal]
+    cal.event_by_uid.side_effect = NotFoundError("missing")
+    cal.objects.return_value = []
+    with patch("app.services.caldav_service._DAVClient", return_value=client):
+        assert await CalDAVService().get_event("https://example.test", "test", "test", uid="missing") is None
