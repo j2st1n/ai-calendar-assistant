@@ -64,3 +64,10 @@ v1.19.0 发布与生产验收（2026-09-06）：代码提交 c1bfcd2，发布提
 5) 本地分支代码与远端 Release v1.19.0 保持完全同步。
 
 向导显隐与 CalDAV 多日历探测优化回归（2026-09-06）：373 项 pytest 100% 通过（新增 9 项测试，针对首页已配置状态下隐藏配置向导卡片并保留侧边栏入口、CalDAV 与向导选择器已保存日历「[当前已保存]」状态标注与匹配发现、_list_calendars_sync 向上主体探测优先顺序与 163/QQ 单日历降级容错、_get_calendar_name 多层解析）。git diff --check 0 警告通过。
+
+v1.19.1 发布与生产验收（2026-09-06）：代码提交 8275aae，发布提交 495d9ad，Release run 34031182818 自动化生成 tag v1.19.1，Docker 镜像 ghcr.io/j2st1n/ai-calendar-assistant:v1.19.1 构建发布。andnode 生产环境灾备与升级切换完成（备份 pre-v1.19.1-20260906、保留 v1.19.0 回滚镜像 043d109f584f）。线上生产环境全量验收通过：
+1) 容器 healthy，0 重启，启动与运行日志无 traceback；
+2) 内部 (http://127.0.0.1:9527/health) 与公网 (https://cal.3313107.xyz/health) 均返回 HTTP 200 及 {"status":"ok","version":"v1.19.1"}；
+3) CalDAV（iCloud 日历服务，向上主体溯源探测成功发现 5 个完整可用日历：AI、Personal、Reminders ⚠️、Home、Work）多日历拉取验证 100% 成功；
+4) Web 控制台首页已配置状态下向导卡片（dashboard-wizard-card）成功隐藏，侧边栏向导入口正常保留；
+5) 本地分支代码与远端 Release v1.19.1 保持完全同步。
