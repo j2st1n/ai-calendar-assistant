@@ -116,3 +116,11 @@ v1.21.1 发布与生产验收（2026-09-06）：代码提交 d6613b8，发布提
 2) 内部 (http://127.0.0.1:9527/health) 与公网 (https://cal.3313107.xyz/health) 均返回 HTTP 200 及 {"status":"ok","version":"v1.21.1"}；
 3) 线上生产环境 /console/channels 页面实测：现代分段胶囊 Tab（.channel-tabs.channel-pills）结构完整渲染、文案前缀去重（无重复“微信：/Telegram：/Discord：”）生效、微信扫码卡片平铺展开（无 details 折叠）、微信/TG/Discord 渠道 Tab 切换流畅；
 4) 本地代码与远端 Release v1.21.1 保持完全同步（已拉取 ce7ba21），更新归档记录闭环。
+
+
+v1.21.3 撤销 P1 修复发布与验收（2026-09-06）：
+- 修复提交 e9bbd08，测试后端修正 0fbfbe5，发布提交 afa7b17；Release run 34043381976 成功，CI 554 passed、35 warnings。
+- v1.21.2 发布测试因 Trio 与 asyncio.to_thread 不兼容失败，未构建镜像、未部署；真实 CalDAV 调用测试改为生产使用的 asyncio 后端后发布 v1.21.3。
+- andnode 已从 v1.21.1 升级至 v1.21.3；容器 healthy、0 重启，内部及公网 /health 返回 v1.21.3，控制台入口 HTTP 303，启动日志错误标记为 0。
+- 两个修复源码文件的生产 SHA-256 与发布代码一致；异常路径通过隔离测试验收，未对真实日程执行撤销破坏性测试。
+- 停服备份保存在 /home/codex/docker/ai-calendar/backups/pre-v1.21.3-20260906T155002Z，包含 data.tar.gz、env、docker-compose.yml；保留 v1.21.1 镜像可回滚。补偿清理失败仍需按提示人工核对。
