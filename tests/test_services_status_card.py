@@ -28,7 +28,8 @@ def test_status_context_contains_5_services_unconfigured(db_session):
     for sid in ("ai", "caldav", "wechat", "telegram", "discord"):
         assert services[sid]["dot_class"] == "dot-muted"
         assert services[sid]["state_label"] in ("未配置", "未启动")
-        assert services[sid]["href"] == f"/console/{sid}"
+        expected_href = f"/console/channels?tab={sid}" if sid in ("wechat", "telegram", "discord") else f"/console/{sid}"
+        assert services[sid]["href"] == expected_href
 
 def test_status_context_ai_and_caldav_statuses(db_session):
     svc = SettingsService(db_session)
@@ -118,5 +119,6 @@ def test_dashboard_template_renders_services_status_card(db_session):
     assert "5 大核心服务与消息渠道实时状态监控" in html
     for sid in ("ai", "caldav", "wechat", "telegram", "discord"):
         assert f'id="service-status-{sid}"' in html
-        assert f'href="/console/{sid}"' in html
+        expected_href = f'/console/channels?tab={sid}' if sid in ("wechat", "telegram", "discord") else f'/console/{sid}'
+        assert f'href="{expected_href}"' in html
     assert "dot-muted" in html

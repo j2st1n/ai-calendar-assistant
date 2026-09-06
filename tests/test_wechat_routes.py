@@ -79,9 +79,12 @@ class TestWechatPage:
         })
         app = _make_app()
         resp = await _get(app, "/console/wechat")
-        assert resp.status_code == 200
-        assert "已配置" in resp.text
-        assert "扫码登录" in resp.text
+        assert resp.status_code == 307
+        assert resp.headers["location"] == "/console/channels?tab=wechat"
+        resp_channels = await _get(app, "/console/channels?tab=wechat")
+        assert resp_channels.status_code == 200
+        assert "已配置" in resp_channels.text
+        assert "扫码登录" in resp_channels.text
 
     @pytest.mark.anyio
     @patch("app.web.routes.WechatService")
@@ -95,8 +98,11 @@ class TestWechatPage:
         })
         app = _make_app()
         resp = await _get(app, "/console/wechat")
-        assert resp.status_code == 200
-        assert "未配置" in resp.text
+        assert resp.status_code == 307
+        assert resp.headers["location"] == "/console/channels?tab=wechat"
+        resp_channels = await _get(app, "/console/channels?tab=wechat")
+        assert resp_channels.status_code == 200
+        assert "未配置" in resp_channels.text
 
     @pytest.mark.anyio
     async def test_get_redirects_without_auth(self):
@@ -241,7 +247,7 @@ class TestClearToken:
         app = _make_app()
         resp = await _post_form(app, "/console/wechat/clear")
         assert resp.status_code == 303
-        assert resp.headers["location"] == "/console/wechat"
+        assert resp.headers["location"] == "/console/channels?tab=wechat"
         mock_wx.stop_bot.assert_awaited_once()
         svc.set.assert_any_call("wechat_bot_token", None)
         svc.set.assert_any_call("wechat_updates_buf", None)
@@ -401,7 +407,7 @@ class TestWechatPageRuntime:
             "wechat_cursor_length": 42,
         })
         app = _make_app()
-        resp = await _get(app, "/console/wechat")
+        resp = await _get(app, "/console/channels?tab=wechat")
         assert resp.status_code == 200
         assert "运行中" in resp.text
         assert "已停止" not in resp.text
@@ -421,7 +427,7 @@ class TestWechatPageRuntime:
             "wechat_cursor_length": 0,
         })
         app = _make_app()
-        resp = await _get(app, "/console/wechat")
+        resp = await _get(app, "/console/channels?tab=wechat")
         assert resp.status_code == 200
         assert "已停止" in resp.text
         assert "auth failed" in resp.text
@@ -440,7 +446,7 @@ class TestStartWechat:
         app = _make_app()
         resp = await _post_form(app, "/console/wechat/start")
         assert resp.status_code == 303
-        assert resp.headers["location"] == "/console/wechat"
+        assert resp.headers["location"] == "/console/channels?tab=wechat"
 
     @pytest.mark.anyio
     @patch("app.web.routes.WechatService")
@@ -452,7 +458,7 @@ class TestStartWechat:
         app = _make_app()
         resp = await _post_form(app, "/console/wechat/start")
         assert resp.status_code == 303
-        assert resp.headers["location"] == "/console/wechat"
+        assert resp.headers["location"] == "/console/channels?tab=wechat"
         mock_svc.reload_bot.assert_awaited_once_with("tok-abc")
 
 
@@ -469,7 +475,7 @@ class TestStopWechat:
         app = _make_app()
         resp = await _post_form(app, "/console/wechat/stop")
         assert resp.status_code == 303
-        assert resp.headers["location"] == "/console/wechat"
+        assert resp.headers["location"] == "/console/channels?tab=wechat"
         mock_svc.stop_bot.assert_awaited_once()
 
 

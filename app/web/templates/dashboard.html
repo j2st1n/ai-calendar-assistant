@@ -50,6 +50,29 @@
     </a>
     {% endfor %}
   </div>
+
+  <div class="dashboard-verification-tray">
+    <div class="tray-heading">
+      <h4 class="tray-title">连通性即时验证与同步记录</h4>
+    </div>
+    <div class="connection-checks">
+      {% for kind, label in [('ai','AI 主模型配置验证'),('caldav','CalDAV 日历连通性与写入验证')] %}
+      <div>
+        <strong>{{ label }}</strong>
+        <p id="check-{{ kind }}" role="status">{{ connection_checks[kind].label if connection_checks and kind in connection_checks else '未验证' }}{% if connection_checks and kind in connection_checks and connection_checks[kind].time %} · {{ connection_checks[kind].time }}{% endif %}</p>
+        <button type="button" class="secondary" data-check-kind="{{ kind }}">验证已保存配置</button>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="event-count">验证时间：{{ activity_timezone }}。结果只代表测试当时，超过 24 小时需复核。主模型验证不覆盖识图或日程识别能力，日历连接验证不覆盖写入权限。</p>
+    {% if last_calendar_success_current %}
+    <p class="event-count">最近日历操作成功：{{ last_calendar_success_current }}（当前配置已生效）。{% if last_calendar_success_legacy and last_calendar_success_legacy != last_calendar_success_current %}<span class="dashboard-note">历史旧配置最近成功：{{ last_calendar_success_legacy }}</span>{% endif %}</p>
+    {% elif last_calendar_success_legacy %}
+    <p class="event-count"><span class="dashboard-note">当前配置暂无日历操作成功记录</span>。历史旧配置最近成功：{{ last_calendar_success_legacy }}（配置已变更，历史记录不代表当前配置有效）。</p>
+    {% else %}
+    <p class="event-count">最近日历操作成功：暂无记录。</p>
+    {% endif %}
+  </div>
 </section>
 {% endif %}
 
@@ -76,32 +99,6 @@
     </details>
   {% endfor %}</div>
   {% else %}<div class="card"><h3>还没有处理记录</h3><p class="dashboard-note">配置 AI、日历和任一聊天渠道后，发送一条包含日期、时间和事项的消息，开始创建日程。</p></div>{% endif %}
-</section>
-
-<section class="card" aria-labelledby="connections-title">
-  <h3 id="connections-title">连接摘要</h3>
-  <p class="event-count">配置已保存不代表实时可用；聊天渠道可按需启用。</p>
-  <div class="connection-checks">
-    {% for kind, label in [('ai','主模型'),('caldav','日历连接')] %}
-    <div><strong>{{ label }}</strong><p id="check-{{ kind }}" role="status">{{ connection_checks[kind].label }}{% if connection_checks[kind].time %} · {{ connection_checks[kind].time }}{% endif %}</p>
-    <button type="button" class="secondary" data-check-kind="{{ kind }}">验证已保存配置</button></div>
-    {% endfor %}
-  </div>
-  <p class="event-count">验证时间：{{ activity_timezone }}。结果只代表测试当时，超过 24 小时需复核。主模型验证不覆盖识图或日程识别能力，日历连接验证不覆盖写入权限。</p>
-  {% if last_calendar_success_current %}
-  <p class="event-count">最近日历操作成功：{{ last_calendar_success_current }}（当前配置已生效）。{% if last_calendar_success_legacy and last_calendar_success_legacy != last_calendar_success_current %}<span class="dashboard-note">历史旧配置最近成功：{{ last_calendar_success_legacy }}</span>{% endif %}</p>
-  {% elif last_calendar_success_legacy %}
-  <p class="event-count"><span class="dashboard-note">当前配置暂无日历操作成功记录</span>。历史旧配置最近成功：{{ last_calendar_success_legacy }}（配置已变更，历史记录不代表当前配置有效）。</p>
-  {% else %}
-  <p class="event-count">最近日历操作成功：暂无记录。</p>
-  {% endif %}
-  <div class="dashboard-connections">
-    <a href="/console/ai"><strong>AI</strong><span>{{ '配置已保存' if ai_ok else '未配置' }}</span><small>{% if ai_ok %}{{ ai_name }} · 识图：{{ vision_label }}{% else %}选择主模型{% endif %}</small></a>
-    <a href="/console/caldav"><strong>日历</strong><span>{{ '配置已保存' if caldav_ok else '未配置' }}</span><small>{{ (caldav_source ~ ' / ' ~ caldav_name) if caldav_ok else '选择要写入的日历' }}</small></a>
-    {% for name, running, path in [('Telegram',tg_running,'telegram'),('Discord',dc_running,'discord'),('微信',wechat_running,'wechat')] %}
-    <a href="/console/{{ path }}"><strong>{{ name }}</strong><span>{{ '运行中' if running else '未启动' }}</span><small>管理渠道 →</small></a>
-    {% endfor %}
-  </div>
 </section>
 
 <details class="card dashboard-statistics">
@@ -139,13 +136,23 @@
 <script>
 document.querySelectorAll('[data-check-kind]').forEach(function(button) {
   button.addEventListener('click', async function() {
-    var target = document.getElementById('check-' + button.dataset.checkKind);
+    var kind = button.dataset.checkKind;
+    var target = document.getElementById('check-' + kind);
     button.disabled = true;
     target.textContent = '正在验证已保存配置…';
     try {
-      var response = await fetch('/console/connections/' + button.dataset.checkKind + '/test', {method:'POST'});
+      var response = await fetch('/console/connections/' + kind + '/test', {method:'POST'});
       var data = await response.json();
       target.textContent = data.check ? data.check.label + (data.check.time ? ' · ' + data.check.time : '') : (data.error || '验证未完成，请重试。');
+      var serviceCard = document.getElementById('service-status-' + kind);
+      if (serviceCard && data.ok !== undefined) {
+        var badge = serviceCard.querySelector('.status-badge');
+        if (badge) {
+          var dotClass = data.ok ? 'dot-success' : 'dot-error';
+          var stateLabel = data.ok ? '已验证' : '测试失败';
+          badge.innerHTML = '<span class="dot ' + dotClass + '"></span>' + stateLabel;
+        }
+      }
     } catch (error) {
       target.textContent = '验证结果未能加载，请刷新查看最近记录。';
     } finally { button.disabled = false; }

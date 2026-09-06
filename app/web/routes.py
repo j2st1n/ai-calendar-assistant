@@ -642,7 +642,7 @@ def status_context(session: Session) -> dict[str, object]:
         {
             "id": "wechat",
             "name": "微信",
-            "href": "/console/wechat",
+            "href": "/console/channels?tab=wechat",
             "configured": wechat_token_saved,
             "running": wechat_running,
             "status": wechat_status,
@@ -653,7 +653,7 @@ def status_context(session: Session) -> dict[str, object]:
         {
             "id": "telegram",
             "name": "Telegram",
-            "href": "/console/telegram",
+            "href": "/console/channels?tab=telegram",
             "configured": tg_token_saved,
             "running": tg_running,
             "status": tg_status,
@@ -664,7 +664,7 @@ def status_context(session: Session) -> dict[str, object]:
         {
             "id": "discord",
             "name": "Discord",
-            "href": "/console/discord",
+            "href": "/console/channels?tab=discord",
             "configured": dc_token_saved,
             "running": dc_running,
             "status": dc_status,
@@ -1942,20 +1942,74 @@ async def _probe_caldav(session: Session, url: str, username: str, password: str
         return JSONResponse({"ok": False, "error": "无法连接日历服务，请检查服务器地址、应用密码和网络后重试。当前填写内容已保留。"}, status_code=400)
 
 
-@router.get("/telegram", response_class=HTMLResponse)
-async def telegram_settings(
+def _redirect_to_channel_tab(request: Request, tab: str) -> RedirectResponse:
+    from urllib.parse import urlencode
+    params = dict(request.query_params)
+    params["tab"] = tab
+    return RedirectResponse(f"/console/channels?{urlencode(params)}", status_code=307)
+
+
+@router.get("/channels", response_class=HTMLResponse)
+async def channels_settings(
     request: Request,
+    tab: str = "",
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> HTMLResponse:
-    service = _telegram_service()
-    payload = service.config_summary(session)
+    wc_service = _wechat_service()
+    wc_summary = wc_service.config_summary(session)
+    wc_summary.setdefault("wechat_task_alive", wc_summary.get("wechat_running", False))
+    wc_summary.setdefault("wechat_state", "polling" if wc_summary["wechat_task_alive"] else "stopped")
+    wc_summary.setdefault("wechat_state_label", "在线" if wc_summary["wechat_task_alive"] else "已停止")
+    wc_summary.setdefault(
+        "wechat_current_error",
+        {"message": wc_summary.get("wechat_error", "")} if wc_summary.get("wechat_error") else None,
+    )
+    wc_summary.setdefault("wechat_last_error", None)
+    wc_summary.setdefault("wechat_consecutive_failures", 0)
+    wc_summary.setdefault("wechat_last_poll_success_at", None)
+    wc_summary.setdefault("wechat_last_message_at", None)
+    wc_summary.setdefault("wechat_next_retry_at", None)
+    wc_summary.setdefault("wechat_pause_until", None)
+    wc_summary["wechat_configured"] = wc_summary["wechat_token_set"]
+
+    tg_service = _telegram_service()
+    tg_summary = tg_service.config_summary(session)
+
+    dc_service = _discord_service()
+    dc_summary = dc_service.config_summary(session)
+
+    chosen_tab = tab.strip().lower() if tab else ""
+    if chosen_tab not in ("wechat", "telegram", "discord"):
+        if wc_summary.get("wechat_running") or wc_summary.get("wechat_token_set"):
+            chosen_tab = "wechat"
+        elif tg_summary.get("bot_running") or tg_summary.get("bot_token_set"):
+            chosen_tab = "telegram"
+        elif dc_summary.get("discord_bot_running") or dc_summary.get("discord_token_set"):
+            chosen_tab = "discord"
+        else:
+            chosen_tab = "wechat"
+
+    payload: dict[str, Any] = {}
+    payload.update(wc_summary)
+    payload.update(tg_summary)
+    payload.update(dc_summary)
     payload["request"] = request
+    payload["tab"] = chosen_tab
+    payload["active_tab"] = chosen_tab
     payload["message"] = get_flash(request) or request.query_params.get("message")
     payload["error"] = get_error_flash(request) or request.query_params.get("error")
     payload["bind_link"] = request.query_params.get("bind_link")
     payload["bind_token"] = request.query_params.get("bind_token")
-    return templates.TemplateResponse(request, "telegram.html", payload)
+    return templates.TemplateResponse(request, "channels.html", payload)
+
+
+@router.get("/telegram")
+async def telegram_settings(
+    request: Request,
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    return _redirect_to_channel_tab(request, "telegram")
 
 
 @router.post("/telegram")
@@ -1975,11 +2029,11 @@ async def update_telegram_settings(
         service.save_token(session, token, username)
         if await service.reload_bot(token):
             pass
-        target = redirect_path or "/console/telegram"
+        target = redirect_path or "/console/channels?tab=telegram"
         set_flash(request, "Telegram Bot 已保存并重载。")
         return redirect(target)
     set_error_flash(request, "请填写 Bot Token。")
-    return redirect("/console/telegram")
+    return redirect("/console/channels?tab=telegram")
 
 
 @router.post("/telegram/bind")
@@ -1992,11 +2046,11 @@ async def generate_bind_link(
     bot_username = settings_service.get("telegram_bot_username") or ""
     if not bot_username:
         set_error_flash(request, "请先配置 Bot Username。")
-        return redirect("/console/telegram")
+        return redirect("/console/channels?tab=telegram")
     service = _telegram_service()
     link, token = service.generate_bind_link(bot_username)
     set_flash(request, "绑定链接已生成。")
-    return redirect_with_query("/console/telegram", bind_link=link, bind_token=token)
+    return redirect_with_query("/console/channels?tab=telegram", bind_link=link, bind_token=token)
 
 
 @router.get("/telegram/bind/status")
@@ -2019,7 +2073,7 @@ async def add_telegram_user(
     service = _telegram_service()
     service.add_user(session, user_id.strip(), username.strip(), display_name.strip())
     set_flash(request, f"已添加用户 {user_id}。")
-    return redirect("/console/telegram")
+    return redirect("/console/channels?tab=telegram")
 
 
 @router.post("/telegram/users/remove")
@@ -2032,21 +2086,15 @@ async def remove_telegram_user(
     service = _telegram_service()
     service.remove_user(session, user_id.strip())
     set_flash(request, f"已删除用户 {user_id}。")
-    return redirect("/console/telegram")
+    return redirect("/console/channels?tab=telegram")
 
 
-@router.get("/discord", response_class=HTMLResponse)
+@router.get("/discord")
 async def discord_settings(
     request: Request,
-    session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> HTMLResponse:
-    service = _discord_service()
-    payload = service.config_summary(session)
-    payload["request"] = request
-    payload["message"] = get_flash(request) or request.query_params.get("message")
-    payload["error"] = get_error_flash(request) or request.query_params.get("error")
-    return templates.TemplateResponse(request, "discord.html", payload)
+) -> RedirectResponse:
+    return _redirect_to_channel_tab(request, "discord")
 
 
 @router.post("/discord")
@@ -2061,13 +2109,13 @@ async def update_discord_settings(
     token = bot_token.strip() or settings_service.get("discord_bot_token") or ""
     if not token:
         set_error_flash(request, "请填写 Bot Token。")
-        return redirect("/console/discord")
+        return redirect("/console/channels?tab=discord")
     service = _discord_service()
     service.save_token(session, token, application_id.strip())
     if await service.reload_bot(token):
         pass
     set_flash(request, "Discord Bot 已保存并重载。")
-    return redirect("/console/discord")
+    return redirect("/console/channels?tab=discord")
 
 
 @router.post("/discord/users/add")
@@ -2088,7 +2136,7 @@ async def add_discord_user(
         session.add(DiscordIdentity(discord_user_id=uid, enabled=True))
     session.commit()
     set_flash(request, f"已授权用户 {uid}。")
-    return redirect("/console/discord")
+    return redirect("/console/channels?tab=discord")
 
 
 @router.post("/discord/users/remove")
@@ -2106,32 +2154,15 @@ async def remove_discord_user(
         ident.enabled = False
         session.commit()
     set_flash(request, f"已移除用户 {user_id}。")
-    return redirect("/console/discord")
+    return redirect("/console/channels?tab=discord")
 
 
-@router.get("/wechat", response_class=HTMLResponse)
+@router.get("/wechat")
 async def wechat_settings(
     request: Request,
-    session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> HTMLResponse:
-    service = _wechat_service()
-    payload = service.config_summary(session)
-    payload.setdefault("wechat_task_alive", payload.get("wechat_running", False))
-    payload.setdefault("wechat_state", "polling" if payload["wechat_task_alive"] else "stopped")
-    payload.setdefault("wechat_state_label", "在线" if payload["wechat_task_alive"] else "已停止")
-    payload.setdefault("wechat_current_error", {"message": payload.get("wechat_error", "")} if payload.get("wechat_error") else None)
-    payload.setdefault("wechat_last_error", None)
-    payload.setdefault("wechat_consecutive_failures", 0)
-    payload.setdefault("wechat_last_poll_success_at", None)
-    payload.setdefault("wechat_last_message_at", None)
-    payload.setdefault("wechat_next_retry_at", None)
-    payload.setdefault("wechat_pause_until", None)
-    payload["wechat_configured"] = payload["wechat_token_set"]
-    payload["request"] = request
-    payload["message"] = get_flash(request) or request.query_params.get("message")
-    payload["error"] = get_error_flash(request) or request.query_params.get("error")
-    return templates.TemplateResponse(request, "wechat.html", payload)
+) -> RedirectResponse:
+    return _redirect_to_channel_tab(request, "wechat")
 
 
 @router.get("/wechat/status")
@@ -2171,11 +2202,11 @@ async def start_wechat_runtime(
     token = settings_service.get("wechat_bot_token")
     if not token:
         set_error_flash(request, "WeChat Bot Token 未配置，请先扫码登录。")
-        return redirect("/console/wechat")
+        return redirect("/console/channels?tab=wechat")
     service = _wechat_service()
     __ = await service.reload_bot(token)
     set_flash(request, "WeChat Bot 已启动。")
-    return redirect("/console/wechat")
+    return redirect("/console/channels?tab=wechat")
 
 
 @router.post("/wechat/stop")
@@ -2186,7 +2217,7 @@ async def stop_wechat_runtime(
     service = _wechat_service()
     await service.stop_bot()
     set_flash(request, "WeChat Bot 已停止。")
-    return redirect("/console/wechat")
+    return redirect("/console/channels?tab=wechat")
 
 
 @router.post("/wechat/qr")
@@ -2283,7 +2314,7 @@ async def clear_wechat_token(
     settings_service.set("wechat_updates_buf", None)
     settings_service.commit()
     set_flash(request, "WeChat Bot Token 已清除。")
-    return redirect("/console/wechat")
+    return redirect("/console/channels?tab=wechat")
 
 
 @router.post("/wechat/probe")
