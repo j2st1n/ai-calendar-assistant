@@ -1,11 +1,31 @@
 # Changelog
 
+## [v1.21.1] - 2026-09-06
+
+
+### Bug Fixes
+
+- polish channels ui with segmented control tabs, deduplicate labels and update readme
+
+
+
+### Documentation
+
+- update TODO.md with v1.21.0 deployment and verification record
+
+
 ## [v1.21.0] - 2026-09-06
 
 
 ### Features
 
 - implement undo snapshot with remote etag check, batch event feedback with retry, and finalize all roadmap backlog
+
+
+
+### Maintenance
+
+- release v1.21.0
 
 
 ## [v1.20.0] - 2026-09-06
