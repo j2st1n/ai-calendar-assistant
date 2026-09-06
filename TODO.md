@@ -55,3 +55,10 @@ Phase 1 优化与全量回归（2026-09-06）：342 项 pytest 100% 通过（新
 Phase 2 优化与全量回归（2026-09-06）：364 项 pytest 100% 通过（新增 22 项针对失败收件箱阶段打标与 EventRecord 迁移回填、Web 重试并发锁、非法重试拦截与 UID 幂等防重机制、初次配置向导 4 步流程与首条测试日程端到端接口、亮暗色多主题 CSS 变量与 HTML 属性规范）。git diff --check 0 警告通过。
 
 发布验收（2026-09-06）：代码提交 85af3e3，发布提交 7cafa0b，Release run 34003173641 成功。生产 v1.18.0 healthy、0 重启；关键文件哈希一致，数据库检查通过，内部健康/静态资源/登录跳转正常，真实 AI 与 CalDAV 连接通过。未进行线上浏览器或实际日程写入验证。
+
+v1.19.0 发布与生产验收（2026-09-06）：代码提交 c1bfcd2，发布提交 edf4310，Release run 34029164564 自动化生成 tag v1.19.0，Docker 镜像 ghcr.io/j2st1n/ai-calendar-assistant:v1.19.0 构建发布。andnode 生产环境灾备与升级切换完成（备份 pre-v1.19.0-20260906、保留 v1.18.1 回滚镜像 36572d753c8f）。线上生产环境全量验收通过：
+1) 容器 healthy，0 重启，启动与运行日志无 traceback；
+2) 内部 (http://127.0.0.1:9527/health) 与公网 (https://cal.3313107.xyz/health) 均返回 HTTP 200 及 {"status":"ok","version":"v1.19.0"}；
+3) AI 模型（gemini-3.8-flash-high via OpenAI 兼容接口）与 CalDAV（iCloud 日历服务，探测发现 5 个日历）只读安全探测 100% 成功通过；
+4) Web 控制台首屏、向导路由 (/console/wizard 四步流程) 与多主题支持（跟随系统/浅色/深色切换及 CSS 变量）验证通过；
+5) 本地分支代码与远端 Release v1.19.0 保持完全同步。
