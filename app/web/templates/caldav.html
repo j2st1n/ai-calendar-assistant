@@ -60,13 +60,28 @@
       <button type="submit">保存日历设置</button>
     </div>
 
-    <!-- 右栏：服务状态徽标、测试连接/写入探针按钮组与服务商动态提示 -->
+    <!-- 右栏：服务状态徽标、复核指引、一键复核操作按钮、测试连接/写入探针按钮组与服务商动态提示 -->
     <div class="settings-sidebar stack">
-      <div class="card stack">
+      <div class="card stack" id="caldav-status-card">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
           <h4 style="margin:0;font-size:15px;">日历服务状态</h4>
-          <span class="status-badge" id="caldav-service-badge"><span class="dot {% if caldav_url and caldav_calendar_url %}dot-success{% else %}dot-warning{% endif %}"></span><span id="caldav-service-status-text">{{ '已配置' if caldav_url and caldav_calendar_url else '待配置' }}</span></span>
+          <span class="status-badge" id="caldav-service-badge"><span class="dot {{ caldav_dot_class }}"></span><span id="caldav-service-status-text">{{ caldav_state_label }}</span></span>
         </div>
+
+        <div class="caldav-check-meta" style="font-size:12px;color:var(--text-muted);display:flex;flex-direction:column;gap:4px;">
+          <div>校验状态：<strong id="caldav-check-label" style="color:var(--text-regular);">{{ caldav_check.label if caldav_check and caldav_check.label else '未验证' }}</strong></div>
+          <div>校验时间：<time id="caldav-check-time">{{ caldav_check.time if caldav_check and caldav_check.time else '暂无校验记录' }}</time></div>
+        </div>
+
+        <div id="caldav-review-notice" class="caldav-review-notice" style="padding:10px 12px;border-radius:6px;font-size:12px;line-height:1.5;{% if caldav_review_reason or caldav_dot_class == 'dot-warning' or caldav_dot_class == 'dot-error' or caldav_dot_class == 'dot-success' %}display:block;{% else %}display:none;{% endif %}{% if caldav_dot_class == 'dot-warning' or (caldav_review_reason and not (caldav_check and caldav_check.ok)) %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);color:#f59e0b;{% elif caldav_dot_class == 'dot-error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#ef4444;{% elif caldav_dot_class == 'dot-success' %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.25);color:#10b981;{% else %}background:rgba(138,143,152,0.1);border:1px solid rgba(138,143,152,0.25);color:#8a8f98;{% endif %}">
+          <div style="display:flex;align-items:flex-start;gap:6px;">
+            <span id="caldav-notice-icon">{% if caldav_dot_class == 'dot-warning' or (caldav_review_reason and not (caldav_check and caldav_check.ok)) %}⚠️{% elif caldav_dot_class == 'dot-error' %}❌{% else %}✅{% endif %}</span>
+            <span id="caldav-review-reason-text">{% if caldav_review_reason %}{{ caldav_review_reason }}{% elif caldav_dot_class == 'dot-success' %}已保存配置验证通过，与首页服务状态完全同步。{% elif caldav_dot_class == 'dot-muted' %}尚未配置日历服务器地址与目标日历。{% else %}尚未进行连通性验证。{% endif %}</span>
+          </div>
+        </div>
+
+        <button type="button" id="btn-recheck-caldav" style="width:100%;justify-content:center;padding:8px 12px;font-weight:600;">一键复核 / 验证已保存配置</button>
+
         <p id="caldav-status" class="form-status" role="status" aria-live="polite">当前显示已保存的配置。</p>
       </div>
 
@@ -207,6 +222,90 @@
     }
   }
 
+  function updateReviewState(dotClass, stateLabel, checkLabel, checkTime, reason, isError) {
+    setServiceBadge(dotClass, stateLabel);
+    const labelEl = document.getElementById('caldav-check-label');
+    if (labelEl && checkLabel) labelEl.textContent = checkLabel;
+    const timeEl = document.getElementById('caldav-check-time');
+    if (timeEl && checkTime) timeEl.textContent = checkTime;
+
+    const notice = document.getElementById('caldav-review-notice');
+    const reasonText = document.getElementById('caldav-review-reason-text');
+    const noticeIcon = document.getElementById('caldav-notice-icon');
+    if (notice && reasonText) {
+      if (reason) {
+        notice.style.display = 'block';
+        reasonText.textContent = reason;
+        if (dotClass === 'dot-warning') {
+          notice.style.background = 'rgba(245, 158, 11, 0.1)';
+          notice.style.border = '1px solid rgba(245, 158, 11, 0.25)';
+          notice.style.color = '#f59e0b';
+          if (noticeIcon) noticeIcon.textContent = '⚠️';
+        } else if (dotClass === 'dot-error') {
+          notice.style.background = 'rgba(239, 68, 68, 0.1)';
+          notice.style.border = '1px solid rgba(239, 68, 68, 0.25)';
+          notice.style.color = '#ef4444';
+          if (noticeIcon) noticeIcon.textContent = '❌';
+        } else if (dotClass === 'dot-success') {
+          notice.style.background = 'rgba(16, 185, 129, 0.1)';
+          notice.style.border = '1px solid rgba(16, 185, 129, 0.25)';
+          notice.style.color = '#10b981';
+          if (noticeIcon) noticeIcon.textContent = '✅';
+        }
+      } else if (dotClass === 'dot-success') {
+        notice.style.display = 'block';
+        reasonText.textContent = '已保存配置验证通过，与首页服务状态完全同步。';
+        notice.style.background = 'rgba(16, 185, 129, 0.1)';
+        notice.style.border = '1px solid rgba(16, 185, 129, 0.25)';
+        notice.style.color = '#10b981';
+        if (noticeIcon) noticeIcon.textContent = '✅';
+      } else {
+        notice.style.display = 'none';
+      }
+    }
+  }
+
+  const btnRecheck = document.getElementById('btn-recheck-caldav');
+  if (btnRecheck) {
+    btnRecheck.addEventListener('click', async function () {
+      if (dirty) {
+        if (!confirm('表单中有未保存的修改，复核操作将验证当前已保存在服务器中的配置。是否继续？')) {
+          return;
+        }
+      }
+      btnRecheck.disabled = true;
+      btnRecheck.textContent = '正在复核…';
+      announce('正在向日历服务器执行连通性与写入验证…');
+      try {
+        const response = await fetch('/console/connections/caldav/test', {
+          method: 'POST',
+          headers: { 'Accept': 'application/json' }
+        });
+        const data = await response.json();
+        const check = data.check || {};
+        const timeStr = check.time || new Date().toLocaleTimeString();
+        if (data.ok) {
+          const stateLabel = data.state_label || '已验证';
+          const dotClass = data.dot_class || 'dot-success';
+          updateReviewState(dotClass, stateLabel, check.label || '最近测试成功', timeStr, '已通过连通性与写入验证，状态与首页完全同步。');
+          announce('复核成功：已保存配置测试通过，首页服务徽标已同步更新为「' + stateLabel + '」。');
+        } else {
+          const stateLabel = data.state_label || '连接失败';
+          const dotClass = data.dot_class || 'dot-error';
+          const errorMsg = data.error || (check.label || '连接失败，请检查配置。');
+          updateReviewState(dotClass, stateLabel, check.label || '最近测试失败', timeStr, '复核失败：' + errorMsg, true);
+          announce('复核失败：' + errorMsg, true);
+        }
+      } catch (err) {
+        updateReviewState('dot-error', '连接失败', '网络或服务异常', '', '复核请求失败，请检查网络后重试。', true);
+        announce('复核请求失败，请检查网络后重试。', true);
+      } finally {
+        btnRecheck.disabled = false;
+        btnRecheck.textContent = '一键复核 / 验证已保存配置';
+      }
+    });
+  }
+
   function announce(message, error) {
     status.textContent = message;
     status.className = 'form-status' + (error ? ' error' : '');
@@ -282,9 +381,23 @@
         dirty = false;
         get('caldav_password').value = '';
         get('caldav_password').placeholder = '已保存，留空保持原值';
-        if (get('caldav_url').value && get('caldav_calendar_url').value) {
+        if (payload.check) {
+          const c = payload.check;
+          const isChanged = String(c.label || '').includes('已变更');
+          const isOk = (c.ok === true && !isChanged);
+          const dotClass = isOk ? 'dot-success' : 'dot-warning';
+          const stateLabel = isOk ? '已验证' : '需复核';
+          const reason = isOk ? '已保存配置验证通过，与首页服务状态完全同步。' : (c.label || '配置刚刚更改，请点击下方「一键复核」按钮验证已保存配置以使改动生效。');
+          updateReviewState(dotClass, stateLabel, c.label || '已保存', c.time || '刚刚保存', reason);
+        } else if (get('caldav_url').value && get('caldav_calendar_url').value) {
           setServiceBadge('dot-success', '已配置');
         }
+      }
+      if (payload.check && action !== 'save') {
+        const c = payload.check;
+        const stateLabel = payload.state_label || (payload.ok ? '已验证' : '连接失败');
+        const dotClass = payload.dot_class || (payload.ok ? 'dot-success' : 'dot-error');
+        updateReviewState(dotClass, stateLabel, c.label, c.time, payload.ok ? '测试通过，状态与首页已同步' : (payload.error || '测试失败'));
       }
       if (action !== 'calendars') {
         announce(payload.message);

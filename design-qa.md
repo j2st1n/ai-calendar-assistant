@@ -161,3 +161,35 @@ final result: passed
   - `git diff --check` 0 警告通过；
   - `TODO.md` 中最后一项 P1 待办「实际日程写入、重新扫码与备份恢复验收」已正式勾选闭环，至此全部 P1 阶段任务 100% 达成！
 
+## Phase 3 核心特性与全站双栏化验收（2026-09-06）
+
+final result: passed
+
+- **AI 设置与渠道管理双栏重构（Scheme B）及 Tab 融合**：
+  - `ai.html` 采用标准 Scheme B 双栏架构：左栏（`settings-main`）承载主模型与独立识图模型的配置表单及保存操作；右栏（`settings-sidebar`）聚合 AI 服务的实时运行态指示灯徽标、最近校验记录、动态复核指引框、高权重「一键复核」按钮（`#btn-recheck-ai`）、主模型/结构输出/识图模型探针按钮组，以及 OpenAI/Anthropic 协议规范卡片；
+  - `channels.html` 消除上方冗余胶囊，融合为带实时状态指示灯（`.dot-success` / `.dot-warning` / `.dot-muted` / `.dot-error`）与授权用户摘要的统一高级 Tab 栏（`role="tablist"` / `role="tab"`）；三大渠道面板（微信、Telegram、Discord）全量双栏化，左栏配置与授权，右栏运行状态与快捷操作；保留隐式锚点（`.channel-pills-compat`）确保向下兼容；
+- **聊天修改前后对照（Diff 对照）**：
+  - `message_processor.py` 实现 `_format_diff_summary` 与 `_format_modify_result`；
+  - 对修改日程输出显式的「🔄 修改对照：」区块，细粒度比对标题、时间、地点、描述变动（格式如 `• 时间：原时间 ➔ 新时间`、`• 地点：原地点 ➔ 新地点`），支持清空标记 `(已清除)` 与新增标记 `(无)`，并在仅更新单项时保持无缝向下兼容；
+- **歧义阻断状态机（Ambiguity Guard）**：
+  - 当删除或修改指令未明确引用且本地存在多条相似/活跃候选日程时，严禁 AI 默认猜测执行，强制暂停并输出带序号清单（`[1] 📌 标题 ... [2] 📌 标题 ...`）引导用户明确确认；
+  - 支持阿拉伯数字（如 `1`、`确认 1`、`第 1 个`）与中文数字（如 `一`、`确认 二`、`第二项`）序号确认；
+  - 支持回复 `取消`、`算了`、`不用了` 安全退出并清空歧义状态；
+  - 针对越界序号输入（如候选仅 2 项却回复 `5`），系统友好阻断并提示有效范围（1 到 2 之间），继续保持阻断状态不误执行；
+  - 歧义上下文按 `(source, user_id, conversation_id)` 严格隔离，入库审计标记 `ambiguity_guard` 操作并记录被阻断候选数；
+- **轻量只读 CalDAV 日程时间轴（/console/calendar）**：
+  - `caldav_service.py` 扩展 `list_events` 方法，支持范围拉取（`start` 至 `end`）与 30s 内存短缓存（`CACHE_TTL=30.0`），增删改日程时主动清空缓存保证数据一致性；
+  - 上线 `/console/calendar` 页面与只读时间轴，标注数据来源日历、时区、拉取时间戳及短缓存机制；支持「最近 7 天 / 前后 30 天 / 全部日程」筛选与「立即刷新」；
+  - 支持 `Accept: application/json` 接口返回完整结构化 JSON 响应；未登录请求通过 `require_admin` 安全 303 重定向至登录页；
+  - `base.html` 侧边栏记录组中统一集成「日程列表」入口及高亮态；
+- **a11y 无障碍与视觉规范（WCAG AA）**：
+  - `styles.css` 优化全站暗色与亮色小字对比度至 >= 5.5:1（远超 WCAG AA >= 4.5:1 阈值）；
+  - 全局定义高对比度 `:focus-visible` 焦点轮廓环（`outline: 2px solid var(--accent, #6366f1)` 与 `outline-offset: 2px`）；
+  - 移动端全局标准化触控靶心尺寸，所有按钮、输入框、Tab 标签 `min-height: 44px`、`min-width: 44px`；
+- **自动化测试与全量回归**：
+  - 针对上述特性编写并补充完备测试套件（`tests/test_p3_core_features.py` 与 `tests/test_p3_qa_verification.py`，共 24 项全新自动化测试用例）；
+  - 全量运行 pytest 测试套件，438 项测试 100% 绿灯通过；
+  - `git diff --check` 0 警告通过；
+  - 静态资源与模板语法核验 100% 通过；
+  - `TODO.md` 与 `ROADMAP.md` 同步勾选对应已完成项目。
+

@@ -597,3 +597,67 @@ def test_get_calendar_name_resolution():
     class CalEmpty:
         pass
     assert _get_calendar_name(CalEmpty(), default_name="Fallback Name") == "Fallback Name"
+
+
+def test_caldav_html_template_renders_review_guidance_and_recheck_button():
+    """Verify caldav.html template renders review status, notice box, meta timestamps, and recheck button."""
+    from pathlib import Path
+    html = Path("app/web/templates/caldav.html").read_text(encoding="utf-8")
+
+    # 1. Right column review elements
+    assert 'id="caldav-status-card"' in html
+    assert 'id="caldav-service-badge"' in html
+    assert 'id="caldav-service-status-text"' in html
+    assert 'class="caldav-check-meta"' in html
+    assert 'id="caldav-check-label"' in html
+    assert 'id="caldav-check-time"' in html
+    assert 'id="caldav-review-notice"' in html
+    assert 'id="caldav-review-reason-text"' in html
+    assert 'id="btn-recheck-caldav"' in html
+    assert '一键复核 / 验证已保存配置' in html
+
+    # 2. JS synchronization hooks
+    assert "updateReviewState(" in html
+    assert "btnRecheck.addEventListener('click'" in html
+    assert "'/console/connections/caldav/test'" in html
+
+
+def test_caldav_payload_and_status_alignment_when_review_needed():
+    """Verify caldav_payload accurately reflects needs_review / warning when configuration changes."""
+    import json
+    from datetime import datetime, timezone
+    from app.web.connection_checks import revision, save_check
+
+    session = _session()
+    settings = SettingsService(session)
+    settings.set("caldav_url", "https://caldav.icloud.com")
+    settings.set("caldav_calendar_url", "https://caldav.icloud.com/cal/work")
+    settings.set("caldav_calendar_name", "Work Calendar")
+    settings.commit()
+
+    # Before check -> 待验证
+    p1 = caldav_payload(settings, session)
+    assert p1["caldav_dot_class"] == "dot-warning"
+    assert p1["caldav_state_label"] == "待验证"
+    assert "尚未进行连通性测试" in p1["caldav_review_reason"]
+
+    # After passed check -> 已验证
+    sig = revision(session, "caldav")
+    save_check(session, "caldav", sig, True)
+    session.expire_all()
+
+    p2 = caldav_payload(settings, session)
+    assert p2["caldav_dot_class"] == "dot-success"
+    assert p2["caldav_state_label"] == "已验证"
+    assert p2["caldav_review_reason"] == ""
+    assert p2["caldav_check"]["label"] == "最近测试成功"
+
+    # When URL changes -> 需复核
+    settings.set("caldav_url", "https://caldav.new-host.com")
+    settings.commit()
+    session.expire_all()
+
+    p3 = caldav_payload(settings, session)
+    assert p3["caldav_dot_class"] == "dot-warning"
+    assert p3["caldav_state_label"] == "需复核"
+    assert "配置已变更" in p3["caldav_review_reason"]

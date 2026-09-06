@@ -11,6 +11,7 @@ import importlib
 import inspect
 from io import BytesIO
 import json
+import logging
 from pathlib import Path
 import secrets
 import sqlite3
@@ -48,6 +49,8 @@ from app.web.security import (
 if TYPE_CHECKING:
     from app.services.ai_provider_service import AIProviderConfig
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/console")
 templates = Jinja2Templates(directory="app/web/templates")
@@ -435,6 +438,8 @@ def status_context(session: Session) -> dict[str, object]:
             "failure_phase": rec.failure_phase or feedback.get("failure_phase", ""),
             "failure_phase_label": feedback.get("failure_phase_label", ""),
             "retry_count": rec.retry_count or 0,
+            "batch_id": rec.batch_id or "",
+            "batch_index": rec.batch_index,
             "can_retry": feedback.get("can_retry", False),
             **feedback,
         })
@@ -502,19 +507,25 @@ def status_context(session: Session) -> dict[str, object]:
         caldav_status = "unconfigured"
         caldav_summary = "选择要写入的日历"
     elif caldav_check.get("ok") is True:
-        if "超过 24 小时" in str(caldav_check.get("label", "")) or "已变更" in str(caldav_check.get("label", "")):
+        is_changed = "已变更" in str(caldav_check.get("label", ""))
+        if is_changed and not last_current_success:
             caldav_dot_class = "dot-warning"
             caldav_state_label = "需复核"
             caldav_status = "warning"
         else:
             caldav_dot_class = "dot-success"
-            caldav_state_label = "已验证"
+            caldav_state_label = "已连接" if last_current_success else "已验证"
             caldav_status = "online"
         caldav_summary = f"{caldav_source} / {caldav_cal}" if caldav_source else caldav_cal
     elif caldav_check.get("ok") is False:
         caldav_dot_class = "dot-error"
         caldav_state_label = "连接失败"
         caldav_status = "error"
+        caldav_summary = f"{caldav_source} / {caldav_cal}" if caldav_source else caldav_cal
+    elif last_current_success:
+        caldav_dot_class = "dot-success"
+        caldav_state_label = "已连接"
+        caldav_status = "online"
         caldav_summary = f"{caldav_source} / {caldav_cal}" if caldav_source else caldav_cal
     else:
         caldav_dot_class = "dot-warning"
@@ -902,7 +913,9 @@ async def test_saved_connection(
     session.expire_all()
     summary = check_summary(session, kind)
     summary["time"] = _record_time(summary.pop("at"), _calendar_timezone(service))
-    return JSONResponse({"ok": ok, "check": summary})
+    dot_class = "dot-success" if ok else "dot-error"
+    state_label = "已验证" if ok else ("连接失败" if kind == "caldav" else "测试失败")
+    return JSONResponse({"ok": ok, "check": summary, "state_label": state_label, "dot_class": dot_class})
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -1378,6 +1391,47 @@ async def ai_settings(
     payload["vision_model"] = settings_service.get("ai_vision_model") or ""
     vision_models = settings_service.get("ai_vision_available_models") or ""
     payload["vision_models"] = [item for item in vision_models.split(",") if item]
+
+    # AI 服务状态与检查元数据
+    ai_url = settings_service.get("ai_base_url") or ""
+    ai_model = settings_service.get("ai_model") or ""
+    ai_ok = bool(ai_url and ai_model)
+    ai_check = check_summary(session, "ai") if session else {}
+    activity_tz = _calendar_timezone(settings_service)
+    ai_check["time"] = _record_time(ai_check.get("at"), activity_tz)
+    ai_review_reason = ""
+    if not ai_ok:
+        ai_dot_class = "dot-muted"
+        ai_state_label = "未配置"
+        ai_review_reason = "尚未配置主模型或 Base URL。"
+    elif ai_check.get("ok") is True:
+        if "已变更" in str(ai_check.get("label", "")):
+            ai_dot_class = "dot-warning"
+            ai_state_label = "需复核"
+            ai_review_reason = "配置已变更，请重新验证"
+        elif "超过 24 小时" in str(ai_check.get("label", "")):
+            ai_dot_class = "dot-warning"
+            ai_state_label = "需复核"
+            ai_review_reason = "测试已超过 24 小时，建议复核"
+        else:
+            ai_dot_class = "dot-success"
+            ai_state_label = "已验证"
+            ai_review_reason = "已保存配置验证通过，与首页状态同步。"
+    elif ai_check.get("ok") is False:
+        ai_dot_class = "dot-error"
+        ai_state_label = "测试失败"
+        ai_review_reason = "连接测试失败，请检查 Base URL、API Key 或模型名称"
+    else:
+        ai_dot_class = "dot-warning"
+        ai_state_label = "待验证"
+        ai_review_reason = "尚未进行连通性测试"
+
+    payload.update({
+        "ai_check": ai_check,
+        "ai_dot_class": ai_dot_class,
+        "ai_state_label": ai_state_label,
+        "ai_review_reason": ai_review_reason,
+    })
     return templates.TemplateResponse(request, "ai.html", payload)
 
 
@@ -1751,18 +1805,84 @@ def _available_iana_timezones() -> list[str]:
         return ["Asia/Shanghai", "UTC"]
 
 
-def caldav_payload(settings_service: SettingsService) -> dict[str, object]:
+def caldav_payload(settings_service: SettingsService, session: Session | None = None) -> dict[str, object]:
+    if session is None:
+        session = getattr(settings_service, "session", None)
+
+    caldav_url = settings_service.get("caldav_url") or ""
+    caldav_cal = settings_service.get("caldav_calendar_url") or ""
+    caldav_ok = bool(caldav_url and caldav_cal)
+
+    caldav_check: dict[str, Any] = {}
+    caldav_dot_class = "dot-warning" if caldav_ok else "dot-muted"
+    caldav_state_label = "待验证" if caldav_ok else "未配置"
+    caldav_review_reason = ""
+
+    if session is not None:
+        activity_tz = _calendar_timezone(settings_service)
+        caldav_check = check_summary(session, "caldav")
+        caldav_check["time"] = _record_time(caldav_check.get("at"), activity_tz)
+
+        current_version = settings_service.get_config_version()
+        last_current_success = session.scalar(
+            select(EventRecord.created_at).where(
+                EventRecord.status == "success",
+                EventRecord.operation.in_(["create", "update", "delete"]),
+                EventRecord.config_version == current_version,
+            ).order_by(EventRecord.created_at.desc()).limit(1)
+        )
+
+        if not caldav_ok:
+            caldav_dot_class = "dot-muted"
+            caldav_state_label = "未配置"
+        elif caldav_check.get("ok") is False:
+            caldav_dot_class = "dot-error"
+            caldav_state_label = "连接失败"
+            caldav_review_reason = "连接测试失败，请检查服务器地址与密码"
+        elif caldav_check.get("ok") is True:
+            is_changed = "已变更" in str(caldav_check.get("label", ""))
+            is_expired = "超过 24 小时" in str(caldav_check.get("label", ""))
+            if is_changed and not last_current_success:
+                caldav_dot_class = "dot-warning"
+                caldav_state_label = "需复核"
+                caldav_review_reason = "配置已变更，请重新验证"
+            elif is_expired and not last_current_success:
+                caldav_dot_class = "dot-success"
+                caldav_state_label = "已验证"
+                caldav_review_reason = "测试已超过 24 小时"
+            else:
+                caldav_dot_class = "dot-success"
+                caldav_state_label = "已连接" if last_current_success else "已验证"
+        elif last_current_success:
+            caldav_dot_class = "dot-success"
+            caldav_state_label = "已连接"
+        else:
+            caldav_dot_class = "dot-warning"
+            caldav_state_label = "待验证"
+            caldav_review_reason = "尚未进行连通性测试"
+    else:
+        if caldav_ok:
+            caldav_dot_class = "dot-success"
+            caldav_state_label = "已配置"
+        else:
+            caldav_dot_class = "dot-muted"
+            caldav_state_label = "未配置"
+
     return {
-        "caldav_url": settings_service.get("caldav_url") or "",
+        "caldav_url": caldav_url,
         "caldav_username": settings_service.get("caldav_username") or "",
         "caldav_password_masked": settings_service.get_masked("caldav_password"),
-        "caldav_calendar_url": settings_service.get("caldav_calendar_url") or "",
+        "caldav_calendar_url": caldav_cal,
         "caldav_calendar_name": settings_service.get("caldav_calendar_name") or "",
         "caldav_timezone": settings_service.get("caldav_timezone") or "Asia/Shanghai",
         "caldav_reminder_minutes": settings_service.get("caldav_reminder_minutes") or "30",
         "caldav_default_duration": settings_service.get("caldav_default_duration") or "60",
         "caldav_ssl_verify": "true" if _caldav_ssl_from_settings(settings_service) else "false",
         "timezones": _available_iana_timezones(),
+        "caldav_check": caldav_check,
+        "caldav_state_label": caldav_state_label,
+        "caldav_dot_class": caldav_dot_class,
+        "caldav_review_reason": caldav_review_reason,
     }
 
 
@@ -1773,7 +1893,7 @@ async def caldav_settings(
     _: None = Depends(require_admin),
 ) -> HTMLResponse:
     settings_service = SettingsService(session)
-    payload = caldav_payload(settings_service)
+    payload = caldav_payload(settings_service, session)
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
     payload["error"] = get_error_flash(request) or request.query_params.get("error")
@@ -1824,6 +1944,31 @@ async def update_caldav_settings(
             return JSONResponse({"ok": False, "error": error}, status_code=400)
         set_error_flash(request, error)
         return redirect("/console/caldav")
+
+    old_summary = check_summary(session, "caldav")
+    old_was_ok = (old_summary.get("ok") is True)
+    old_url = (settings_service.get("caldav_url") or "").rstrip("/")
+    old_username = settings_service.get("caldav_username") or ""
+    old_password = settings_service.get("caldav_password") or ""
+    old_ssl = _caldav_ssl_from_settings(settings_service)
+
+    new_url = caldav_url.strip().rstrip("/")
+    new_username = caldav_username.strip()
+    effective_password = caldav_password if caldav_password else old_password
+    new_ssl = _caldav_ssl_from_form(caldav_ssl_verify)
+
+    creds_unchanged = (
+        old_url == new_url
+        and old_username == new_username
+        and effective_password == old_password
+        and new_ssl == old_ssl
+    )
+
+    cred_hash = _caldav_credentials_hash(caldav_url, caldav_username, effective_password, caldav_ssl_verify)
+    was_recently_verified = False
+    if hasattr(request, "session") and isinstance(request.session, dict):
+        was_recently_verified = (request.session.get("caldav_verified_cred_hash") == cred_hash)
+
     settings_service.set("caldav_url", caldav_url.strip())
     settings_service.set("caldav_username", caldav_username.strip())
     if caldav_password:
@@ -1833,12 +1978,26 @@ async def update_caldav_settings(
     settings_service.set("caldav_timezone", caldav_timezone.strip())
     settings_service.set("caldav_reminder_minutes", str(reminder_val))
     settings_service.set("caldav_default_duration", str(duration_val))
-    settings_service.set("caldav_ssl_verify", "true" if _caldav_ssl_from_form(caldav_ssl_verify) else "false")
+    settings_service.set("caldav_ssl_verify", "true" if new_ssl else "false")
     settings_service.commit()
+
+    if (creds_unchanged and old_was_ok) or was_recently_verified:
+        new_sig = revision(session, "caldav")
+        save_check(session, "caldav", new_sig, True)
+        if hasattr(request, "session") and isinstance(request.session, dict):
+            request.session.pop("caldav_verified_cred_hash", None)
+
     if "application/json" in request.headers.get("accept", ""):
-        return JSONResponse({"ok": True, "message": "日历设置已保存。"})
+        summary = check_summary(session, "caldav")
+        summary["time"] = _record_time(summary.pop("at", None), _calendar_timezone(settings_service))
+        return JSONResponse({"ok": True, "message": "日历设置已保存。", "check": summary})
     set_flash(request, "CalDAV 设置已保存。")
     return redirect("/console/caldav")
+
+
+def _caldav_credentials_hash(url: str, username: str, password: str, ssl: str) -> str:
+    data = json.dumps([url.strip().rstrip("/"), username.strip(), password, str(ssl).strip().lower()])
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 def _caldav_probe_credentials(service: SettingsService, url: str, username: str, password: str) -> tuple[str, str, str]:
@@ -1872,7 +2031,7 @@ async def test_caldav_connection(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> JSONResponse:
-    return await _probe_caldav(session, caldav_url, caldav_username, caldav_password, caldav_ssl_verify, False)
+    return await _probe_caldav(session, caldav_url, caldav_username, caldav_password, caldav_ssl_verify, False, request=request)
 
 
 @router.post("/caldav/calendars")
@@ -1885,7 +2044,7 @@ async def list_caldav_calendars(
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> JSONResponse:
-    return await _probe_caldav(session, caldav_url, caldav_username, caldav_password, caldav_ssl_verify, True)
+    return await _probe_caldav(session, caldav_url, caldav_username, caldav_password, caldav_ssl_verify, True, request=request)
 
 
 @router.post("/caldav/write-test")
@@ -1925,21 +2084,81 @@ async def test_caldav_write_permission(
         return JSONResponse({"ok": False, "error": f"日历写入权限验证失败：{exc}"}, status_code=400)
 
 
-async def _probe_caldav(session: Session, url: str, username: str, password: str, ssl: str, list_calendars: bool) -> JSONResponse:
+async def _probe_caldav(
+    session: Session,
+    url: str,
+    username: str,
+    password: str,
+    ssl: str,
+    list_calendars: bool,
+    request: Request | None = None,
+) -> JSONResponse:
+    settings_service = SettingsService(session)
     try:
-        url, username, password = _caldav_probe_credentials(SettingsService(session), url, username, password)
+        url, username, password = _caldav_probe_credentials(settings_service, url, username, password)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     CalDAVService, CalDAVServiceError = _caldav_components()
+    service = CalDAVService()
+    ssl_bool = _caldav_ssl_from_form(ssl)
+
+    saved_url = (settings_service.get("caldav_url") or "").rstrip("/")
+    saved_username = settings_service.get("caldav_username") or ""
+    saved_password = settings_service.get("caldav_password") or ""
+    saved_ssl = _caldav_ssl_from_settings(settings_service)
+    matches_saved = (
+        bool(saved_url)
+        and url.rstrip("/") == saved_url
+        and username == saved_username
+        and password == saved_password
+        and ssl_bool == saved_ssl
+    )
+
     try:
-        service = CalDAVService()
         if list_calendars:
-            calendars = await service.list_calendars(url, username, password, ssl_verify=_caldav_ssl_from_form(ssl))
-            return JSONResponse({"ok": True, "calendars": calendars, "message": f"发现 {len(calendars)} 个日历，请选择目标后保存。"})
-        await service.test_connection(url, username, password, ssl_verify=_caldav_ssl_from_form(ssl))
-        return JSONResponse({"ok": True, "message": "连接测试成功，尚未保存配置。此测试不验证日历写入权限。"})
+            calendars = await service.list_calendars(url, username, password, ssl_verify=ssl_bool)
+            cred_hash = _caldav_credentials_hash(url, username, password, ssl)
+            if request is not None and hasattr(request, "session") and isinstance(request.session, dict):
+                request.session["caldav_verified_cred_hash"] = cred_hash
+            if matches_saved:
+                save_check(session, "caldav", revision(session, "caldav"), True)
+            summary = check_summary(session, "caldav")
+            summary["time"] = _record_time(summary.pop("at", None), _calendar_timezone(settings_service))
+            return JSONResponse({
+                "ok": True,
+                "calendars": calendars,
+                "message": f"发现 {len(calendars)} 个日历，请选择目标后保存。",
+                "check": summary,
+                "state_label": "已验证" if matches_saved else "待保存",
+                "dot_class": "dot-success",
+            })
+        await service.test_connection(url, username, password, ssl_verify=ssl_bool)
+        cred_hash = _caldav_credentials_hash(url, username, password, ssl)
+        if request is not None and hasattr(request, "session") and isinstance(request.session, dict):
+            request.session["caldav_verified_cred_hash"] = cred_hash
+        if matches_saved:
+            save_check(session, "caldav", revision(session, "caldav"), True)
+        summary = check_summary(session, "caldav")
+        summary["time"] = _record_time(summary.pop("at", None), _calendar_timezone(settings_service))
+        return JSONResponse({
+            "ok": True,
+            "message": "日历连接测试成功。" if matches_saved else "连接测试成功，尚未保存配置。此测试不验证日历写入权限。",
+            "check": summary,
+            "state_label": "已验证" if matches_saved else "待保存",
+            "dot_class": "dot-success",
+        })
     except CalDAVServiceError:
-        return JSONResponse({"ok": False, "error": "无法连接日历服务，请检查服务器地址、应用密码和网络后重试。当前填写内容已保留。"}, status_code=400)
+        if matches_saved:
+            save_check(session, "caldav", revision(session, "caldav"), False)
+        summary = check_summary(session, "caldav")
+        summary["time"] = _record_time(summary.pop("at", None), _calendar_timezone(settings_service))
+        return JSONResponse({
+            "ok": False,
+            "error": "无法连接日历服务，请检查服务器地址、应用密码和网络后重试。当前填写内容已保留。",
+            "check": summary,
+            "state_label": "连接失败" if matches_saved else "测试失败",
+            "dot_class": "dot-error",
+        }, status_code=400)
 
 
 def _redirect_to_channel_tab(request: Request, tab: str) -> RedirectResponse:
@@ -2480,6 +2699,8 @@ async def event_records(
             "failure_phase": rec.failure_phase or feedback.get("failure_phase", ""),
             "failure_phase_label": feedback.get("failure_phase_label", ""),
             "retry_count": rec.retry_count or 0,
+            "batch_id": rec.batch_id or "",
+            "batch_index": rec.batch_index,
             "can_retry": feedback.get("can_retry", False),
         })
 
@@ -2499,6 +2720,128 @@ async def event_records(
             "search": search,
             "statuses": [("all", "全部"), ("success", "成功"), ("failed", "失败")],
             "message": get_flash(request) or request.query_params.get("message"),
+        },
+    )
+
+
+@router.get("/calendar", response_class=HTMLResponse)
+async def calendar_view(
+    request: Request,
+    range: str = "month",
+    refresh: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> Response:
+    settings_service = SettingsService(session)
+    caldav_url = settings_service.get("caldav_url") or ""
+    caldav_user = settings_service.get("caldav_username") or ""
+    caldav_pw = settings_service.get("caldav_password") or ""
+    caldav_calendar_url = settings_service.get("caldav_calendar_url") or ""
+    caldav_calendar_name = settings_service.get("caldav_calendar_name") or "默认日历"
+    caldav_tz_str = settings_service.get("caldav_timezone") or "Asia/Shanghai"
+    caldav_ssl = _caldav_ssl_from_settings(settings_service)
+
+    caldav_configured = bool(caldav_url and caldav_user and caldav_pw)
+
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(caldav_tz_str)
+    except Exception:
+        tz = timezone(timedelta(hours=8))
+        caldav_tz_str = "Asia/Shanghai"
+
+    now_local = datetime.now(tz)
+    fetched_at = now_local.strftime("%Y-%m-%d %H:%M:%S")
+
+    range_mode = range.lower() if range in {"week", "month", "all", "custom"} else "month"
+    start_dt: datetime | None = None
+    end_dt: datetime | None = None
+
+    if range_mode == "week":
+        start_dt = now_local - timedelta(days=7)
+        end_dt = now_local + timedelta(days=7)
+    elif range_mode == "month":
+        start_dt = now_local - timedelta(days=7)
+        end_dt = now_local + timedelta(days=30)
+    elif range_mode == "custom" and date_from and date_to:
+        try:
+            from dateutil.parser import parse as parse_date
+            start_dt = parse_date(date_from).replace(tzinfo=tz)
+            end_dt = parse_date(date_to).replace(tzinfo=tz)
+        except Exception:
+            start_dt = now_local - timedelta(days=7)
+            end_dt = now_local + timedelta(days=30)
+    elif range_mode == "all":
+        start_dt = None
+        end_dt = None
+
+    force_refresh = (refresh == "1" or request.query_params.get("refresh") == "1")
+
+    events: list[dict[str, Any]] = []
+    error_msg: str | None = None
+
+    if caldav_configured:
+        CalDAVService, CalDAVServiceError = _caldav_components()
+        svc = CalDAVService()
+        try:
+            events = await svc.list_events(
+                caldav_url=caldav_url,
+                username=caldav_user,
+                password=caldav_pw,
+                calendar_url=caldav_calendar_url or None,
+                start=start_dt,
+                end=end_dt,
+                ssl_verify=caldav_ssl,
+                force_refresh=force_refresh,
+            )
+        except Exception as exc:
+            logger.warning("Failed to fetch CalDAV events: %s", exc)
+            error_msg = str(exc)
+
+    from collections import defaultdict
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for evt in events:
+        st = evt.get("start_time") or ""
+        date_key = st[:10] if len(st) >= 10 else "未指定日期"
+        grouped[date_key].append(evt)
+
+    timeline_groups = [
+        {"date": d_key, "events": grouped[d_key]}
+        for d_key in sorted(grouped.keys())
+    ]
+
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({
+            "ok": error_msg is None,
+            "data_source": caldav_calendar_name,
+            "calendar_url": caldav_calendar_url,
+            "caldav_server": caldav_url,
+            "timezone": caldav_tz_str,
+            "fetched_at": fetched_at,
+            "range": range_mode,
+            "total": len(events),
+            "events": events,
+            "error": error_msg,
+        })
+
+    return templates.TemplateResponse(
+        request,
+        "calendar.html",
+        {
+            "caldav_configured": caldav_configured,
+            "data_source": caldav_calendar_name,
+            "calendar_url": caldav_calendar_url,
+            "caldav_server": caldav_url,
+            "timezone": caldav_tz_str,
+            "fetched_at": fetched_at,
+            "range": range_mode,
+            "events": events,
+            "timeline_groups": timeline_groups,
+            "total": len(events),
+            "error": error_msg,
+            "message": get_flash(request),
         },
     )
 
@@ -2660,7 +3003,13 @@ async def retry_event(
             )
 
         # Idempotent caldav_uid: reuse existing UID to prevent duplicate calendar events
-        target_uid = rec.caldav_uid or f"retry-{uuid.uuid4().hex}"
+        if rec.caldav_uid:
+            target_uid = rec.caldav_uid
+        elif rec.batch_id:
+            from app.channels.message_processor import derive_batch_uid
+            target_uid = derive_batch_uid(rec.batch_id, rec.batch_index or 0)
+        else:
+            target_uid = f"retry-{uuid.uuid4().hex}"
         if not rec.caldav_uid:
             rec.caldav_uid = target_uid
             session.flush()
@@ -2748,6 +3097,243 @@ async def retry_event(
     finally:
         async with _retry_mutex:
             _retry_locks.discard(event_id)
+
+
+@router.post("/events/batch/{batch_id}/retry")
+@router.post("/batches/{batch_id}/retry")
+async def retry_batch_events(
+    batch_id: str,
+    request: Request,
+    _: None = Depends(require_admin),
+    session: Session = Depends(get_db),
+):
+    from app.channels.message_processor import derive_batch_uid
+
+    records = session.execute(
+        select(EventRecord)
+        .where(EventRecord.batch_id == batch_id)
+        .order_by(EventRecord.batch_index.asc(), EventRecord.id.asc())
+    ).scalars().all()
+
+    if not records:
+        return JSONResponse(
+            {"ok": False, "error": f"未找到批次 ID 为 {batch_id} 的日程记录", "batch_id": batch_id},
+            status_code=404,
+        )
+
+    latest_by_index: dict[int, EventRecord] = {}
+    for r in records:
+        idx = r.batch_index if r.batch_index is not None else 0
+        latest_by_index[idx] = r
+
+    items = sorted(latest_by_index.values(), key=lambda r: r.batch_index if r.batch_index is not None else 0)
+    failed_items = [r for r in items if r.status == "failed"]
+
+    if not failed_items:
+        return JSONResponse({
+            "ok": True,
+            "message": "该批次所有日程均已成功，无需重试",
+            "batch_id": batch_id,
+            "total": len(items),
+            "skipped_count": len(items),
+            "retried_count": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "items": [
+                {
+                    "id": r.id,
+                    "batch_index": r.batch_index,
+                    "title": r.title,
+                    "status": r.status,
+                    "retry_count": r.retry_count or 0,
+                    "caldav_uid": r.caldav_uid,
+                }
+                for r in items
+            ],
+        })
+
+    settings_service = SettingsService(session)
+    caldav_url = settings_service.get("caldav_url") or ""
+    caldav_user = settings_service.get("caldav_username") or ""
+    caldav_pw = settings_service.get("caldav_password") or ""
+    caldav_calendar_url = settings_service.get("caldav_calendar_url") or ""
+    caldav_ssl = _caldav_ssl_from_settings(settings_service)
+
+    if not caldav_url or not caldav_user:
+        return JSONResponse(
+            {"ok": False, "error": "尚未配置有效的日历连接，请先在日历设置中配置", "batch_id": batch_id},
+            status_code=400,
+        )
+
+    CalDAVService_cls, CalDAVServiceError_cls = _caldav_components()
+    caldav_service = CalDAVService_cls()
+
+    success_count = 0
+    failed_count = 0
+    item_results = []
+
+    for r in items:
+        idx = r.batch_index if r.batch_index is not None else 0
+        if r.status == "success":
+            item_results.append({
+                "id": r.id,
+                "batch_index": idx,
+                "title": r.title,
+                "status": "success",
+                "skipped": True,
+                "retry_count": r.retry_count or 0,
+                "caldav_uid": r.caldav_uid,
+            })
+            continue
+
+        async with _retry_mutex:
+            if r.id in _retry_locks:
+                item_results.append({
+                    "id": r.id,
+                    "batch_index": idx,
+                    "title": r.title,
+                    "status": "failed",
+                    "skipped": False,
+                    "error": "该日程正在重试中",
+                    "retry_count": r.retry_count or 0,
+                })
+                failed_count += 1
+                continue
+            _retry_locks.add(r.id)
+
+        try:
+            target_uid = r.caldav_uid or derive_batch_uid(batch_id, idx)
+            if not r.caldav_uid:
+                r.caldav_uid = target_uid
+                session.flush()
+
+            event_payload: dict[str, Any] = {}
+            if r.event_json:
+                try:
+                    event_payload = json.loads(r.event_json)
+                except Exception:
+                    event_payload = {}
+            if not event_payload:
+                event_payload = {"title": r.title or "日程", "start_time": r.start_time or ""}
+
+            reminders_data = event_payload.get("reminders")
+            formatted_reminders = []
+            if reminders_data:
+                for rem in reminders_data:
+                    if isinstance(rem, dict) and "minutes_before" in rem:
+                        formatted_reminders.append({"minutes_before": int(rem["minutes_before"])})
+                    elif hasattr(rem, "minutes_before"):
+                        formatted_reminders.append({"minutes_before": int(rem.minutes_before)})
+                    elif isinstance(rem, int):
+                        formatted_reminders.append({"minutes_before": rem})
+
+            try:
+                write_res = await caldav_service.create_event(
+                    caldav_url=caldav_url,
+                    username=caldav_user,
+                    password=caldav_pw,
+                    calendar_url=caldav_calendar_url or None,
+                    title=event_payload.get("title", r.title or "日程"),
+                    start_time=event_payload.get("start_time", r.start_time or ""),
+                    end_time=event_payload.get("end_time"),
+                    timezone_str=event_payload.get("timezone", "Asia/Shanghai"),
+                    location=event_payload.get("location"),
+                    description=event_payload.get("description"),
+                    reminders=formatted_reminders if formatted_reminders else None,
+                    recurrence=event_payload.get("recurrence"),
+                    is_all_day=bool(event_payload.get("is_all_day", False)),
+                    ssl_verify=caldav_ssl,
+                    uid=target_uid,
+                )
+                r.status = "success"
+                r.failure_phase = None
+                r.error_message = None
+                r.caldav_uid = write_res.get("uid", target_uid)
+                r.caldav_href = write_res.get("href")
+                r.retry_count = (r.retry_count or 0) + 1
+                r.updated_at = datetime.now(timezone.utc)
+                try:
+                    r.config_version = settings_service.get_config_version()
+                    r.caldav_config_hash = settings_service.get_caldav_config_hash()
+                except Exception:
+                    pass
+                success_count += 1
+                item_results.append({
+                    "id": r.id,
+                    "batch_index": idx,
+                    "title": r.title,
+                    "status": "success",
+                    "skipped": False,
+                    "retry_count": r.retry_count,
+                    "caldav_uid": r.caldav_uid,
+                    "caldav_href": r.caldav_href,
+                })
+            except CalDAVServiceError_cls as exc:
+                r.retry_count = (r.retry_count or 0) + 1
+                r.error_message = f"重试失败：{exc}"
+                r.failure_phase = "write"
+                r.updated_at = datetime.now(timezone.utc)
+                failed_count += 1
+                item_results.append({
+                    "id": r.id,
+                    "batch_index": idx,
+                    "title": r.title,
+                    "status": "failed",
+                    "skipped": False,
+                    "error": str(exc),
+                    "retry_count": r.retry_count,
+                })
+            except Exception as exc:
+                r.retry_count = (r.retry_count or 0) + 1
+                r.error_message = f"重试异常：{exc}"
+                r.failure_phase = "write"
+                r.updated_at = datetime.now(timezone.utc)
+                failed_count += 1
+                item_results.append({
+                    "id": r.id,
+                    "batch_index": idx,
+                    "title": r.title,
+                    "status": "failed",
+                    "skipped": False,
+                    "error": str(exc),
+                    "retry_count": r.retry_count,
+                })
+        finally:
+            async with _retry_mutex:
+                _retry_locks.discard(r.id)
+
+    session.commit()
+    return JSONResponse({
+        "ok": True,
+        "batch_id": batch_id,
+        "total": len(items),
+        "skipped_count": len(items) - len(failed_items),
+        "retried_count": len(failed_items),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "items": item_results,
+    })
+
+
+@router.post("/events/{event_id}/retry-batch")
+async def retry_event_batch_wrapper(
+    event_id: int,
+    request: Request,
+    _: None = Depends(require_admin),
+    session: Session = Depends(get_db),
+):
+    rec = session.get(EventRecord, event_id)
+    if not rec:
+        return JSONResponse(
+            {"ok": False, "error": "未找到指定的事件记录", "record_id": event_id},
+            status_code=404,
+        )
+    if not rec.batch_id:
+        return JSONResponse(
+            {"ok": False, "error": "该记录不属于批量日程，请使用单项重试接口", "record_id": event_id},
+            status_code=400,
+        )
+    return await retry_batch_events(rec.batch_id, request, _, session)
 
 
 @router.get("/system/backup")

@@ -63,16 +63,24 @@ function applyProviderType(select, prefix) {
 function toggleVision() {
   const checkbox = document.getElementById('vision-use-main');
   const card = document.getElementById('vision-card');
-  if (card) card.hidden = Boolean(checkbox && checkbox.checked);
+  const probeBtn = document.getElementById('sidebar-vision-test-btn');
+  const useMain = Boolean(checkbox && checkbox.checked);
+  if (card) card.hidden = useMain;
+  if (probeBtn) probeBtn.style.display = useMain ? 'none' : '';
 }
 
 function setFormStatus(form, message, isError) {
-  const status = form.querySelector('[data-form-status]');
-  if (!status) return;
-  status.textContent = message;
-  status.classList.toggle('error', Boolean(isError));
-  status.classList.toggle('success', !isError);
-  status.hidden = !message;
+  const statuses = [
+    ...(form ? Array.from(form.querySelectorAll('[data-form-status]')) : []),
+    ...Array.from(document.querySelectorAll('#sidebar-ai-status'))
+  ];
+  statuses.forEach(function(status) {
+    status.textContent = message;
+    status.classList.toggle('error', Boolean(isError));
+    status.classList.toggle('success', !isError);
+    status.hidden = !message;
+    if (message) status.style.display = 'block';
+  });
 }
 
 function normalizeModelIds(models) {
@@ -278,12 +286,13 @@ function updateModelOptions(form, prefix, models) {
 }
 
 async function runProbe(button, prefix, operation) {
-  const form = button.closest('form');
+  const form = button.closest('form') || document.getElementById(prefix === 'vision' ? 'vision-form' : 'main-ai-form');
+  if (!form) return;
   const fields = fieldsFor(prefix);
   const baseUrl = form.elements[fields.baseUrl];
   const model = form.elements[fields.model];
-  if (!baseUrl.reportValidity()) return;
-  if ((operation === 'test' || operation === 'schema-test') && !model.reportValidity()) return;
+  if (!baseUrl || !baseUrl.reportValidity()) return;
+  if ((operation === 'test' || operation === 'schema-test') && model && !model.reportValidity()) return;
 
   const originalText = button.textContent;
   button.disabled = true;
@@ -310,6 +319,63 @@ async function runProbe(button, prefix, operation) {
   }
 }
 
+async function recheckSavedAI() {
+  const btn = document.getElementById('btn-recheck-ai');
+  const badge = document.getElementById('ai-service-badge');
+  const statusText = document.getElementById('ai-service-status-text');
+  const checkLabel = document.getElementById('ai-check-label');
+  const checkTime = document.getElementById('ai-check-time');
+  const noticeBox = document.getElementById('ai-review-notice');
+  const noticeIcon = document.getElementById('ai-notice-icon');
+  const noticeReason = document.getElementById('ai-review-reason-text');
+  const statusP = document.getElementById('ai-status');
+
+  if (!btn) return;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '正在复核…';
+  try {
+    const response = await fetch('/console/connections/ai/test', {
+      method: 'POST',
+      headers: {'Accept': 'application/json'}
+    });
+    const data = await response.json().catch(function() {
+      return {ok: false};
+    });
+    if (badge) {
+      badge.innerHTML = '<span class="dot ' + (data.dot_class || (data.ok ? 'dot-success' : 'dot-error')) + '"></span><span id="ai-service-status-text">' + (data.state_label || (data.ok ? '已验证' : '测试失败')) + '</span>';
+    }
+    if (data.check) {
+      if (checkLabel) checkLabel.textContent = data.check.label || (data.ok ? '最近测试成功' : '最近测试失败');
+      if (checkTime) checkTime.textContent = data.check.time || new Date().toLocaleString();
+    }
+    if (noticeBox) {
+      noticeBox.style.display = 'block';
+      if (data.ok) {
+        noticeBox.style.background = 'rgba(16,185,129,0.1)';
+        noticeBox.style.borderColor = 'rgba(16,185,129,0.25)';
+        noticeBox.style.color = '#10b981';
+        if (noticeIcon) noticeIcon.textContent = '✅';
+        if (noticeReason) noticeReason.textContent = '已保存配置验证通过，与首页服务状态完全同步。';
+      } else {
+        noticeBox.style.background = 'rgba(239,68,68,0.1)';
+        noticeBox.style.borderColor = 'rgba(239,68,68,0.25)';
+        noticeBox.style.color = '#ef4444';
+        if (noticeIcon) noticeIcon.textContent = '❌';
+        if (noticeReason) noticeReason.textContent = data.error || '连接测试失败，请检查 Base URL、API Key 或模型名称。';
+      }
+    }
+    if (statusP) {
+      statusP.textContent = data.ok ? '已成功完成保存配置的连通性校验。' : '校验失败，请检查配置。';
+    }
+  } catch (err) {
+    if (statusP) statusP.textContent = '请求异常，请稍后重试。';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 window.addEventListener('DOMContentLoaded', function() {
   toggleVision();
   document.querySelectorAll('[data-model-input]').forEach(initializeModelPicker);
@@ -322,145 +388,206 @@ window.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <h2 class="section-title">AI 设置</h2>
+<p class="section-sub">配置用于自然语言日程解析与图片识别的多模态模型服务。拉取与探针测试不会自动保存更改。</p>
 
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
 
-<div class="card">
-  <h2>主模型</h2>
-  <p class="muted" style="margin-bottom:12px;">用于日程提取的 AI 模型。拉取和测试不会保存配置。</p>
-  <form method="post" action="/console/ai" class="stack">
-    <div class="row" style="gap:16px;">
-      <label style="flex:1;">
-        <span>供应商</span>
-        <select name="provider_name" data-current-value="{{ provider_name }}" onchange="applyProviderPreset(this, 'main')">
-          {% for provider in providers %}
-          <option value="{{ provider.name }}" {% if provider.name == provider_name %}selected{% endif %}>{{ provider.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label style="max-width:220px;">
-        <span>接口协议</span>
-        <select name="provider_type" data-current-value="{{ provider_type }}" onchange="applyProviderType(this, 'main')">
-          <option value="openai_compatible" {% if provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
-          <option value="anthropic" {% if provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
-        </select>
-      </label>
-    </div>
-    <label>
-      <span>Base URL</span>
-      <input name="base_url" type="url" value="{{ base_url }}" required>
-    </label>
-    <label>
-      <span>API Key</span>
-      <input name="api_key" type="password" value="" placeholder="{{ api_key_masked or '请输入 API Key；本地免鉴权服务可留空' }}" autocomplete="new-password">
-    </label>
-    {% if api_key_masked %}
-    <label class="inline-check">
-      <input type="checkbox" name="clear_api_key" value="1">
-      <span>清除已保存的 API Key</span>
-    </label>
-    {% endif %}
-    <div class="model-picker-row">
-      <div class="model-picker-field">
-        <div class="model-picker-label-row">
-          <label for="main-model-input">模型</label>
-          <span class="model-picker-count" data-model-count>{{ available_models | length }} 个候选</span>
+<div class="settings-layout">
+  <!-- 左栏：主模型与识图模型配置输入及保存 -->
+  <div class="settings-main stack">
+    <!-- 1. 主模型配置卡片 -->
+    <section class="card stack" id="main-model-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <h3 style="margin:0;font-size:16px;">1. 主模型配置</h3>
+        <span class="muted" style="font-size:12px;">核心自然语言日程提取</span>
+      </div>
+      <p class="muted" style="margin:0;font-size:13px;">用于日程提取的 AI 模型。右侧探针测试不会自动保存配置。</p>
+      <form method="post" action="/console/ai" id="main-ai-form" class="stack">
+        <div class="row" style="gap:16px;">
+          <label style="flex:1;">
+            <span>供应商预设</span>
+            <select name="provider_name" data-current-value="{{ provider_name }}" onchange="applyProviderPreset(this, 'main')">
+              {% for provider in providers %}
+              <option value="{{ provider.name }}" {% if provider.name == provider_name %}selected{% endif %}>{{ provider.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="max-width:220px;">
+            <span>接口协议</span>
+            <select name="provider_type" data-current-value="{{ provider_type }}" onchange="applyProviderType(this, 'main')">
+              <option value="openai_compatible" {% if provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
+              <option value="anthropic" {% if provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
+            </select>
+          </label>
         </div>
-        <div class="model-picker" data-model-picker>
-          <div class="model-picker-shell">
-            <div class="model-picker-control">
-              <input id="main-model-input" class="model-picker-input mono" name="model" value="{{ model }}" placeholder="输入模型 ID，或先拉取模型列表" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="main-model-list" aria-describedby="main-model-meta" autocomplete="off" spellcheck="false" data-model-input required>
-              <button type="button" class="model-picker-toggle" data-model-toggle aria-label="浏览主模型候选" aria-haspopup="listbox" aria-controls="main-model-list" aria-expanded="false">浏览</button>
+        <label>
+          <span>Base URL</span>
+          <input name="base_url" type="url" value="{{ base_url }}" placeholder="https://api.openai.com/v1" required>
+        </label>
+        <label>
+          <span>API Key</span>
+          <input name="api_key" type="password" value="" placeholder="{{ api_key_masked or '请输入 API Key；本地免鉴权服务可留空' }}" autocomplete="new-password">
+        </label>
+        {% if api_key_masked %}
+        <label class="inline-check">
+          <input type="checkbox" name="clear_api_key" value="1">
+          <span>清除已保存的 API Key</span>
+        </label>
+        {% endif %}
+        <div class="model-picker-row">
+          <div class="model-picker-field">
+            <div class="model-picker-label-row">
+              <label for="main-model-input">模型</label>
+              <span class="model-picker-count" data-model-count>{{ available_models | length }} 个候选</span>
             </div>
-            <div id="main-model-list" class="model-picker-list" role="listbox" aria-label="主模型候选" data-model-list hidden></div>
+            <div class="model-picker" data-model-picker>
+              <div class="model-picker-shell">
+                <div class="model-picker-control">
+                  <input id="main-model-input" class="model-picker-input mono" name="model" value="{{ model }}" placeholder="输入模型 ID，或先拉取模型列表" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="main-model-list" aria-describedby="main-model-meta" autocomplete="off" spellcheck="false" data-model-input required>
+                  <button type="button" class="model-picker-toggle" data-model-toggle aria-label="浏览主模型候选" aria-haspopup="listbox" aria-controls="main-model-list" aria-expanded="false">浏览</button>
+                </div>
+                <div id="main-model-list" class="model-picker-list" role="listbox" aria-label="主模型候选" data-model-list hidden></div>
+              </div>
+              <p id="main-model-meta" class="model-picker-meta" data-model-meta aria-live="polite"></p>
+              <input type="hidden" name="available_models_raw" value="{{ available_models | join(',') }}" data-model-raw>
+            </div>
           </div>
-          <p id="main-model-meta" class="model-picker-meta" data-model-meta aria-live="polite"></p>
-          <input type="hidden" name="available_models_raw" value="{{ available_models | join(',') }}" data-model-raw>
+          <button type="button" class="secondary model-pull-button" data-endpoint="/console/ai/models" onclick="runProbe(this, 'main', 'models')">拉取模型列表</button>
         </div>
-      </div>
-      <button type="button" class="secondary model-pull-button" data-endpoint="/console/ai/models" onclick="runProbe(this, 'main', 'models')">拉取模型列表</button>
-    </div>
-    <label class="toggle-row" style="margin-top:12px;">
-      <div>
-        <div style="font-size:13px;font-weight:510;margin-bottom:2px;">用于图片识别</div>
-        <div class="muted" style="font-size:12px;">收到图片时使用当前模型提取文字内容</div>
-      </div>
-      <span class="toggle-switch">
-        <input id="vision-use-main" type="checkbox" name="vision_use_main" value="1" onchange="toggleVision()" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
-        <span class="toggle-slider"></span>
-      </span>
-    </label>
-    <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
-    <div class="row" style="margin-top:4px;">
-      <button type="button" class="secondary" data-endpoint="/console/ai/test" onclick="runProbe(this, 'main', 'test')">测试连接</button>
-      <button type="button" class="secondary" data-endpoint="/console/ai/schema-test" onclick="runProbe(this, 'main', 'schema-test')">验证结构输出</button>
-      <button type="submit">保存主模型</button>
-    </div>
-  </form>
-</div>
+        <label class="toggle-row" style="margin-top:12px;">
+          <div>
+            <div style="font-size:13px;font-weight:510;margin-bottom:2px;">用于图片识别</div>
+            <div class="muted" style="font-size:12px;">收到图片时使用当前主模型提取文字内容（需模型支持 Vision 多模态）</div>
+          </div>
+          <span class="toggle-switch">
+            <input id="vision-use-main" type="checkbox" name="vision_use_main" value="1" onchange="toggleVision()" {% if vision_use_main and vision_use_main != 'false' %}checked{% endif %}>
+            <span class="toggle-slider"></span>
+          </span>
+        </label>
+        <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
+        <div class="row" style="margin-top:8px;">
+          <button type="submit">保存主模型</button>
+        </div>
+      </form>
+    </section>
 
-<div class="card" id="vision-card" hidden>
-  <h2>识图模型</h2>
-  <p class="muted" style="margin-bottom:12px;">收到图片时使用独立模型识别文字。拉取和测试不会保存配置。</p>
-  <form method="post" action="/console/ai/vision" class="stack">
-    <input type="hidden" name="vision_use_main" value="false">
-    <div class="row" style="gap:16px;">
-      <label style="flex:1;">
-        <span>供应商</span>
-        <select name="vision_provider_name" data-current-value="{{ vision_provider_name or providers[0].name }}" onchange="applyProviderPreset(this, 'vision')">
-          {% for provider in providers %}
-          <option value="{{ provider.name }}" {% if provider.name == (vision_provider_name or providers[0].name) %}selected{% endif %}>{{ provider.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label style="max-width:220px;">
-        <span>接口协议</span>
-        <select name="vision_provider_type" data-current-value="{{ vision_provider_type }}" onchange="applyProviderType(this, 'vision')">
-          <option value="openai_compatible" {% if vision_provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
-          <option value="anthropic" {% if vision_provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
-        </select>
-      </label>
-    </div>
-    <label>
-      <span>Base URL</span>
-      <input name="vision_base_url" type="url" value="{{ vision_base_url or providers[0].base_url }}" required>
-    </label>
-    <label>
-      <span>API Key</span>
-      <input name="vision_api_key" type="password" value="" placeholder="{{ vision_api_key_masked or '请输入 API Key；本地免鉴权服务可留空' }}" autocomplete="new-password">
-    </label>
-    {% if vision_api_key_masked %}
-    <label class="inline-check">
-      <input type="checkbox" name="clear_vision_api_key" value="1">
-      <span>清除已保存的识图 API Key</span>
-    </label>
-    {% endif %}
-    <div class="model-picker-row">
-      <div class="model-picker-field">
-        <div class="model-picker-label-row">
-          <label for="vision-model-input">模型</label>
-          <span class="model-picker-count" data-model-count>{{ vision_models | length }} 个候选</span>
+    <!-- 2. 识图模型配置卡片 -->
+    <section class="card stack" id="vision-card" hidden>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <h3 style="margin:0;font-size:16px;">2. 独立识图模型</h3>
+        <span class="muted" style="font-size:12px;">多模态 OCR 视觉解析</span>
+      </div>
+      <p class="muted" style="margin:0;font-size:13px;">收到图片时使用独立模型识别文字。拉取和测试不会自动保存配置。</p>
+      <form method="post" action="/console/ai/vision" id="vision-form" class="stack">
+        <input type="hidden" name="vision_use_main" value="false">
+        <div class="row" style="gap:16px;">
+          <label style="flex:1;">
+            <span>供应商预设</span>
+            <select name="vision_provider_name" data-current-value="{{ vision_provider_name or providers[0].name }}" onchange="applyProviderPreset(this, 'vision')">
+              {% for provider in providers %}
+              <option value="{{ provider.name }}" {% if provider.name == (vision_provider_name or providers[0].name) %}selected{% endif %}>{{ provider.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="max-width:220px;">
+            <span>接口协议</span>
+            <select name="vision_provider_type" data-current-value="{{ vision_provider_type }}" onchange="applyProviderType(this, 'vision')">
+              <option value="openai_compatible" {% if vision_provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI Compatible</option>
+              <option value="anthropic" {% if vision_provider_type == 'anthropic' %}selected{% endif %}>Anthropic</option>
+            </select>
+          </label>
         </div>
-        <div class="model-picker" data-model-picker>
-          <div class="model-picker-shell">
-            <div class="model-picker-control">
-              <input id="vision-model-input" class="model-picker-input mono" name="vision_model" value="{{ vision_model }}" placeholder="输入模型 ID，或先拉取模型列表" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="vision-model-list" aria-describedby="vision-model-meta" autocomplete="off" spellcheck="false" data-model-input required>
-              <button type="button" class="model-picker-toggle" data-model-toggle aria-label="浏览识图模型候选" aria-haspopup="listbox" aria-controls="vision-model-list" aria-expanded="false">浏览</button>
+        <label>
+          <span>Base URL</span>
+          <input name="vision_base_url" type="url" value="{{ vision_base_url or providers[0].base_url }}" placeholder="https://api.openai.com/v1" required>
+        </label>
+        <label>
+          <span>API Key</span>
+          <input name="vision_api_key" type="password" value="" placeholder="{{ vision_api_key_masked or '请输入 API Key；本地免鉴权服务可留空' }}" autocomplete="new-password">
+        </label>
+        {% if vision_api_key_masked %}
+        <label class="inline-check">
+          <input type="checkbox" name="clear_vision_api_key" value="1">
+          <span>清除已保存的识图 API Key</span>
+        </label>
+        {% endif %}
+        <div class="model-picker-row">
+          <div class="model-picker-field">
+            <div class="model-picker-label-row">
+              <label for="vision-model-input">模型</label>
+              <span class="model-picker-count" data-model-count>{{ vision_models | length }} 个候选</span>
             </div>
-            <div id="vision-model-list" class="model-picker-list" role="listbox" aria-label="识图模型候选" data-model-list hidden></div>
+            <div class="model-picker" data-model-picker>
+              <div class="model-picker-shell">
+                <div class="model-picker-control">
+                  <input id="vision-model-input" class="model-picker-input mono" name="vision_model" value="{{ vision_model }}" placeholder="输入模型 ID，或先拉取模型列表" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="vision-model-list" aria-describedby="vision-model-meta" autocomplete="off" spellcheck="false" data-model-input required>
+                  <button type="button" class="model-picker-toggle" data-model-toggle aria-label="浏览识图模型候选" aria-haspopup="listbox" aria-controls="vision-model-list" aria-expanded="false">浏览</button>
+                </div>
+                <div id="vision-model-list" class="model-picker-list" role="listbox" aria-label="识图模型候选" data-model-list hidden></div>
+              </div>
+              <p id="vision-model-meta" class="model-picker-meta" data-model-meta aria-live="polite"></p>
+              <input type="hidden" name="vision_available_models_raw" value="{{ vision_models | join(',') }}" data-model-raw>
+            </div>
           </div>
-          <p id="vision-model-meta" class="model-picker-meta" data-model-meta aria-live="polite"></p>
-          <input type="hidden" name="vision_available_models_raw" value="{{ vision_models | join(',') }}" data-model-raw>
+          <button type="button" class="secondary model-pull-button" data-endpoint="/console/ai/vision-models" onclick="runProbe(this, 'vision', 'models')">拉取模型列表</button>
+        </div>
+        <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
+        <div class="row" style="margin-top:8px;">
+          <button type="submit">保存识图模型</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <!-- 右栏：服务状态指示灯、测试探针按钮组及协议说明 -->
+  <div class="settings-sidebar stack">
+    <!-- 1. AI 服务实时状态卡片 -->
+    <div class="card stack" id="ai-status-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <h4 style="margin:0;font-size:15px;">AI 服务状态</h4>
+        <span class="status-badge" id="ai-service-badge"><span class="dot {{ ai_dot_class }}"></span><span id="ai-service-status-text">{{ ai_state_label }}</span></span>
+      </div>
+
+      <div class="ai-check-meta" style="font-size:12px;color:var(--text-muted);display:flex;flex-direction:column;gap:4px;">
+        <div>校验状态：<strong id="ai-check-label" style="color:var(--text-regular);">{{ ai_check.label if ai_check and ai_check.label else '未验证' }}</strong></div>
+        <div>校验时间：<time id="ai-check-time">{{ ai_check.time if ai_check and ai_check.time else '暂无校验记录' }}</time></div>
+      </div>
+
+      <div id="ai-review-notice" class="caldav-review-notice" style="padding:10px 12px;border-radius:6px;font-size:12px;line-height:1.5;{% if ai_review_reason or ai_dot_class == 'dot-warning' or ai_dot_class == 'dot-error' or ai_dot_class == 'dot-success' %}display:block;{% else %}display:none;{% endif %}{% if ai_dot_class == 'dot-warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);color:#f59e0b;{% elif ai_dot_class == 'dot-error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#ef4444;{% elif ai_dot_class == 'dot-success' %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.25);color:#10b981;{% else %}background:rgba(138,143,152,0.1);border:1px solid rgba(138,143,152,0.25);color:#8a8f98;{% endif %}">
+        <div style="display:flex;align-items:flex-start;gap:6px;">
+          <span id="ai-notice-icon">{% if ai_dot_class == 'dot-warning' %}⚠️{% elif ai_dot_class == 'dot-error' %}❌{% else %}✅{% endif %}</span>
+          <span id="ai-review-reason-text">{{ ai_review_reason or '已保存配置验证通过，与首页服务状态完全同步。' }}</span>
         </div>
       </div>
-      <button type="button" class="secondary model-pull-button" data-endpoint="/console/ai/vision-models" onclick="runProbe(this, 'vision', 'models')">拉取模型列表</button>
+
+      <button type="button" id="btn-recheck-ai" onclick="recheckSavedAI()" style="width:100%;justify-content:center;padding:8px 12px;font-weight:600;">一键复核 / 验证已保存配置</button>
+
+      <p id="ai-status" class="form-status" role="status" aria-live="polite">当前显示已保存的主模型配置。</p>
     </div>
-    <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
-    <div class="row" style="margin-top:4px;">
-      <button type="button" class="secondary" data-endpoint="/console/ai/vision-test" onclick="runProbe(this, 'vision', 'test')">测试连接</button>
-      <button type="submit">保存识图模型</button>
+
+    <!-- 2. 连通性与探针测试卡片 -->
+    <div class="card stack" id="ai-probes-card">
+      <h4 style="margin:0;font-size:15px;">连通性与探针测试</h4>
+      <p class="event-count" style="margin:0;font-size:12px;color:var(--text-muted);">测试仅针对左侧表单当前填写内容，不会自动保存更改。</p>
+      <div class="stack" style="gap:8px;">
+        <button type="button" class="secondary" data-endpoint="/console/ai/test" onclick="runProbe(this, 'main', 'test')" style="width:100%;justify-content:center;">测试主模型连接</button>
+        <button type="button" class="secondary" data-endpoint="/console/ai/schema-test" onclick="runProbe(this, 'main', 'schema-test')" style="width:100%;justify-content:center;">验证结构输出能力</button>
+        <button type="button" class="secondary" id="sidebar-vision-test-btn" data-endpoint="/console/ai/vision-test" onclick="runProbe(this, 'vision', 'test')" style="width:100%;justify-content:center;{% if vision_use_main and vision_use_main != 'false' %}display:none;{% endif %}">测试识图模型连接</button>
+      </div>
+      <p class="form-status" id="sidebar-ai-status" data-form-status role="status" aria-live="polite" hidden></p>
     </div>
-  </form>
+
+    <!-- 3. 协议说明卡片 -->
+    <div class="card stack" id="ai-protocol-card">
+      <h4 style="margin:0;font-size:15px;">协议与配置说明</h4>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.6;display:flex;flex-direction:column;gap:8px;">
+        <div><strong>OpenAI Compatible：</strong>兼容标准 <code>/chat/completions</code> 与 <code>/models</code> 接口。适配 DeepSeek、Qwen、OpenAI、Ollama、vLLM、OneAPI 等主流服务商。</div>
+        <div><strong>Anthropic：</strong>兼容 Claude 原生 <code>/v1/messages</code> 接口标准与专属鉴权 Header。</div>
+        <div><strong>识图模式：</strong>勾选“用于图片识别”时直接复用主模型能力；若主模型为纯文本模型，可取消勾选并配置独立视觉模型（如 GPT-4o, Claude 3.5 Sonnet 等）。</div>
+        <div><strong>安全存储：</strong>API Key 在服务器本地均经由 AES-GCM 强加密存储，前端回显严格脱敏遮蔽。</div>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}

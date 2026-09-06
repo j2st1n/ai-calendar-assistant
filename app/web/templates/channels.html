@@ -6,33 +6,30 @@
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
 
-<!-- 顶部状态药丸 (Status Pills) -->
-<div class="channel-pills" role="region" aria-label="渠道快捷状态">
-  <button type="button" class="channel-pill {% if active_tab == 'wechat' %}active{% endif %}" id="pill-wechat" onclick="switchChannelTab('wechat')">
+<!-- 融合成带状态指示灯的统一高级 Tab 栏（消除上方药丸与下方 Tab 重复） -->
+<div class="channel-tabs channel-pills" role="tablist" aria-label="消息渠道切换">
+  <button type="button" role="tab" class="channel-tab channel-pill {% if active_tab == 'wechat' %}active{% endif %}" id="tab-btn-wechat" aria-controls="panel-wechat" aria-selected="{% if active_tab == 'wechat' %}true{% else %}false{% endif %}" onclick="switchChannelTab('wechat')">
     <span class="dot {% if wechat_state == 'polling' %}dot-success{% elif wechat_state in ('retrying', 'paused', 'starting') %}dot-warning{% elif wechat_configured %}dot-muted{% else %}dot-error{% endif %}" id="pill-dot-wechat"></span>
-    <span id="pill-text-wechat">微信：{{ wechat_state_label if wechat_configured else '未配置' }}</span>
+    <span class="channel-tab-title">微信 (WeChat)</span>
+    <span class="channel-tab-badge" id="pill-text-wechat">微信：{{ wechat_state_label if wechat_configured else '未配置' }}</span>
   </button>
-  <button type="button" class="channel-pill {% if active_tab == 'telegram' %}active{% endif %}" id="pill-telegram" onclick="switchChannelTab('telegram')">
+  <button type="button" role="tab" class="channel-tab channel-pill {% if active_tab == 'telegram' %}active{% endif %}" id="tab-btn-telegram" aria-controls="panel-telegram" aria-selected="{% if active_tab == 'telegram' %}true{% else %}false{% endif %}" onclick="switchChannelTab('telegram')">
     <span class="dot {% if bot_running %}dot-success{% elif bot_token_set %}dot-muted{% else %}dot-error{% endif %}" id="pill-dot-telegram"></span>
-    <span id="pill-text-telegram">Telegram：{% if bot_running %}运行中（{{ allowed_users|length }}人）{% elif bot_token_set %}未启动{% else %}未配置{% endif %}</span>
+    <span class="channel-tab-title">Telegram</span>
+    <span class="channel-tab-badge" id="pill-text-telegram">Telegram：{% if bot_running %}运行中（{{ allowed_users|length }}人）{% elif bot_token_set %}未启动{% else %}未配置{% endif %}</span>
   </button>
-  <button type="button" class="channel-pill {% if active_tab == 'discord' %}active{% endif %}" id="pill-discord" onclick="switchChannelTab('discord')">
+  <button type="button" role="tab" class="channel-tab channel-pill {% if active_tab == 'discord' %}active{% endif %}" id="tab-btn-discord" aria-controls="panel-discord" aria-selected="{% if active_tab == 'discord' %}true{% else %}false{% endif %}" onclick="switchChannelTab('discord')">
     <span class="dot {% if discord_bot_running %}dot-success{% elif discord_token_set %}dot-muted{% else %}dot-error{% endif %}" id="pill-dot-discord"></span>
-    <span id="pill-text-discord">Discord：{% if discord_bot_running %}运行中（{{ discord_allowed_users|length }}人）{% elif discord_token_set %}未启动{% else %}未配置{% endif %}</span>
+    <span class="channel-tab-title">Discord</span>
+    <span class="channel-tab-badge" id="pill-text-discord">Discord：{% if discord_bot_running %}运行中（{{ discord_allowed_users|length }}人）{% elif discord_token_set %}未启动{% else %}未配置{% endif %}</span>
   </button>
 </div>
 
-<!-- 主 Tab 导航 -->
-<div class="channel-tabs" role="tablist" aria-label="消息渠道切换">
-  <button type="button" role="tab" class="channel-tab {% if active_tab == 'wechat' %}active{% endif %}" id="tab-btn-wechat" aria-controls="panel-wechat" aria-selected="{% if active_tab == 'wechat' %}true{% else %}false{% endif %}" onclick="switchChannelTab('wechat')">
-    微信 (WeChat)
-  </button>
-  <button type="button" role="tab" class="channel-tab {% if active_tab == 'telegram' %}active{% endif %}" id="tab-btn-telegram" aria-controls="panel-telegram" aria-selected="{% if active_tab == 'telegram' %}true{% else %}false{% endif %}" onclick="switchChannelTab('telegram')">
-    Telegram
-  </button>
-  <button type="button" role="tab" class="channel-tab {% if active_tab == 'discord' %}active{% endif %}" id="tab-btn-discord" aria-controls="panel-discord" aria-selected="{% if active_tab == 'discord' %}true{% else %}false{% endif %}" onclick="switchChannelTab('discord')">
-    Discord
-  </button>
+<!-- 隐式兼容锚点 (保留 ID 供测试与脚本安全引用) -->
+<div class="channel-pills-compat" style="display:none;" aria-hidden="true">
+  <span id="pill-wechat"></span>
+  <span id="pill-telegram"></span>
+  <span id="pill-discord"></span>
 </div>
 
 <!-- Tab 1: 微信 (WeChat) 面板 -->
@@ -43,308 +40,417 @@
     <a class="button-link" href="#wechat-login" onclick="document.getElementById('wechat-login').open=true">重新扫码登录</a>
   </div>
 
-  <div class="card">
-    <h2>Bot 状态</h2>
-    <div class="row" style="gap:8px;">
-      <span class="muted">WeChat Bot：</span>
+  <div class="settings-layout">
+    <!-- 左栏：微信配置与扫码接入 -->
+    <div class="settings-main stack">
+      <details class="card settings-disclosure" id="wechat-login" {% if not wechat_configured or needs_login %}open{% endif %}>
+        <summary>{{ "重新登录或更换账号" if wechat_configured else "扫码登录微信" }}</summary>
+        <p class="muted" style="margin-bottom:16px;">点击下方按钮获取二维码，使用手机微信扫码完成接入。登录成功后 Bot Token 将自动加密保存。</p>
+
+        <div id="qr-step-1">
+          <button type="button" id="btn-fetch-qr" onclick="fetchQR()">获取二维码</button>
+        </div>
+
+        <div id="qr-step-2" style="display:none;margin-top:16px;">
+          <div style="margin-bottom:12px;">
+            <span class="muted" style="font-size:12px;">QR 码有效期内请尽快扫码</span>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:20px;margin-bottom:12px;text-align:center;">
+            <div id="qr-image-wrap" style="margin-bottom:12px;"></div>
+            <div id="qr-link-wrap" style="margin-bottom:12px;"></div>
+            <div id="qr-payload" class="mono" style="font-size:12px;color:#8a8f98;word-break:break-all;user-select:all;"></div>
+          </div>
+          <div id="qr-status">
+            <span class="status-badge"><span class="dot dot-warning"></span>等待扫码...</span>
+          </div>
+        </div>
+
+        <div id="qr-step-3" style="display:none;margin-top:16px;">
+          <span class="status-badge"><span class="dot dot-success"></span>登录成功！Bot Token 已保存。</span>
+        </div>
+
+        <div id="qr-error" style="display:none;margin-top:16px;">
+          <p class="alert error" id="qr-error-msg"></p>
+        </div>
+      </details>
+
       {% if wechat_configured %}
-      <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
-      <span class="muted" style="font-size:12px;">Token 已保存（加密）</span>
-      {% else %}
-      <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
+      <details class="card danger-zone settings-disclosure"><summary>清除登录凭据</summary>
+        <h2>清除 Token</h2>
+        <p class="muted" style="margin-bottom:12px;">删除已保存的微信 Bot Token。删除后需要重新扫码登录。</p>
+        <form method="post" action="/console/wechat/clear" onsubmit="return confirm('确定要清除 WeChat Bot Token 吗？');">
+          <button type="submit" class="danger">清除 Token</button>
+        </form>
+      </details>
       {% endif %}
     </div>
-    {% if wechat_configured %}
-    <div class="row" style="gap:8px;margin-top:10px;">
-      <span class="muted">Bot 任务：</span>
-      {% if wechat_task_alive %}
-      <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
-      {% else %}
-      <span class="status-badge"><span class="dot dot-error"></span>已停止</span>
-      {% endif %}
+
+    <!-- 右栏：微信运行状态与快捷操作 -->
+    <div class="settings-sidebar stack">
+      <div class="card stack" id="wechat-status-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <h4 style="margin:0;font-size:15px;">微信运行状态</h4>
+          <span id="wechat-state" class="status-badge">
+            <span class="dot {% if wechat_state == 'polling' %}dot-success{% elif wechat_state in ('retrying', 'paused', 'starting') %}dot-warning{% elif wechat_configured %}dot-muted{% else %}dot-error{% endif %}"></span>{{ wechat_state_label if wechat_configured else '未配置' }}
+          </span>
+        </div>
+
+        <div class="status-meta-list" style="font-size:12px;color:var(--text-muted);display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span>凭据状态：</span>
+            {% if wechat_configured %}
+            <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
+            {% else %}
+            <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
+            {% endif %}
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span>Bot 任务：</span>
+            {% if wechat_task_alive %}
+            <strong style="color:#10b981;">运行中</strong>
+            {% else %}
+            <strong style="color:#8a8f98;">已停止</strong>
+            {% endif %}
+          </div>
+          <div id="wechat-last-poll-row" style="display:flex;justify-content:space-between;{% if not wechat_last_poll_success_at %}display:none;{% endif %}">
+            <span>最后轮询：</span>
+            <span id="wechat-last-poll" data-ts="{{ wechat_last_poll_success_at or '' }}"></span>
+          </div>
+          <div id="wechat-last-message-row" style="display:flex;justify-content:space-between;{% if not wechat_last_message_at %}display:none;{% endif %}">
+            <span>最后收到：</span>
+            <span id="wechat-last-message" data-ts="{{ wechat_last_message_at or '' }}"></span>
+          </div>
+          <div id="wechat-retry-row" style="display:flex;justify-content:space-between;{% if not wechat_next_retry_at %}display:none;{% endif %}">
+            <span>下次重试：</span>
+            <span id="wechat-next-retry" data-ts="{{ wechat_next_retry_at or '' }}"></span>
+          </div>
+          <div id="wechat-pause-row" style="display:flex;justify-content:space-between;{% if not wechat_pause_until %}display:none;{% endif %}">
+            <span>冷却结束：</span>
+            <span id="wechat-pause-until" data-ts="{{ wechat_pause_until or '' }}"></span>
+          </div>
+        </div>
+
+        <!-- 快捷操作按钮 -->
+        {% if wechat_configured %}
+        <div style="margin-top:6px;">
+          {% if wechat_task_alive %}
+          <form method="post" action="/console/wechat/stop" style="margin:0;">
+            <button type="submit" class="danger" style="width:100%;justify-content:center;">停止 Bot</button>
+          </form>
+          {% else %}
+          <form method="post" action="/console/wechat/start" style="margin:0;">
+            <button type="submit" style="width:100%;justify-content:center;">启动 Bot</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- 连接诊断折叠 -->
+        {% if wechat_configured %}
+        <details class="event-technical"><summary>连接诊断与排错</summary>
+          <div class="stack" style="gap:6px;margin-top:8px;">
+            <div id="wechat-failures-row" style="font-size:12px;{% if not wechat_consecutive_failures %}display:none;{% endif %}">
+              <span class="muted">连续失败：</span>
+              <span id="wechat-failures">{{ wechat_consecutive_failures }}</span>
+            </div>
+            {% if wechat_cursor_length is defined and wechat_cursor_length %}
+            <div style="font-size:12px;">
+              <span class="muted">游标长度：</span>
+              <span>{{ wechat_cursor_length }}</span>
+            </div>
+            {% endif %}
+            <div id="wechat-current-error-row" style="font-size:12px;{% if not wechat_current_error %}display:none;{% endif %}">
+              <span class="muted">当前错误：</span>
+              <span id="wechat-current-error" style="color:#e74c3c;">{% if wechat_current_error %}{{ wechat_current_error.message }}{% endif %}</span>
+            </div>
+            <div id="wechat-last-error-row" style="font-size:12px;{% if not wechat_last_error or wechat_current_error %}display:none;{% endif %}">
+              <span class="muted">最近已恢复错误：</span>
+              <span id="wechat-last-error">{{ wechat_last_error.message if wechat_last_error else '' }}</span>
+            </div>
+          </div>
+        </details>
+        {% endif %}
+      </div>
+
+      <div class="card stack">
+        <h4 style="margin:0;font-size:15px;">微信接入说明</h4>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">
+          <p style="margin:0 0 6px 0;">通过微信扫码登录微信桌面 iPad 协议实例。系统将自动保持消息轮询监听。</p>
+          <p style="margin:0;">若凭据失效，上方会自动出现黄色/红色复核提醒，直接点击「重新扫码」即可一键恢复。</p>
+        </div>
+      </div>
     </div>
-    <div class="row" style="gap:8px;margin-top:6px;">
-      <span class="muted">微信连接：</span>
-      <span id="wechat-state" class="status-badge">
-        <span class="dot {% if wechat_state == 'polling' %}dot-success{% elif wechat_state in ('retrying', 'paused', 'starting') %}dot-warning{% else %}dot-error{% endif %}"></span>{{ wechat_state_label }}
-      </span>
-    </div>
-    <div id="wechat-last-poll-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_last_poll_success_at %}display:none;{% endif %}">
-      <span class="muted">最后成功轮询：</span>
-      <span id="wechat-last-poll" data-ts="{{ wechat_last_poll_success_at or '' }}" style="font-size:12px;"></span>
-    </div>
-    <div id="wechat-last-message-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_last_message_at %}display:none;{% endif %}">
-      <span class="muted">最后收到消息：</span>
-      <span id="wechat-last-message" data-ts="{{ wechat_last_message_at or '' }}" style="font-size:12px;"></span>
-    </div>
-    <div id="wechat-retry-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_next_retry_at %}display:none;{% endif %}">
-      <span class="muted">下次重试：</span>
-      <span id="wechat-next-retry" data-ts="{{ wechat_next_retry_at or '' }}" style="font-size:12px;"></span>
-    </div>
-    <div id="wechat-pause-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_pause_until %}display:none;{% endif %}">
-      <span class="muted">冷却结束：</span>
-      <span id="wechat-pause-until" data-ts="{{ wechat_pause_until or '' }}" style="font-size:12px;"></span>
-    </div>
-    <details class="event-technical"><summary>连接诊断</summary>
-    <div id="wechat-failures-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_consecutive_failures %}display:none;{% endif %}">
-      <span class="muted">连续失败：</span>
-      <span id="wechat-failures" style="font-size:12px;">{{ wechat_consecutive_failures }}</span>
-    </div>
-    {% if wechat_cursor_length is defined and wechat_cursor_length %}
-    <div class="row" style="gap:8px;margin-top:6px;">
-      <span class="muted">游标长度：</span>
-      <span style="font-size:12px;">{{ wechat_cursor_length }}</span>
-    </div>
-    {% endif %}
-    <div id="wechat-current-error-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_current_error %}display:none;{% endif %}">
-      <span class="muted">当前错误：</span>
-      <span id="wechat-current-error" style="font-size:12px;color:#e74c3c;">{% if wechat_current_error %}{{ wechat_current_error.message }}{% endif %}</span>
-    </div>
-    <div id="wechat-last-error-row" class="row" style="gap:8px;margin-top:6px;{% if not wechat_last_error or wechat_current_error %}display:none;{% endif %}">
-      <span class="muted">最近已恢复错误：</span>
-      <span id="wechat-last-error" style="font-size:12px;">{% if wechat_last_error %}{{ wechat_last_error.message }}{% endif %}</span>
-    </div>
-    </details>
-    <div style="margin-top:14px;">
-      {% if wechat_task_alive %}
-      <form method="post" action="/console/wechat/stop" style="display:inline;">
-        <button type="submit" class="danger">停止 Bot</button>
-      </form>
-      {% else %}
-      <form method="post" action="/console/wechat/start" style="display:inline;">
-        <button type="submit">启动 Bot</button>
-      </form>
-      {% endif %}
-    </div>
-    {% endif %}
   </div>
-
-  <details class="card settings-disclosure" id="wechat-login" {% if not wechat_configured or needs_login %}open{% endif %}>
-    <summary>{{ "重新登录或更换账号" if wechat_configured else "扫码登录" }}</summary>
-    <p class="muted" style="margin-bottom:16px;">点击按钮获取 QR 码，使用微信扫码完成登录。登录成功后 Bot Token 将自动保存。</p>
-
-    <div id="qr-step-1">
-      <button type="button" id="btn-fetch-qr" onclick="fetchQR()">获取二维码</button>
-    </div>
-
-    <div id="qr-step-2" style="display:none;margin-top:16px;">
-      <div style="margin-bottom:12px;">
-        <span class="muted" style="font-size:12px;">QR 码有效期内请尽快扫码</span>
-      </div>
-      <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:20px;margin-bottom:12px;text-align:center;">
-        <div id="qr-image-wrap" style="margin-bottom:12px;"></div>
-        <div id="qr-link-wrap" style="margin-bottom:12px;"></div>
-        <div id="qr-payload" class="mono" style="font-size:12px;color:#8a8f98;word-break:break-all;user-select:all;"></div>
-      </div>
-      <div id="qr-status">
-        <span class="status-badge"><span class="dot dot-warning"></span>等待扫码...</span>
-      </div>
-    </div>
-
-    <div id="qr-step-3" style="display:none;margin-top:16px;">
-      <span class="status-badge"><span class="dot dot-success"></span>登录成功！Bot Token 已保存。</span>
-    </div>
-
-    <div id="qr-error" style="display:none;margin-top:16px;">
-      <p class="alert error" id="qr-error-msg"></p>
-    </div>
-  </details>
-
-  {% if wechat_configured %}
-  <details class="card danger-zone settings-disclosure"><summary>清除登录凭据</summary>
-    <h2>清除 Token</h2>
-    <p class="muted" style="margin-bottom:12px;">删除已保存的 Bot Token。删除后需要重新扫码登录。</p>
-    <form method="post" action="/console/wechat/clear" onsubmit="return confirm('确定要清除 WeChat Bot Token 吗？');">
-      <button type="submit" class="danger">清除 Token</button>
-    </form>
-  </details>
-  {% endif %}
 </div>
 
 <!-- Tab 2: Telegram 面板 -->
 <div id="panel-telegram" class="channel-panel {% if active_tab == 'telegram' %}active{% endif %}" role="tabpanel" aria-labelledby="tab-btn-telegram" {% if active_tab != 'telegram' %}style="display:none;"{% endif %}>
-  <div class="card">
-    <h2>Bot 配置</h2>
-    <form method="post" action="/console/telegram" class="stack" onsubmit="{% if bot_running %}return confirm('Bot 已在运行，是否重启？');{% endif %}">
-      <label>
-        <span>Bot Token</span>
-        <input name="bot_token" type="password" value="" placeholder="{{ bot_token_masked or '输入 Telegram Bot Token' }}" autocomplete="off">
-      </label>
-      <label>
-        <span>Bot Username</span>
-        <input name="bot_username" value="{{ bot_username }}" placeholder="my_calendar_bot">
-      </label>
-      <div class="row" style="margin-top:4px;">
-        <button type="submit">保存并重载 Bot</button>
+  <div class="settings-layout">
+    <!-- 左栏：Telegram 配置与白名单管理 -->
+    <div class="settings-main stack">
+      <div class="card stack">
+        <h3 style="margin:0;font-size:16px;">Telegram Bot 配置</h3>
+        <p class="muted" style="margin:0;font-size:13px;">配置 BotFather 提供的 Bot Token 与用户名。</p>
+        <form method="post" action="/console/telegram" class="stack" onsubmit="{% if bot_running %}return confirm('Bot 已在运行，是否重启？');{% endif %}">
+          <label>
+            <span>Bot Token</span>
+            <input name="bot_token" type="password" value="" placeholder="{{ bot_token_masked or '输入 Telegram Bot Token' }}" autocomplete="off">
+          </label>
+          <label>
+            <span>Bot Username</span>
+            <input name="bot_username" value="{{ bot_username }}" placeholder="my_calendar_bot">
+          </label>
+          <div class="row" style="margin-top:4px;">
+            <button type="submit">保存并重载 Bot</button>
+          </div>
+        </form>
       </div>
-    </form>
 
-    <div class="row" style="margin-top:16px;gap:8px;">
-      <span class="muted">Bot 状态：</span>
-      {% if bot_running %}
-      <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
-      {% else %}
-      <span class="status-badge"><span class="dot dot-error"></span>未启动</span>
+      <div class="card stack">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <h3 style="margin:0;font-size:16px;">绑定与授权用户</h3>
+          {% if allowed_users %}
+          <span class="muted" style="font-size:12px;">已授权 {{ allowed_users|length }} 人</span>
+          {% endif %}
+        </div>
+
+        <div class="row" style="align-items:center;gap:16px;">
+          <form method="post" action="/console/telegram/bind" style="margin:0;">
+            <button type="submit">生成新绑定链接</button>
+          </form>
+        </div>
+
+        {% if bind_link and bind_token %}
+        <div id="bind-status" style="padding:10px 12px;border-radius:6px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);">
+          <span class="status-badge"><span class="dot dot-warning"></span>等待授权...</span>
+          <a href="{{ bind_link }}" target="_blank" class="button-link secondary" style="margin-left:8px;font-size:12px;padding:4px 10px;">在 Telegram 中打开</a>
+        </div>
+        {% endif %}
+
+        {% if allowed_users %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th style="text-align:right;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in allowed_users %}
+              <tr>
+                <td class="mono">{{ user.user_id }}</td>
+                <td style="text-align:right;">
+                  <form method="post" action="/console/telegram/users/remove" style="display:inline;">
+                    <input type="hidden" name="user_id" value="{{ user.user_id }}">
+                    <button type="submit" class="danger" style="padding:3px 10px;font-size:12px;">删除</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted" style="margin:0;font-size:13px;">暂无授权用户，请点击上方按钮绑定新用户。</p>
+        {% endif %}
+
+        <details>
+          <summary style="cursor:pointer;color:var(--text-secondary);font-size:13px;font-weight:500;">手动添加 User ID</summary>
+          <form method="post" action="/console/telegram/users/add" class="row" style="align-items:flex-end;gap:8px;margin-top:8px;">
+            <label style="flex:1;">
+              <span>User ID</span>
+              <input name="user_id" placeholder="123456789" required>
+            </label>
+            <button type="submit">添加</button>
+          </form>
+        </details>
+      </div>
+
+      {% if rejected_users %}
+      <div class="card stack">
+        <h3 style="margin:0;font-size:16px;">最近被拒绝访问</h3>
+        <p class="muted" style="margin:0;font-size:13px;">未授权用户访问时的记录，方便复制 User ID 加入授权。</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>Username</th>
+                <th>Display Name</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in rejected_users %}
+              <tr>
+                <td class="mono">{{ user.user_id }}</td>
+                <td>{{ user.username }}</td>
+                <td>{{ user.display_name }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
       {% endif %}
-      {% if bot_error %}
-      <span class="status-badge"><span class="dot dot-error"></span>{{ bot_error[:80] }}</span>
-      {% endif %}
+    </div>
+
+    <!-- 右栏：Telegram 运行状态与快捷操作 -->
+    <div class="settings-sidebar stack">
+      <div class="card stack" id="telegram-status-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <h4 style="margin:0;font-size:15px;">Telegram 状态</h4>
+          <span class="status-badge">
+            <span class="dot {% if bot_running %}dot-success{% elif bot_token_set %}dot-muted{% else %}dot-error{% endif %}"></span>{% if bot_running %}运行中{% elif bot_token_set %}未启动{% else %}未配置{% endif %}
+          </span>
+        </div>
+
+        <div class="status-meta-list" style="font-size:12px;color:var(--text-muted);display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;justify-content:space-between;">
+            <span>Bot 用户名：</span>
+            <strong style="color:var(--text-regular);">{{ '@' + bot_username if bot_username else '未设置' }}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span>授权人数：</span>
+            <strong style="color:var(--text-regular);">{{ allowed_users|length }} 人</strong>
+          </div>
+          {% if bot_error %}
+          <div style="color:#ef4444;margin-top:4px;">
+            <span>错误提示：</span><span>{{ bot_error[:80] }}</span>
+          </div>
+          {% endif %}
+        </div>
+
+        {% if bot_username %}
+        <div style="margin-top:6px;">
+          <a href="https://t.me/{{ bot_username }}" target="_blank" class="button-link secondary" style="width:100%;text-align:center;justify-content:center;">在 Telegram 中打开 Bot</a>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="card stack">
+        <h4 style="margin:0;font-size:15px;">Telegram 配置指引</h4>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">
+          <p style="margin:0 0 6px 0;">1. 在 Telegram 搜索并私聊 <strong>@BotFather</strong>，发送 <code>/newbot</code> 按提示创建机器人。</p>
+          <p style="margin:0 0 6px 0;">2. 复制生成的 HTTP API Token 粘贴至左侧配置表单并保存。</p>
+          <p style="margin:0;">3. 点击「生成新绑定链接」生成安全配对，或在下方手动添加允许访问的 Telegram User ID。</p>
+        </div>
+      </div>
     </div>
   </div>
-
-  <div class="card">
-    <h2>绑定授权</h2>
-
-    <div class="row" style="align-items:center;gap:16px;margin-bottom:12px;">
-      <form method="post" action="/console/telegram/bind" style="margin:0;">
-        <button type="submit">绑定新用户</button>
-      </form>
-      {% if allowed_users %}
-      <span class="muted">已授权 {{ allowed_users|length }} 人</span>
-      {% endif %}
-    </div>
-
-    {% if bind_link and bind_token %}
-    <div id="bind-status" style="margin-bottom:12px;">
-      <span class="status-badge"><span class="dot dot-warning"></span>等待授权...</span>
-      <a href="{{ bind_link }}" target="_blank" class="button-link secondary" style="margin-left:8px;font-size:12px;padding:4px 10px;">在 Telegram 中打开</a>
-    </div>
-    {% endif %}
-
-    {% if allowed_users %}
-    <div class="table-wrap" style="margin-bottom:12px;">
-      <table>
-        <thead>
-          <tr>
-            <th>User ID</th>
-            <th style="text-align:right;">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for user in allowed_users %}
-          <tr>
-            <td class="mono">{{ user.user_id }}</td>
-            <td style="text-align:right;">
-              <form method="post" action="/console/telegram/users/remove" style="display:inline;">
-                <input type="hidden" name="user_id" value="{{ user.user_id }}">
-                <button type="submit" class="danger" style="padding:3px 10px;font-size:12px;">删除</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="muted" style="margin-bottom:12px;">暂无授权用户，请绑定新用户。</p>
-    {% endif %}
-
-    <details>
-      <summary style="cursor:pointer;color:#8a8f98;font-size:13px;font-weight:500;">手动添加 User ID</summary>
-      <form method="post" action="/console/telegram/users/add" class="row" style="align-items:flex-end;gap:8px;margin-top:8px;">
-        <label style="flex:1;">
-          <span>User ID</span>
-          <input name="user_id" placeholder="123456789" required>
-        </label>
-        <button type="submit">添加</button>
-      </form>
-    </details>
-  </div>
-
-  {% if rejected_users %}
-  <div class="card">
-    <h2>最近被拒绝访问</h2>
-    <p class="muted" style="margin-bottom:12px;">未授权用户访问时的记录，方便复制 User ID 加入授权。</p>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>User ID</th>
-            <th>Username</th>
-            <th>Display Name</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for user in rejected_users %}
-          <tr>
-            <td class="mono">{{ user.user_id }}</td>
-            <td>{{ user.username }}</td>
-            <td>{{ user.display_name }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-  {% endif %}
 </div>
 
 <!-- Tab 3: Discord 面板 -->
 <div id="panel-discord" class="channel-panel {% if active_tab == 'discord' %}active{% endif %}" role="tabpanel" aria-labelledby="tab-btn-discord" {% if active_tab != 'discord' %}style="display:none;"{% endif %}>
-  <div class="card">
-    <h2>Bot 配置</h2>
-    <form method="post" action="/console/discord" class="stack">
-      <label>
-        <span>Bot Token</span>
-        <input name="bot_token" type="password" value="" placeholder="{{ discord_token_masked or '输入 Discord Bot Token' }}" autocomplete="off">
-      </label>
-      <label>
-        <span>Application ID</span>
-        <input name="application_id" value="{{ discord_application_id }}" placeholder="Discord Application ID（用于邀请链接）">
-      </label>
-      <div class="row" style="margin-top:4px;">
-        <button type="submit">保存并重载 Bot</button>
-        {% if discord_application_id %}
-        <a href="https://discord.com/oauth2/authorize?client_id={{ discord_application_id }}&permissions=274877991936&scope=bot" target="_blank" class="button secondary">邀请 Bot 到服务器</a>
-        {% endif %}
-      </div>
-    </form>
-
-    <div class="row" style="margin-top:16px;gap:8px;">
-      <span class="muted">Bot 状态：</span>
-      {% if discord_bot_running %}
-      <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
-      {% else %}
-      <span class="status-badge"><span class="dot dot-error"></span>未启动</span>
-      {% endif %}
-      {% if discord_bot_error %}
-      <span class="status-badge"><span class="dot dot-error"></span>{{ discord_bot_error[:80] }}</span>
-      {% endif %}
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>授权用户</h2>
-    {% if discord_allowed_users %}
-    <div class="card" style="padding:0;margin-bottom:12px;">
-      {% for u in discord_allowed_users %}
-      <div style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <span style="font-size:13px;">{{ u.user_id }}</span>
-          {% if u.username %}<span class="muted" style="font-size:12px;margin-left:8px;">@{{ u.username }}</span>{% endif %}
-        </div>
-        <form method="post" action="/console/discord/users/remove" style="margin:0;">
-          <input type="hidden" name="user_id" value="{{ u.user_id }}">
-          <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">移除</button>
+  <div class="settings-layout">
+    <!-- 左栏：Discord 配置与授权用户管理 -->
+    <div class="settings-main stack">
+      <div class="card stack">
+        <h3 style="margin:0;font-size:16px;">Discord Bot 配置</h3>
+        <p class="muted" style="margin:0;font-size:13px;">配置 Discord Developer 门户中的 Bot Token 与 Application ID。</p>
+        <form method="post" action="/console/discord" class="stack">
+          <label>
+            <span>Bot Token</span>
+            <input name="bot_token" type="password" value="" placeholder="{{ discord_token_masked or '输入 Discord Bot Token' }}" autocomplete="off">
+          </label>
+          <label>
+            <span>Application ID</span>
+            <input name="application_id" value="{{ discord_application_id }}" placeholder="Discord Application ID（用于邀请链接）">
+          </label>
+          <div class="row" style="margin-top:4px;gap:8px;">
+            <button type="submit">保存并重载 Bot</button>
+            {% if discord_application_id %}
+            <a href="https://discord.com/oauth2/authorize?client_id={{ discord_application_id }}&permissions=274877991936&scope=bot" target="_blank" class="button secondary">邀请 Bot 到服务器</a>
+            {% endif %}
+          </div>
         </form>
       </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="muted" style="margin-bottom:12px;">暂无授权用户。</p>
-    {% endif %}
-    <p class="muted" style="margin-bottom:12px;font-size:12px;">
-      获取 Discord User ID：Discord 设置 → 高级 → 开启开发者模式，右键头像即可复制 ID。
-    </p>
-    <form method="post" action="/console/discord/users/add" class="stack">
-      <div class="row" style="align-items:flex-end;">
-        <label style="flex:1;">
-          <span>Discord User ID</span>
-          <input name="user_id" placeholder="例如：123456789012345678" required>
-        </label>
-        <button type="submit" class="secondary">添加</button>
+
+      <div class="card stack">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <h3 style="margin:0;font-size:16px;">授权用户</h3>
+          {% if discord_allowed_users %}
+          <span class="muted" style="font-size:12px;">已授权 {{ discord_allowed_users|length }} 人</span>
+          {% endif %}
+        </div>
+
+        {% if discord_allowed_users %}
+        <div class="card" style="padding:0;margin-bottom:12px;">
+          {% for u in discord_allowed_users %}
+          <div style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <span style="font-size:13px;">{{ u.user_id }}</span>
+              {% if u.username %}<span class="muted" style="font-size:12px;margin-left:8px;">@{{ u.username }}</span>{% endif %}
+            </div>
+            <form method="post" action="/console/discord/users/remove" style="margin:0;">
+              <input type="hidden" name="user_id" value="{{ u.user_id }}">
+              <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">移除</button>
+            </form>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted" style="margin:0;font-size:13px;">暂无授权用户。</p>
+        {% endif %}
+
+        <p class="muted" style="margin:0;font-size:12px;">
+          获取 Discord User ID：Discord 设置 → 高级 → 开启开发者模式，右键用户头像即可复制 ID。
+        </p>
+
+        <form method="post" action="/console/discord/users/add" class="stack" style="margin-top:8px;">
+          <div class="row" style="align-items:flex-end;gap:8px;">
+            <label style="flex:1;">
+              <span>Discord User ID</span>
+              <input name="user_id" placeholder="例如：123456789012345678" required>
+            </label>
+            <button type="submit" class="secondary">添加</button>
+          </div>
+        </form>
       </div>
-    </form>
+    </div>
+
+    <!-- 右栏：Discord 运行状态与快捷操作 -->
+    <div class="settings-sidebar stack">
+      <div class="card stack" id="discord-status-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <h4 style="margin:0;font-size:15px;">Discord 状态</h4>
+          <span class="status-badge">
+            <span class="dot {% if discord_bot_running %}dot-success{% elif discord_token_set %}dot-muted{% else %}dot-error{% endif %}"></span>{% if discord_bot_running %}运行中{% elif discord_token_set %}未启动{% else %}未配置{% endif %}
+          </span>
+        </div>
+
+        <div class="status-meta-list" style="font-size:12px;color:var(--text-muted);display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;justify-content:space-between;">
+            <span>Application ID：</span>
+            <strong style="color:var(--text-regular);font-family:monospace;">{{ discord_application_id or '未设置' }}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span>已授权人数：</span>
+            <strong style="color:var(--text-regular);">{{ discord_allowed_users|length }} 人</strong>
+          </div>
+          {% if discord_bot_error %}
+          <div style="color:#ef4444;margin-top:4px;">
+            <span>错误提示：</span><span>{{ discord_bot_error[:80] }}</span>
+          </div>
+          {% endif %}
+        </div>
+
+        {% if discord_application_id %}
+        <div style="margin-top:6px;">
+          <a href="https://discord.com/oauth2/authorize?client_id={{ discord_application_id }}&permissions=274877991936&scope=bot" target="_blank" class="button-link secondary" style="width:100%;text-align:center;justify-content:center;">邀请 Bot 进服务器</a>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="card stack">
+        <h4 style="margin:0;font-size:15px;">Discord 配置指引</h4>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">
+          <p style="margin:0 0 6px 0;">1. 访问 <a href="https://discord.com/developers/applications" target="_blank">Discord Developer Portal</a> 创建应用。</p>
+          <p style="margin:0 0 6px 0;">2. 在 <strong>Bot</strong> 页面创建机器人并重置复制 Token；务必勾选开启 <strong>Message Content Intent</strong> 权限特权！</p>
+          <p style="margin:0;">3. 保存后点击「邀请 Bot 到服务器」授权加入您的 Discord 服务器或频道。</p>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -427,7 +533,9 @@
     wechatStatusTimer = setInterval(function() {
       fetch('/console/wechat/status')
         .then(function(r) { return r.json(); })
-        .then(renderWechatStatus)
+        .then(function(d) {
+          renderWechatStatus(d);
+        })
         .catch(function() {});
     }, 5000);
   }
@@ -439,29 +547,26 @@
     }
   }
 
-  // ── Telegram 绑定状态轮询生命周期 ──
-  var bindToken = '{{ bind_token or "" }}';
-  var bindCount = 0;
+  // ── Telegram 绑定轮询生命周期 ──
   function startTgBindPolling() {
-    if (!bindToken) return;
     stopTgBindPolling();
+    var bindStatus = document.getElementById('bind-status');
+    if (!bindStatus) return;
+    var bindToken = '{{ bind_token or "" }}';
+    if (!bindToken) return;
+
     tgBindTimer = setInterval(function() {
-      bindCount++;
-      fetch('/console/telegram/bind/status?token=' + encodeURIComponent(bindToken))
+      fetch('/console/telegram/bind/check?token=' + encodeURIComponent(bindToken))
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          var el = document.getElementById('bind-status');
-          if (!el) return;
-          if (d.status === 'used') {
-            el.innerHTML = '<span class="status-badge"><span class="dot dot-success"></span>授权成功！请刷新页面查看。</span>';
-            stopTgBindPolling();
-          } else if (d.status === 'expired' || bindCount > 40) {
-            el.innerHTML = '<span class="status-badge"><span class="dot dot-error"></span>链接已过期，请重新生成。</span>';
-            stopTgBindPolling();
+          if (d.bound) {
+            clearInterval(tgBindTimer);
+            tgBindTimer = null;
+            window.location.href = '/console/channels?tab=telegram&message=' + encodeURIComponent('用户绑定成功！');
           }
         })
         .catch(function() {});
-    }, 3000);
+    }, 2000);
   }
 
   function stopTgBindPolling() {
@@ -567,65 +672,45 @@
       .catch(function() { showError('网络请求失败，请重试。'); })
       .finally(function() {
         btn.disabled = false;
-        btn.textContent = '重新获取';
+        btn.textContent = '获取二维码';
       });
   };
 
   function startQrPolling(qrcode) {
-    var count = 0;
+    if (!qrcode) return;
     wechatQrTimer = setInterval(function() {
-      count++;
-      fetch('/console/wechat/qr/status?qrcode=' + encodeURIComponent(qrcode))
+      fetch('/console/wechat/qr/poll?qrcode=' + encodeURIComponent(qrcode))
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          var el = document.getElementById('qr-status');
-          if (!el) return;
-          if (d.status === 'confirmed' || d.status === 'scanned' || d.status === 'success') {
-            if (d.has_token) {
-              el.innerHTML = '<span class="status-badge"><span class="dot dot-success"></span>登录成功！正在保存 Token...</span>';
-              saveToken(d.qrcode);
-              clearInterval(wechatQrTimer);
-            } else {
-              el.innerHTML = '<span class="status-badge"><span class="dot dot-warning"></span>已扫码，等待授权...</span>';
-            }
-          } else if (d.status === 'expired' || d.status === 'timeout' || count > 60) {
-            el.innerHTML = '<span class="status-badge"><span class="dot dot-error"></span>二维码已过期，请重新获取。</span>';
+          var statusEl = document.getElementById('qr-status');
+          if (d.status === 'scanned') {
+            statusEl.innerHTML = '<span class="status-badge"><span class="dot dot-warning"></span>已扫码，请在手机上确认...</span>';
+          } else if (d.status === 'confirmed') {
             clearInterval(wechatQrTimer);
+            wechatQrTimer = null;
+            document.getElementById('qr-step-2').style.display = 'none';
+            document.getElementById('qr-step-3').style.display = '';
+            setTimeout(function() {
+              window.location.href = '/console/channels?tab=wechat&message=' + encodeURIComponent('微信登录成功！');
+            }, 1000);
+          } else if (d.status === 'expired') {
+            clearInterval(wechatQrTimer);
+            wechatQrTimer = null;
+            showError('二维码已过期，请重新获取。');
+            document.getElementById('qr-step-2').style.display = 'none';
             document.getElementById('qr-step-1').style.display = '';
           }
-        });
-    }, 3000);
-  }
-
-  function saveToken(qrcode) {
-    fetch('/console/wechat/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qrcode: qrcode })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (d.ok) {
-        document.getElementById('qr-step-2').style.display = 'none';
-        document.getElementById('qr-step-3').style.display = '';
-        setTimeout(function() { location.reload(); }, 2000);
-      } else {
-        showError(d.error || '保存失败');
-      }
-    })
-    .catch(function() { showError('保存 Token 时网络错误。'); });
+        })
+        .catch(function() {});
+    }, 1500);
   }
 
   function showError(msg) {
-    document.getElementById('qr-step-1').style.display = '';
     var el = document.getElementById('qr-error');
-    if (el) el.style.display = '';
     var msgEl = document.getElementById('qr-error-msg');
-    if (msgEl) msgEl.textContent = msg;
-    var btn = document.getElementById('btn-fetch-qr');
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '重新获取';
+    if (el && msgEl) {
+      msgEl.textContent = msg;
+      el.style.display = '';
     }
   }
 
@@ -635,22 +720,18 @@
   }
 
   function escAttr(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  // 初始化
+  // ── 初始化 ──
   document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('[data-ts]').forEach(function(el) {
-      el.textContent = formatTime(el.getAttribute('data-ts'));
+    var tsElements = document.querySelectorAll('[data-ts]');
+    tsElements.forEach(function(el) {
+      var ts = el.getAttribute('data-ts');
+      if (ts) el.textContent = formatTime(ts);
     });
 
-    var urlParams = new URLSearchParams(window.location.search);
-    var tabFromUrl = urlParams.get('tab');
-    if (tabFromUrl && ['wechat', 'telegram', 'discord'].includes(tabFromUrl)) {
-      switchChannelTab(tabFromUrl);
-    } else {
-      enterTab(currentTab);
-    }
+    enterTab(currentTab);
 
     window.addEventListener('beforeunload', function() {
       leaveTab(currentTab);

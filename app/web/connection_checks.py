@@ -14,10 +14,13 @@ FIELDS = {
 
 
 def revision(session: Session, kind: str) -> str:
-    rows = session.execute(select(Setting).where(Setting.key.in_(FIELDS[kind])).order_by(Setting.key)).scalars()
-    # Stored encrypted values stay encrypted. Revision also detects change-and-revert.
-    values = [(row.key, row.value, str(row.updated_at)) for row in rows]
-    return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
+    service = SettingsService(session)
+    pairs = []
+    for k in sorted(FIELDS[kind]):
+        val = service.get(k)
+        pairs.append((k, val if val is not None else ""))
+    data = json.dumps(pairs, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 def save_check(session: Session, kind: str, signature: str, ok: bool) -> None:
@@ -29,7 +32,7 @@ def save_check(session: Session, kind: str, signature: str, ok: bool) -> None:
 
 
 def check_summary(session: Session, kind: str) -> dict:
-    result = {'label': '未验证', 'at': None, 'ok': None}
+    result = {'label': '未验证', 'at': None, 'ok': None, 'reason': 'unverified'}
     try:
         data = json.loads(SettingsService(session).get('connection_check_' + kind) or '{}')
         at = datetime.fromisoformat(data['at'])
@@ -38,10 +41,13 @@ def check_summary(session: Session, kind: str) -> dict:
         result.update(at=at, ok=data['ok'])
         if data['revision'] != revision(session, kind):
             result['label'] = '配置已变更，请重新验证'
+            result['reason'] = 'config_changed'
         elif datetime.now(timezone.utc) - at > timedelta(hours=24):
             result['label'] = '测试已超过 24 小时，请重新验证'
+            result['reason'] = 'expired_24h'
         else:
             result['label'] = '最近测试成功' if data['ok'] else '最近测试失败'
+            result['reason'] = 'recent_success' if data['ok'] else 'recent_failure'
     except (ValueError, KeyError, TypeError):
         pass
     return result

@@ -150,6 +150,10 @@
         <svg viewBox="0 0 16 16" fill="none"><rect x="3" y="2" width="10" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M7 6h2M7 9h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         事件记录
       </a>
+      <a href="/console/calendar" class="sidebar-item {% if request.url.path.startswith('/console/calendar') %}active{% endif %}">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M2 7h12M5 1v3M11 1v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        日程列表
+      </a>
 
       <div style="flex:1;"></div>
       <div style="color:#62666d;font-size:11px;font-weight:510;padding:8px 10px;">

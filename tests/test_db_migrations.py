@@ -103,8 +103,13 @@ def test_migration_adds_failure_phase_and_retry_count_and_backfills(monkeypatch)
     columns = {col["name"] for col in inspector.get_columns("event_records")}
     assert "failure_phase" in columns
     assert "retry_count" in columns
+    assert "batch_id" in columns
+    assert "batch_index" in columns
+    assert "snapshot_json" in columns
+    assert "remote_etag" in columns
     indexes = {idx["name"] for idx in inspector.get_indexes("event_records")}
     assert "ix_event_records_failure_phase" in indexes
+    assert "ix_event_records_batch_id" in indexes
 
     with engine.connect() as connection:
         rows = connection.execute(

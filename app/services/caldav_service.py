@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Protocol, TypedDict, cast
 from urllib.parse import unquote, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -94,7 +95,185 @@ class CalDAVServiceError(Exception):
     pass
 
 
+_events_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+CACHE_TTL = 30.0  # 30s 内存短缓存
+
+
+def clear_events_cache() -> None:
+    _events_cache.clear()
+
+
 class CalDAVService:
+    def clear_cache(self) -> None:
+        clear_events_cache()
+
+    async def list_events(
+        self,
+        caldav_url: str,
+        username: str,
+        password: str,
+        calendar_url: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        ssl_verify: bool = True,
+        force_refresh: bool = False,
+    ) -> list[dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(
+                self._list_events_sync,
+                caldav_url,
+                username,
+                password,
+                calendar_url,
+                start,
+                end,
+                ssl_verify,
+                force_refresh,
+            )
+        except CalDAVServiceError:
+            raise
+        except Exception as exc:
+            raise CalDAVServiceError(f"拉取日程列表失败：{exc}") from exc
+
+    def _list_events_sync(
+        self,
+        caldav_url: str,
+        username: str,
+        password: str,
+        calendar_url: str | None,
+        start: datetime | None,
+        end: datetime | None,
+        ssl_verify: bool,
+        force_refresh: bool = False,
+    ) -> list[dict[str, Any]]:
+        caldav_url = caldav_url.strip()
+        username = username.strip()
+        cache_key = f"{caldav_url}:{username}:{calendar_url or ''}:{start.isoformat() if start else ''}:{end.isoformat() if end else ''}:{ssl_verify}"
+
+        if not force_refresh and cache_key in _events_cache:
+            cache_ts, cached_list = _events_cache[cache_key]
+            if time.time() - cache_ts < CACHE_TTL:
+                return [dict(e) for e in cached_list]
+
+        client = _DAVClient(
+            url=caldav_url,
+            username=username,
+            password=password,
+            ssl_verify_cert=ssl_verify,
+            timeout=120,
+        )
+        calendars = client.get_calendars()
+        target_cal = None
+        calendar_url_str = calendar_url.strip() if calendar_url else ""
+        for cal in calendars:
+            if calendar_url_str and str(cal.url) == calendar_url_str:
+                target_cal = cal
+                break
+        if target_cal is None and calendars:
+            target_cal = calendars[0]
+        if target_cal is None:
+            return []
+
+        raw_objects: Sequence[Any] = []
+        if start is not None and end is not None and hasattr(target_cal, "date_search"):
+            try:
+                raw_objects = target_cal.date_search(start=start, end=end, compfilter="VEVENT", expand=True)
+            except Exception as exc:
+                logger.warning("target_cal.date_search failed: %s, falling back to objects/events", exc)
+                raw_objects = []
+
+        if not raw_objects and hasattr(target_cal, "search") and start is not None and end is not None:
+            try:
+                raw_objects = target_cal.search(start=start, end=end, event=True, expand=True)
+            except Exception:
+                raw_objects = []
+
+        if not raw_objects:
+            if hasattr(target_cal, "events"):
+                try:
+                    raw_objects = target_cal.events()
+                except Exception:
+                    raw_objects = []
+            if not raw_objects and hasattr(target_cal, "objects"):
+                try:
+                    raw_objects = target_cal.objects()
+                except Exception:
+                    raw_objects = []
+
+        from icalendar import Calendar as ICal
+
+        parsed_events: list[dict[str, Any]] = []
+        for obj in raw_objects:
+            try:
+                data = getattr(obj, "data", None)
+                if data is None and hasattr(obj, "load"):
+                    obj.load()
+                    data = getattr(obj, "data", None)
+                if not data:
+                    continue
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8", errors="replace")
+                ical = ICal.from_ical(data)
+                for comp in _ical_components(ical):
+                    if comp.name == "VEVENT":
+                        summary = str(comp.get("summary") or "未命名日程")
+                        uid = str(comp.get("uid") or getattr(obj, "id", "") or "")
+                        dtstart_prop = comp.get("dtstart")
+                        dtend_prop = comp.get("dtend")
+                        dtstart_val = getattr(dtstart_prop, "dt", None) if dtstart_prop else None
+                        dtend_val = getattr(dtend_prop, "dt", None) if dtend_prop else None
+
+                        is_all_day = False
+                        if isinstance(dtstart_val, datetime):
+                            is_all_day = False
+                        elif isinstance(dtstart_val, date):
+                            is_all_day = True
+
+                        start_iso = dtstart_val.isoformat() if dtstart_val else ""
+                        end_iso = dtend_val.isoformat() if dtend_val else ""
+
+                        location = str(comp.get("location")) if comp.get("location") else ""
+                        description = str(comp.get("description")) if comp.get("description") else ""
+                        status = str(comp.get("status")) if comp.get("status") else ""
+
+                        if start is not None and dtstart_val:
+                            check_dt = dtstart_val
+                            if isinstance(check_dt, date) and not isinstance(check_dt, datetime):
+                                check_dt = datetime.combine(check_dt, datetime.min.time(), tzinfo=timezone.utc)
+                            elif isinstance(check_dt, datetime) and check_dt.tzinfo is None:
+                                check_dt = check_dt.replace(tzinfo=timezone.utc)
+
+                            start_comp = start
+                            if start_comp.tzinfo is None:
+                                start_comp = start_comp.replace(tzinfo=timezone.utc)
+
+                            if end is not None:
+                                end_comp = end
+                                if end_comp.tzinfo is None:
+                                    end_comp = end_comp.replace(tzinfo=timezone.utc)
+                                if check_dt > end_comp:
+                                    continue
+                            if check_dt < start_comp - timedelta(days=1):
+                                continue
+
+                        parsed_events.append({
+                            "uid": uid,
+                            "href": str(getattr(obj, "url", "") or ""),
+                            "title": summary,
+                            "start_time": start_iso,
+                            "end_time": end_iso,
+                            "is_all_day": is_all_day,
+                            "location": location,
+                            "description": description,
+                            "status": status,
+                        })
+            except Exception as e:
+                logger.debug("Error parsing event item: %s", e)
+                continue
+
+        parsed_events.sort(key=lambda x: x.get("start_time") or "")
+        _events_cache[cache_key] = (time.time(), parsed_events)
+        return [dict(e) for e in parsed_events]
     async def test_connection(self, url: str, username: str, password: str, ssl_verify: bool = True) -> None:
         try:
             await asyncio.to_thread(self._test_connection_sync, url, username, password, ssl_verify)
@@ -328,7 +507,133 @@ class CalDAVService:
         ical_str = cal.to_ical().decode()
         saved = target_cal.save_event(ical_str)
         href = saved.url or target_cal.url
-        return {"uid": uid, "href": str(href)}
+        etag_val = getattr(saved, "etag", None)
+        if not etag_val and hasattr(saved, "props"):
+            try:
+                from caldav import dav
+                etag_val = saved.props.get(dav.GetEtag.tag)
+            except Exception:
+                pass
+        if etag_val:
+            etag_str = str(etag_val).strip('"')
+        else:
+            import hashlib
+            etag_str = f"sha256:{hashlib.sha256(ical_str.encode('utf-8')).hexdigest()[:16]}"
+        clear_events_cache()
+        return {"uid": uid, "href": str(href), "etag": etag_str}
+
+    async def get_event(
+        self,
+        caldav_url: str,
+        username: str,
+        password: str,
+        uid: str | None = None,
+        href: str | None = None,
+        ssl_verify: bool = True,
+    ) -> dict[str, Any] | None:
+        try:
+            return await asyncio.to_thread(
+                self._get_event_sync,
+                caldav_url,
+                username,
+                password,
+                uid,
+                href,
+                ssl_verify,
+            )
+        except Exception as exc:
+            logger.warning("get_event failed: %s", exc)
+            return None
+
+    def _get_event_sync(
+        self,
+        caldav_url: str,
+        username: str,
+        password: str,
+        uid: str | None,
+        href: str | None,
+        ssl_verify: bool,
+    ) -> dict[str, Any] | None:
+        if not caldav_url.strip() or not username.strip():
+            return None
+        client = _DAVClient(
+            url=caldav_url.strip(),
+            username=username,
+            password=password,
+            ssl_verify_cert=ssl_verify,
+            timeout=120,
+        )
+        calendars = client.get_calendars()
+        for cal in calendars:
+            try:
+                if uid and hasattr(cal, "event_by_uid"):
+                    try:
+                        obj = cal.event_by_uid(uid)
+                        if obj:
+                            info = self._extract_event_info(obj)
+                            if info:
+                                return info
+                    except Exception:
+                        pass
+
+                objects = []
+                if hasattr(cal, "objects"):
+                    try:
+                        objects = cal.objects()
+                    except Exception:
+                        objects = []
+                elif hasattr(cal, "events"):
+                    try:
+                        objects = cal.events()
+                    except Exception:
+                        objects = []
+
+                for obj in objects:
+                    obj_url = str(getattr(obj, "url", "") or "")
+                    obj_uid = str(getattr(obj, "id", "") or "")
+                    if (href and obj_url == href) or (uid and obj_uid == uid):
+                        info = self._extract_event_info(obj)
+                        if info:
+                            return info
+            except Exception:
+                continue
+        return None
+
+    def _extract_event_info(self, obj: Any) -> dict[str, Any]:
+        import hashlib
+        data = getattr(obj, "data", None)
+        if data is None and hasattr(obj, "load"):
+            try:
+                obj.load()
+                data = getattr(obj, "data", None)
+            except Exception:
+                pass
+        if isinstance(data, bytes):
+            data_str = data.decode("utf-8", errors="replace")
+        else:
+            data_str = str(data or "")
+
+        etag = getattr(obj, "etag", None)
+        if not etag and hasattr(obj, "props"):
+            try:
+                from caldav import dav
+                etag = obj.props.get(dav.GetEtag.tag)
+            except Exception:
+                pass
+
+        if etag:
+            etag_str = str(etag).strip('"')
+        elif data_str:
+            etag_str = f"sha256:{hashlib.sha256(data_str.encode('utf-8')).hexdigest()[:16]}"
+        else:
+            etag_str = None
+
+        return {
+            "uid": str(getattr(obj, "id", "") or ""),
+            "href": str(getattr(obj, "url", "") or ""),
+            "etag": etag_str,
+            "data": data_str,
+        }
 
     async def delete_event(self, caldav_url: str, username: str, password: str,
                            uid: str | None, href: str | None = None, ssl_verify: bool = True) -> bool:
@@ -387,6 +692,7 @@ class CalDAVService:
                         logger.debug("Saving CalDAV event object url=%s uid=%s href=%s", obj.url, uid, href)
                         _ = obj.save()
                         logger.debug("Saved CalDAV event object url=%s uid=%s href=%s", obj.url, uid, href)
+                        clear_events_cache()
                         return True
             except Exception:
                 logger.exception("CalDAV update failed while scanning calendar uid=%s href=%s", uid, href)
@@ -406,6 +712,7 @@ class CalDAVService:
                     obj_uid = str(obj.id)
                     if (href and obj_url == href) or (uid and obj_uid == uid):
                         _ = obj.delete()
+                        clear_events_cache()
                         return True
             except Exception:
                 continue

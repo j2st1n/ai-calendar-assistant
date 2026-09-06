@@ -63,6 +63,15 @@ def _migrate_event_records() -> None:
         if "retry_count" not in columns:
             conn.execute(text("ALTER TABLE event_records ADD COLUMN retry_count INTEGER DEFAULT 0"))
             conn.execute(text("UPDATE event_records SET retry_count = 0 WHERE retry_count IS NULL"))
+        if "batch_id" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN batch_id VARCHAR(64)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_event_records_batch_id ON event_records (batch_id)"))
+        if "batch_index" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN batch_index INTEGER"))
+        if "snapshot_json" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN snapshot_json TEXT"))
+        if "remote_etag" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN remote_etag VARCHAR(255)"))
         if "telegram_user_id" in columns:
             conn.execute(text("UPDATE event_records SET source_user_id = telegram_user_id WHERE source_user_id IS NULL"))
         if "bot_message_id" in columns:
