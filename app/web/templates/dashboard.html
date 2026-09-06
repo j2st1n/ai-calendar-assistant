@@ -30,6 +30,29 @@
 </section>
 {% endif %}
 
+{% if services_status %}
+<section class="card dashboard-services-card" aria-labelledby="services-status-title">
+  <div class="dashboard-heading" style="margin-bottom:12px;">
+    <div>
+      <h3 id="services-status-title" style="margin-bottom:0;">服务运行状态</h3>
+      <p class="section-sub" style="margin-top:4px;margin-bottom:0;">5 大核心服务与消息渠道实时状态监控</p>
+    </div>
+    <span class="event-count" style="margin:0;">点击进入管理</span>
+  </div>
+  <div class="dashboard-connections dashboard-services-grid">
+    {% for s in services_status %}
+    <a href="{{ s.href }}" class="dashboard-service-item" id="service-status-{{ s.id }}">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <strong>{{ s.name }}</strong>
+        <span class="status-badge"><span class="dot {{ s.dot_class }}"></span>{{ s.state_label }}</span>
+      </div>
+      <small>{{ s.summary }}</small>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 <section class="card dashboard-attention" aria-labelledby="attention-title">
   <h3 id="attention-title">建议检查</h3>
   {% if not ai_ok %}<div class="dashboard-notice"><div><strong>完成 AI 配置</strong><p>设置主模型，让助手识别聊天中的日程。</p></div><a class="button-link secondary" href="/console/ai">配置 AI</a></div>{% endif %}

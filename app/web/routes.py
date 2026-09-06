@@ -466,7 +466,216 @@ def status_context(session: Session) -> dict[str, object]:
     last_calendar_success_current = _record_time(last_current_success, activity_tz)
     last_calendar_success_legacy = _record_time(last_legacy_success, activity_tz)
 
+    # 1. AI 主模型
+    ai_check = connection_checks.get("ai") or {}
+    if not ai_ok:
+        ai_dot_class = "dot-muted"
+        ai_state_label = "未配置"
+        ai_status = "unconfigured"
+        ai_summary = "选择主模型"
+    elif ai_check.get("ok") is True:
+        if "超过 24 小时" in str(ai_check.get("label", "")) or "已变更" in str(ai_check.get("label", "")):
+            ai_dot_class = "dot-warning"
+            ai_state_label = "需复核"
+            ai_status = "warning"
+        else:
+            ai_dot_class = "dot-success"
+            ai_state_label = "已验证"
+            ai_status = "online"
+        ai_summary = f"{ai_name} / {ai_model}"
+    elif ai_check.get("ok") is False:
+        ai_dot_class = "dot-error"
+        ai_state_label = "测试失败"
+        ai_status = "error"
+        ai_summary = f"{ai_name} / {ai_model}"
+    else:
+        ai_dot_class = "dot-warning"
+        ai_state_label = "待验证"
+        ai_status = "warning"
+        ai_summary = f"{ai_name} / {ai_model}"
+
+    # 2. CalDAV 日历
+    caldav_check = connection_checks.get("caldav") or {}
+    if not caldav_ok:
+        caldav_dot_class = "dot-muted"
+        caldav_state_label = "未配置"
+        caldav_status = "unconfigured"
+        caldav_summary = "选择要写入的日历"
+    elif caldav_check.get("ok") is True:
+        if "超过 24 小时" in str(caldav_check.get("label", "")) or "已变更" in str(caldav_check.get("label", "")):
+            caldav_dot_class = "dot-warning"
+            caldav_state_label = "需复核"
+            caldav_status = "warning"
+        else:
+            caldav_dot_class = "dot-success"
+            caldav_state_label = "已验证"
+            caldav_status = "online"
+        caldav_summary = f"{caldav_source} / {caldav_cal}" if caldav_source else caldav_cal
+    elif caldav_check.get("ok") is False:
+        caldav_dot_class = "dot-error"
+        caldav_state_label = "连接失败"
+        caldav_status = "error"
+        caldav_summary = f"{caldav_source} / {caldav_cal}" if caldav_source else caldav_cal
+    else:
+        caldav_dot_class = "dot-warning"
+        caldav_state_label = "待验证"
+        caldav_status = "warning"
+        caldav_summary = f"{caldav_source} / {caldav_cal}" if caldav_source else caldav_cal
+
+    # 3. 微信
+    wechat_token_saved = bool(settings_service.get("wechat_bot_token"))
+    wechat_runtime = _runtime_if_loaded("get_wechat_bot_runtime")
+    wechat_running = False
+    if wechat_runtime is not None and getattr(wechat_runtime, "task_alive", False):
+        wechat_running = True
+        snap = wechat_runtime.snapshot()
+        if snap.state == "polling":
+            wechat_dot_class = "dot-success"
+            wechat_state_label = "在线"
+            wechat_status = "online"
+        elif snap.state in ("retrying", "paused", "starting"):
+            wechat_dot_class = "dot-warning"
+            wechat_state_label = snap.state_label
+            wechat_status = "warning"
+        elif snap.state == "crashed":
+            wechat_dot_class = "dot-error"
+            wechat_state_label = "异常"
+            wechat_status = "error"
+        else:
+            wechat_dot_class = "dot-muted"
+            wechat_state_label = "已停止"
+            wechat_status = "stopped"
+        wechat_summary = "微信长轮询"
+    elif wechat_runtime is not None and getattr(wechat_runtime, "running", False):
+        wechat_running = True
+        wechat_dot_class = "dot-success"
+        wechat_state_label = "运行中"
+        wechat_status = "online"
+        wechat_summary = "微信长轮询"
+    elif wechat_token_saved:
+        wechat_dot_class = "dot-muted"
+        wechat_state_label = "未启动"
+        wechat_status = "stopped"
+        wechat_summary = "Token 已保存"
+    else:
+        wechat_dot_class = "dot-muted"
+        wechat_state_label = "未配置"
+        wechat_status = "unconfigured"
+        wechat_summary = "未配置 Token"
+
+    # 4. Telegram
+    tg_token_saved = bool(settings_service.get("telegram_bot_token"))
+    tg_runtime = _runtime_if_loaded("get_telegram_bot_runtime")
+    tg_running = (tg_runtime is not None and tg_runtime.running)
+    tg_error = getattr(tg_runtime, "last_error", "") if tg_runtime else ""
+    if tg_running:
+        tg_dot_class = "dot-success"
+        tg_state_label = "运行中"
+        tg_status = "online"
+        tg_user = settings_service.get("telegram_bot_username")
+        tg_summary = f"@{tg_user}" if tg_user else "长轮询运行中"
+    elif tg_error:
+        tg_dot_class = "dot-error"
+        tg_state_label = "启动异常"
+        tg_status = "error"
+        tg_summary = tg_error[:24]
+    elif tg_token_saved:
+        tg_dot_class = "dot-muted"
+        tg_state_label = "未启动"
+        tg_status = "stopped"
+        tg_summary = "Token 已保存"
+    else:
+        tg_dot_class = "dot-muted"
+        tg_state_label = "未配置"
+        tg_status = "unconfigured"
+        tg_summary = "未配置 Token"
+
+    # 5. Discord
+    dc_token_saved = bool(settings_service.get("discord_bot_token"))
+    dc_runtime = _runtime_if_loaded("get_discord_bot_runtime")
+    dc_running = (dc_runtime is not None and dc_runtime.running)
+    dc_error = getattr(dc_runtime, "last_error", "") if dc_runtime else ""
+    if dc_running:
+        dc_dot_class = "dot-success"
+        dc_state_label = "运行中"
+        dc_status = "online"
+        dc_summary = "Gateway 运行中"
+    elif dc_error:
+        dc_dot_class = "dot-error"
+        dc_state_label = "启动异常"
+        dc_status = "error"
+        dc_summary = dc_error[:24]
+    elif dc_token_saved:
+        dc_dot_class = "dot-muted"
+        dc_state_label = "未启动"
+        dc_status = "stopped"
+        dc_summary = "Token 已保存"
+    else:
+        dc_dot_class = "dot-muted"
+        dc_state_label = "未配置"
+        dc_status = "unconfigured"
+        dc_summary = "未配置 Token"
+
+    services_status = [
+        {
+            "id": "ai",
+            "name": "AI 主模型",
+            "href": "/console/ai",
+            "configured": ai_ok,
+            "running": ai_ok,
+            "status": ai_status,
+            "state_label": ai_state_label,
+            "dot_class": ai_dot_class,
+            "summary": ai_summary,
+        },
+        {
+            "id": "caldav",
+            "name": "CalDAV 日历",
+            "href": "/console/caldav",
+            "configured": caldav_ok,
+            "running": caldav_ok,
+            "status": caldav_status,
+            "state_label": caldav_state_label,
+            "dot_class": caldav_dot_class,
+            "summary": caldav_summary,
+        },
+        {
+            "id": "wechat",
+            "name": "微信",
+            "href": "/console/wechat",
+            "configured": wechat_token_saved,
+            "running": wechat_running,
+            "status": wechat_status,
+            "state_label": wechat_state_label,
+            "dot_class": wechat_dot_class,
+            "summary": wechat_summary,
+        },
+        {
+            "id": "telegram",
+            "name": "Telegram",
+            "href": "/console/telegram",
+            "configured": tg_token_saved,
+            "running": tg_running,
+            "status": tg_status,
+            "state_label": tg_state_label,
+            "dot_class": tg_dot_class,
+            "summary": tg_summary,
+        },
+        {
+            "id": "discord",
+            "name": "Discord",
+            "href": "/console/discord",
+            "configured": dc_token_saved,
+            "running": dc_running,
+            "status": dc_status,
+            "state_label": dc_state_label,
+            "dot_class": dc_dot_class,
+            "summary": dc_summary,
+        },
+    ]
+
     return {
+        "services_status": services_status,
         "connection_checks": connection_checks,
         "last_calendar_success": last_calendar_success_current or last_calendar_success_legacy,
         "last_calendar_success_current": last_calendar_success_current,
@@ -478,18 +687,9 @@ def status_context(session: Session) -> dict[str, object]:
         "caldav_ok": caldav_ok,
         "caldav_name": caldav_cal if caldav_ok else "",
         "caldav_source": caldav_source,
-        "tg_running": (
-            (tg_runtime := _runtime_if_loaded("get_telegram_bot_runtime")) is not None
-            and tg_runtime.running
-        ),
-        "dc_running": (
-            (dc_runtime := _runtime_if_loaded("get_discord_bot_runtime")) is not None
-            and dc_runtime.running
-        ),
-        "wechat_running": (
-            (wechat_runtime := _runtime_if_loaded("get_wechat_bot_runtime")) is not None
-            and wechat_runtime.running
-        ),
+        "tg_running": tg_running,
+        "dc_running": dc_running,
+        "wechat_running": wechat_running,
         "recent_activity": activity,
         "activity_timezone": str(activity_tz),
         "version": read_version(),

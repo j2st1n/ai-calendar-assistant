@@ -138,3 +138,26 @@ final result: passed
 - **范围限制**：
   - 覆盖本地单元与集成测试、UI 变量规范与路由逻辑；不涉及生产环境实机部署与外部真实日历操作。
 
+## Phase 3.1 优化、生产灾备实测与视觉状态指示灯验收（2026-09-06）
+
+final result: passed
+
+- **CalDAV 真实日程端到端写入与自动清理闭环实测**：
+  - 编写生产端到端实测脚本 `scripts/verify_caldav_e2e.py`，加载生产真实凭据（AI 模型 `gemini-3.8-flash-high` + iCloud CalDAV `AI` 日历）；
+  - 真实 AI 抽取实测：自然语言提取 `[TEST-VERIFY]` 标题、ISO 起止时间（2026-09-07T15:00:00+08:00 至 16:00:00+08:00）、地点（第九会议室）、提前 15 分钟提醒（VALARM trigger -15m）与 Asia/Shanghai 时区；
+  - 真实 CalDAV 写入 iCloud 目标日历通过：成功生成唯一 UID（`test-verify-201ed86f55b94697b4c8614ad10f1a6a`）与 href 并入库落盘；
+  - 深度回读核验通过：精准校验 VEVENT 的 summary、dtstart、dtend、location、alarm_trigger 及时区；
+  - 自动安全清理与二次回读闭环通过：测试完成后即时强制 `delete_event` 并二次遍历目标日历，确认 0 残留、0 数据污染。
+- **微信重新扫码恢复与生产备份包解密还原演练**：
+  - 微信 Token 过期自愈演练：验证 `ILinkStaleTokenError` 触发下状态机精准转入 `PAUSED`（会话冷却中），`consecutive_failures` 保持为 0，错误打标为 `stale_token`；Web 控制台 `/console/wechat` 前端渲染验证 `#wechat-recovery` 错误横幅自动展示，引导用户点击重新扫码；`#wechat-login` 抽屉卡片自动置为 open 展开状态；扫码重置恢复流：模拟 `POST /console/wechat/qr` 与 `/console/wechat/save` 写入新 token 并重载 runtime，状态恢复为 `POLLING`（在线），当前错误重置为空，`#wechat-recovery` 恢复横幅自动隐藏；
+  - 生产灾备包（`pre-v1.19.1`）冷恢复实测：从 `andnode:docker/ai-calendar/backups/pre-v1.19.1-20260906/` 获取生产灾备快照；SQLite 物理一致性检查通过（PRAGMA `integrity_check` = ok, `quick_check` = ok, `foreign_key_check` = 0 违规）；Fernet 密钥解密实测：使用备份包 `secrets.json` 中的 `app_secret_key`，对 settings 表中全部 8 项加密凭据（`ai_api_key`, `caldav_password`, `telegram_bot_token`, `ai_vision_api_key`, `discord_bot_token`, `wechat_bot_token`, `turnstile_secret_key`, `admin_totp_secret`）执行解密测试，100% 解密成功，业务字段无损；业务数据冷恢复验证：345 条历史 EventRecord 完整可查，Passkey 凭据与 TG/Discord 绑定关系完备，冷备业务可用性 100%。演练隔离沙箱已彻底清理。
+- **首页全量服务状态指示灯卡片与视觉优化**：
+  - 后端 `status_context` 汇总（`app/web/routes.py`）：结构化汇总 5 大核心服务与渠道（AI 主模型、CalDAV 日历、微信、Telegram、Discord）的实时运行状态（`services_status`）；细化运行态研判：未配置（`.dot-muted` 灰点）、在线/已验证/运行中（`.dot-success` 绿点）、异常恢复中/会话冷却中/待验证/需复核（`.dot-warning` 黄点）、测试失败/启动异常/运行崩溃（`.dot-error` 红点），并提取对应服务摘要；
+  - 样式与指示灯扩充（`app/web/static/styles.css`）：增加 `.dot-muted`（#8a8f98 灰点），与既有 `.dot-success`, `.dot-warning`, `.dot-error` 保持视觉统一；增加 `.dashboard-service-item` 卡片式微交互交互与悬停效果，适配移动端网格排版；
+  - 前端概览卡片呈现（`app/web/templates/dashboard.html`）：在首页今日关键指标下方新增统一的「服务运行状态」（`dashboard-services-card`）卡片；每个服务项均附带对应的指示灯点与状态徽标（`status-badge`），直观展示实时健康度并支持一键跳转对应配置管理页；
+  - 测试与验证：新增 `tests/test_services_status_card.py` 覆盖 5 项服务的未配置、测试成功、需复核、运行中及各类状态指示灯颜色判定与模板渲染。
+- **自动化测试与全量回归**：
+  - 本地全量运行 pytest 测试套件，377 项测试 100% 通过（新增 4 项测试针对首页全量服务状态指示灯卡片与健康度计算）；
+  - `git diff --check` 0 警告通过；
+  - `TODO.md` 中最后一项 P1 待办「实际日程写入、重新扫码与备份恢复验收」已正式勾选闭环，至此全部 P1 阶段任务 100% 达成！
+

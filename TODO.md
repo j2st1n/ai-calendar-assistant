@@ -14,7 +14,7 @@
 - [x] 概览统计与状态说明。验收：零样本不显示 100%；待处理不计成功；按配置时区统计今日；说明配置状态与本地日程统计范围。
 - [x] 发布 v1.18.0 并完成 andnode 服务端验收：健康状态、文件哈希、数据库、真实 AI 与 CalDAV 连接通过；保留 v1.17.2 回滚镜像和升级前备份。
 - [x] 线上浏览器验收：连接验证、分页筛选、手机详情、日历草稿不落库、微信在线与系统安全组件加载通过。
-- [ ] 实际日程写入、重新扫码与备份恢复验收。
+- [x] 实际日程写入、重新扫码与备份恢复验收。
 
 ## P2 · 完善主要使用流程
 
@@ -71,3 +71,10 @@ v1.19.1 发布与生产验收（2026-09-06）：代码提交 8275aae，发布提
 3) CalDAV（iCloud 日历服务，向上主体溯源探测成功发现 5 个完整可用日历：AI、Personal、Reminders ⚠️、Home、Work）多日历拉取验证 100% 成功；
 4) Web 控制台首页已配置状态下向导卡片（dashboard-wizard-card）成功隐藏，侧边栏向导入口正常保留；
 5) 本地分支代码与远端 Release v1.19.1 保持完全同步。
+
+Phase 3.1 优化与实测验收（2026-09-06）：377 项 pytest 100% 通过（新增 4 项测试针对首页全量服务状态指示灯卡片与健康度计算）。P1 最后一项待办「实际日程写入、重新扫码与备份恢复验收」彻底闭环：
+1) CalDAV 真实日程端到端写入与自动清理闭环：编写并运行 scripts/verify_caldav_e2e.py，加载生产真实凭据（gemini-3.8-flash-high + iCloud CalDAV），AI 自然语言结构化抽取、写入 iCloud 目标日历（生成唯一 UID）、回读深度核验字段及 VALARM 提醒、最终强制删除清理并二次回读，确认 0 数据残留与 0 污染；
+2) 微信重新扫码自愈演练：模拟 ILinkStaleTokenError 触发状态机转入 PAUSED 会话冷却与 stale_token 错误打标，Web 控制台 /console/wechat 自动展示 #wechat-recovery 引导横幅与 #wechat-login 扫码抽屉展开，扫码重置恢复后状态精准转回 POLLING 在线且恢复横幅自动收起；
+3) 生产备份包（pre-v1.19.1）解密还原灾备演练：从 andnode 生产备份获取快照，SQLite PRAGMA integrity_check / quick_check / foreign_key_check 全部通过；基于生产密钥成功对 settings 中 8 项核心加密凭据 100% 完整无损解密，345 条历史 EventRecord 业务数据与 Passkey 凭据完整无损冷恢复；
+4) 首页全量服务状态指示灯卡片与视觉优化：app/web/routes.py 结构化汇总 5 大服务（AI 模型、CalDAV 日历、微信、TG、Discord）实时健康度与运行态；app/web/static/styles.css 扩充 .dot-muted 灰点与卡片悬停微交互；dashboard.html 首屏呈现统一服务运行状态卡片（dashboard-services-card）与状态指示灯；
+5) 至此，TODO.md 中全部 P1 阶段任务 100% 全部完成验收闭环。

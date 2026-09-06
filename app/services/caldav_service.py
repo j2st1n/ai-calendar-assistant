@@ -359,6 +359,8 @@ class CalDAVService:
                     obj_url = str(obj.url)
                     obj_uid = str(obj.id)
                     if (href and obj_url == href) or (uid and obj_uid == uid):
+                        if getattr(obj, "data", None) is None and hasattr(obj, "load"):
+                            obj.load()
                         ical = ICal.from_ical(obj.data)
                         for component in _ical_components(ical):
                             if component.name == 'VEVENT':
