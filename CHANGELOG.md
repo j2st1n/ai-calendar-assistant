@@ -1,11 +1,25 @@
 # Changelog
 
+## [v1.18.1] - 2026-09-06
+
+
+### Bug Fixes
+
+- surface daily dashboard metrics and remove duplicate action
+
+
 ## [v1.18.0] - 2026-09-06
 
 
 ### Features
 
 - improve console workflows and saved connection verification
+
+
+
+### Maintenance
+
+- release v1.18.0
 
 
 ## [v1.17.2] - 2026-09-04
