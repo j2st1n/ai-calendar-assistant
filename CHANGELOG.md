@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.21.0] - 2026-09-06
+
+
+### Features
+
+- implement undo snapshot with remote etag check, batch event feedback with retry, and finalize all roadmap backlog
+
+
 ## [v1.20.0] - 2026-09-06
 
 
@@ -12,6 +20,12 @@
 ### Features
 
 - implement dual-column calendar settings, dashboard tray convergence and unified channels page
+
+
+
+### Maintenance
+
+- release v1.20.0
 
 
 ## [v1.19.2] - 2026-09-06
