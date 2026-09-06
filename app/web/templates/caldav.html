@@ -33,7 +33,7 @@
   </section>
   <section class="card stack">
     <h3>2. 选择目标日历</h3>
-    <label><span>写入日历</span><select id="calendar-picker"><option value="">先拉取列表，再选择日历</option>{% if caldav_calendar_url %}<option value="{{ caldav_calendar_url }}" selected>{{ caldav_calendar_name or '已保存的日历' }}</option>{% endif %}</select></label>
+    <label><span>写入日历</span><select id="calendar-picker">{% if caldav_calendar_url %}<option value="{{ caldav_calendar_url }}" selected>[当前已保存] {{ caldav_calendar_name or '已保存日历' }}</option>{% else %}<option value="">未配置日历（请先点击上方「拉取日历列表」）</option>{% endif %}</select></label>
     <p class="event-count">选择日历后仍需保存。连接测试不会创建测试日程。</p>
     <details class="event-technical"><summary>手动配置日历地址</summary><div class="stack">
       <label><span>日历名称</span><input name="caldav_calendar_name" value="{{ caldav_calendar_name }}" required></label>
@@ -188,9 +188,14 @@
   picker.addEventListener('change', function () {
     const option = picker.selectedOptions[0];
     get('caldav_calendar_url').value = option.value;
-    get('caldav_calendar_name').value = option.value ? option.textContent : '';
+    const cleanName = option.dataset.calendarName || (option.value ? option.textContent.replace(/^\[当前已保存\]\s*/, '').replace(/\s*\(当前已保存\)$/, '') : '');
+    get('caldav_calendar_name').value = cleanName;
     dirty = true;
-    announce('目标日历已选择，尚未保存。');
+    if (option.value) {
+      announce('已选择日历「' + cleanName + '」，尚未保存。点击底部「保存日历设置」后生效。');
+    } else {
+      announce('请选择要写入的目标日历。');
+    }
   });
   async function run(action) {
     if (!get('caldav_url').reportValidity() || !get('caldav_username').reportValidity()) return;
@@ -207,12 +212,28 @@
       if (action === 'calendars') {
         const previous = get('caldav_calendar_url').value;
         const calendars = payload.calendars || [];
-        picker.replaceChildren(new Option(calendars.length ? '请选择日历' : '没有找到日历，请检查账号权限', ''));
-        calendars.forEach(cal => picker.add(new Option(cal.name, cal.url)));
-        const match = calendars.find(cal => cal.url === previous);
-        picker.value = match ? previous : '';
-        get('caldav_calendar_url').value = match ? match.url : '';
-        get('caldav_calendar_name').value = match ? match.name : '';
+        const count = calendars.length;
+        picker.replaceChildren(new Option(count ? ('共发现 ' + count + ' 个日历，请选择目标') : '没有找到日历，请检查账号权限', ''));
+        let matched = null;
+        calendars.forEach(cal => {
+          const isSaved = (previous && cal.url === previous);
+          const label = (isSaved ? '[当前已保存] ' : '') + cal.name;
+          const opt = new Option(label, cal.url);
+          opt.dataset.calendarName = cal.name;
+          picker.add(opt);
+          if (isSaved) matched = cal;
+        });
+        if (matched) {
+          picker.value = matched.url;
+          get('caldav_calendar_url').value = matched.url;
+          get('caldav_calendar_name').value = matched.name;
+          announce('日历列表拉取完成，共发现 ' + count + ' 个日历。已自动匹配当前选中的已保存日历「' + matched.name + '」。');
+        } else if (count > 0) {
+          picker.value = '';
+          announce('日历列表拉取完成，共发现 ' + count + ' 个日历。请在下拉列表中选择目标日历。');
+        } else {
+          announce('未能发现可用日历（共 0 个），请检查服务商权限与日历服务地址。', true);
+        }
         dirty = true;
       }
       if (action === 'save') {
@@ -220,7 +241,9 @@
         get('caldav_password').value = '';
         get('caldav_password').placeholder = '已保存，留空保持原值';
       }
-      announce(payload.message);
+      if (action !== 'calendars') {
+        announce(payload.message);
+      }
     } catch (error) {
       announce(error.message || '操作失败，当前填写内容已保留。', true);
     } finally { fields.disabled = false; }

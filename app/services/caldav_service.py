@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, TypedDict, cast
+from urllib.parse import unquote, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.ai.schemas import Recurrence
@@ -126,15 +127,30 @@ class CalDAVService:
 
     def _list_calendars_sync(self, url: str, username: str, password: str, ssl_verify: bool) -> list[dict[str, str]]:
         url = url.strip()
-        client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=ssl_verify, timeout=120)
+        candidate_urls = _get_discovery_urls(url)
         errors: list[str] = []
-        for method in [_try_get_calendars, _try_propfind, _try_principal_calendars]:
-            try:
-                calendars = method(client, url)
-                if calendars:
-                    return [{"name": cal.name or str(cal.url), "url": str(cal.url)} for cal in calendars]
-            except Exception as exc:
-                errors.append(f"{method.__name__}: {exc}")
+
+        # 1. 优先尝试主流程：_try_get_calendars 与 _try_principal_calendars
+        #    对于包含日历后缀的 URL，candidate_urls 已优先向上包含主体/集合路径，确保完整拉取全部日历
+        for cand_url in candidate_urls:
+            client = _DAVClient(url=cand_url, username=username, password=password, ssl_verify_cert=ssl_verify, timeout=120)
+            for method in [_try_get_calendars, _try_principal_calendars]:
+                try:
+                    calendars = method(client, cand_url)
+                    if calendars:
+                        return [{"name": _get_calendar_name(cal), "url": str(cal.url)} for cal in calendars]
+                except Exception as exc:
+                    errors.append(f"{method.__name__} ({cand_url}): {exc}")
+
+        # 2. 单日历兜底移至最后（主要针对 163/QQ 邮箱等无标准主体的服务）
+        original_client = _DAVClient(url=url, username=username, password=password, ssl_verify_cert=ssl_verify, timeout=120)
+        try:
+            calendars = _try_propfind(original_client, url)
+            if calendars:
+                return [{"name": _get_calendar_name(cal), "url": str(cal.url)} for cal in calendars]
+        except Exception as exc:
+            errors.append(f"_try_propfind: {exc}")
+
         error_detail = "; ".join(errors) if errors else "所有方法均未发现日历"
         raise CalDAVServiceError(f"未发现任何日历。({error_detail})")
 
@@ -394,6 +410,71 @@ class CalDAVService:
         return False
 
 
+def _get_discovery_urls(url: str) -> list[str]:
+    url = url.strip()
+    parsed = urlsplit(url)
+    path = parsed.path.rstrip("/")
+    if not path or path == "/":
+        return [url]
+
+    segments = [s for s in path.split("/") if s]
+    if not segments:
+        return [url]
+
+    is_leaf = False
+    if "calendars" in segments:
+        idx = segments.index("calendars")
+        if idx < len(segments) - 1:
+            is_leaf = True
+    elif len(segments) >= 2:
+        is_leaf = True
+
+    def build_url(p: str) -> str:
+        return urlunsplit((parsed.scheme, parsed.netloc, p, parsed.query, parsed.fragment))
+
+    upward_paths: list[str] = []
+    cur = list(segments)
+    while len(cur) > 0:
+        cur.pop()
+        if cur:
+            upward_paths.append("/" + "/".join(cur) + "/")
+        else:
+            upward_paths.append("/")
+
+    upward_urls = [build_url(p) for p in upward_paths if build_url(p) != url]
+    seen: set[str] = set()
+    deduped_upward: list[str] = []
+    for u in upward_urls:
+        if u not in seen:
+            seen.add(u)
+            deduped_upward.append(u)
+
+    if is_leaf:
+        return deduped_upward + [url]
+    return [url] + deduped_upward
+
+
+def _get_calendar_name(cal: CalendarProtocol, default_name: str = "") -> str:
+    name: Any = None
+    if hasattr(cal, "get_display_name"):
+        try:
+            name = cal.get_display_name()
+        except Exception:
+            pass
+    if not name:
+        try:
+            name = getattr(cal, "name", None)
+        except Exception:
+            pass
+    if not name and default_name:
+        name = default_name
+    if not name:
+        url_str = str(getattr(cal, "url", ""))
+        parts = url_str.rstrip("/").split("/")
+        name = unquote(parts[-1]) if parts and parts[-1] else url_str
+    return str(name)
+
+
 def _try_get_calendars(client: DAVClientProtocol, url: str) -> Sequence[CalendarProtocol]:
     _ = url
     return client.get_calendars()
@@ -409,9 +490,16 @@ def _try_propfind(client: DAVClientProtocol, url: str) -> Sequence[CalendarProto
         _ = client.principal()
     except Exception:
         return []
-    parts = url.strip("/").split("/")
-    cal = client.calendar(url=url)
-    cal.name = parts[-1] if parts else url
+    parts = url.rstrip("/").split("/")
+    name = unquote(parts[-1]) if parts and parts[-1] else url
+    try:
+        cal = client.calendar(url=url, name=name)
+    except TypeError:
+        cal = client.calendar(url=url)
+        try:
+            cal.name = name
+        except AttributeError:
+            pass
     return [cal]
 
 

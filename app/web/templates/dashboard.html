@@ -15,6 +15,7 @@
   <p class="event-count dashboard-kpi-note">今日按 {{ activity_timezone }} 划分；成功率不计入待处理记录。</p>
 </section>
 
+{% if not ai_ok or not caldav_ok %}
 <section class="card dashboard-wizard-card" aria-label="初次配置引导向导">
   <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;">
     <div>
@@ -27,6 +28,7 @@
     <a href="/console/wizard" class="button-link" style="white-space:nowrap;">进入配置向导 →</a>
   </div>
 </section>
+{% endif %}
 
 <section class="card dashboard-attention" aria-labelledby="attention-title">
   <h3 id="attention-title">建议检查</h3>

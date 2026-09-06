@@ -390,3 +390,210 @@ def test_inline_save_persists_only_on_save_and_changed_account_requires_password
     response=asyncio.run(routes.update_caldav_settings(req,**kwargs))
     assert response.status_code == 400
     assert service.get('caldav_username') == 'user'
+
+
+def test_get_discovery_urls_prioritizes_upward_for_leaf_urls():
+    from app.services.caldav_service import _get_discovery_urls
+
+    # Non-leaf base URLs: original URL comes first
+    base_urls = _get_discovery_urls("https://caldav.icloud.com")
+    assert base_urls == ["https://caldav.icloud.com"]
+
+    base_slash = _get_discovery_urls("https://caldav.icloud.com/")
+    assert base_slash == ["https://caldav.icloud.com/"]
+
+    # Leaf URLs with calendar suffix: upward principal/home URLs come first
+    icloud_leaf = _get_discovery_urls("https://caldav.icloud.com/123456789/calendars/home")
+    assert icloud_leaf[0] == "https://caldav.icloud.com/123456789/calendars/"
+    assert "https://caldav.icloud.com/123456789/" in icloud_leaf
+    assert icloud_leaf[-1] == "https://caldav.icloud.com/123456789/calendars/home"
+
+    # Multi-segment path
+    nextcloud_leaf = _get_discovery_urls("https://dav.example.com/remote.php/dav/calendars/user/personal")
+    assert nextcloud_leaf[0] == "https://dav.example.com/remote.php/dav/calendars/user/"
+    assert nextcloud_leaf[-1] == "https://dav.example.com/remote.php/dav/calendars/user/personal"
+
+
+def test_list_calendars_prioritizes_full_discovery_over_propfind(monkeypatch):
+    from app.services.caldav_service import CalDAVService
+
+    class FakeCal:
+        def __init__(self, name, url):
+            self.name = name
+            self.url = url
+
+    class FakeClient:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        def get_calendars(self):
+            return [
+                FakeCal("Personal", "https://caldav.icloud.com/cal/personal"),
+                FakeCal("Work", "https://caldav.icloud.com/cal/work"),
+                FakeCal("Home", "https://caldav.icloud.com/cal/home"),
+                FakeCal("AI", "https://caldav.icloud.com/cal/ai"),
+            ]
+
+        def calendar(self, url, **kwargs):
+            raise AssertionError("Should not reach single-calendar fallback when get_calendars succeeds")
+
+    monkeypatch.setattr("app.services.caldav_service._DAVClient", FakeClient)
+
+    svc = CalDAVService()
+    cals = asyncio.run(svc.list_calendars("https://caldav.icloud.com", "user", "pass"))
+    assert len(cals) == 4
+    names = [c["name"] for c in cals]
+    assert names == ["Personal", "Work", "Home", "AI"]
+
+
+def test_list_calendars_upward_discovery_discovers_all_calendars(monkeypatch):
+    from app.services.caldav_service import CalDAVService
+
+    class FakeCal:
+        def __init__(self, name, url):
+            self.name = name
+            self.url = url
+
+    # Simulate: probing the leaf URL directly returns nothing,
+    # but probing the parent upward collection returns all 4 calendars.
+    class FakeClient:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        def get_calendars(self):
+            if self.url == "https://caldav.icloud.com/123456789/calendars/home":
+                return []
+            if "calendars" in self.url or "123456789" in self.url:
+                return [
+                    FakeCal("Personal", "https://caldav.icloud.com/cal/personal"),
+                    FakeCal("Work", "https://caldav.icloud.com/cal/work"),
+                    FakeCal("Home", "https://caldav.icloud.com/cal/home"),
+                    FakeCal("AI", "https://caldav.icloud.com/cal/ai"),
+                ]
+            return []
+
+        def principal(self):
+            return self
+
+        def calendars(self):
+            return self.get_calendars()
+
+    monkeypatch.setattr("app.services.caldav_service._DAVClient", FakeClient)
+
+    svc = CalDAVService()
+    cals = asyncio.run(svc.list_calendars("https://caldav.icloud.com/123456789/calendars/home", "user", "pass"))
+    assert len(cals) == 4
+    names = [c["name"] for c in cals]
+    assert names == ["Personal", "Work", "Home", "AI"]
+
+
+def test_list_calendars_fallback_to_propfind_for_163_qq(monkeypatch):
+    from app.services.caldav_service import CalDAVService
+
+    class FakeCal:
+        def __init__(self, name, url):
+            self.name = name
+            self.url = url
+
+    class Fake163Client:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        def get_calendars(self):
+            raise Exception("163 does not support get_calendars")
+
+        def principal(self):
+            # 163 principal doesn't have calendars()
+            class FakePrincipal:
+                def calendars(self):
+                    raise Exception("163 does not support principal.calendars")
+            return FakePrincipal()
+
+        def calendar(self, url, name=None, **kwargs):
+            return FakeCal(name or "default", url)
+
+    monkeypatch.setattr("app.services.caldav_service._DAVClient", Fake163Client)
+
+    svc = CalDAVService()
+    cals = asyncio.run(svc.list_calendars("https://caldav.163.com/dav/user@163.com/default/", "user@163.com", "pass"))
+    assert len(cals) == 1
+    assert cals[0]["name"] == "default"
+    assert cals[0]["url"] == "https://caldav.163.com/dav/user@163.com/default/"
+
+
+def test_list_calendars_strategy_probe_sequence():
+    from unittest.mock import patch
+    from app.services.caldav_service import CalDAVService
+
+    calls = []
+
+    class MockCal:
+        def __init__(self, name, url):
+            self._name = name
+            self.url = url
+
+        def get_display_name(self):
+            return self._name
+
+    class MockClient:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        def get_calendars(self):
+            calls.append(("get_calendars", self.url))
+            raise Exception("get_calendars failed")
+
+        def principal(self):
+            calls.append(("principal", self.url))
+            return self
+
+        def calendars(self):
+            calls.append(("principal.calendars", self.url))
+            if "calendars" in self.url and not self.url.endswith("/home"):
+                # upward collection path succeeds!
+                return [MockCal("Work", "https://caldav.example.com/user/calendars/work")]
+            raise Exception("principal.calendars failed")
+
+        def calendar(self, url, name=None, **kwargs):
+            calls.append(("calendar", url))
+            return MockCal(name or "default", url)
+
+    with patch("app.services.caldav_service._DAVClient", MockClient):
+        svc = CalDAVService()
+        leaf_url = "https://caldav.example.com/user/calendars/home"
+        res = asyncio.run(svc.list_calendars(leaf_url, "user", "pass"))
+        assert len(res) == 1
+        assert res[0]["name"] == "Work"
+
+        # Assert strategy order:
+        # First candidate is upward URL (https://caldav.example.com/user/calendars/)
+        assert calls[0] == ("get_calendars", "https://caldav.example.com/user/calendars/")
+        assert calls[1] == ("principal", "https://caldav.example.com/user/calendars/")
+        assert calls[2] == ("principal.calendars", "https://caldav.example.com/user/calendars/")
+        # _try_propfind (single calendar fallback) was NEVER called because upward principal succeeded
+        assert not any(c[0] == "calendar" for c in calls)
+
+
+def test_get_calendar_name_resolution():
+    from app.services.caldav_service import _get_calendar_name
+
+    # 1. get_display_name method
+    class CalWithMethod:
+        def get_display_name(self):
+            return "Display Name Calendar"
+    assert _get_calendar_name(CalWithMethod()) == "Display Name Calendar"
+
+    # 2. name property
+    class CalWithName:
+        name = "Name Attr Calendar"
+    assert _get_calendar_name(CalWithName()) == "Name Attr Calendar"
+
+    # 3. unquoted url segment
+    class CalWithUrl:
+        url = "https://example.com/calendars/user/Personal%20Events/"
+    assert _get_calendar_name(CalWithUrl()) == "Personal Events"
+
+    # 4. default_name fallback
+    class CalEmpty:
+        pass
+    assert _get_calendar_name(CalEmpty(), default_name="Fallback Name") == "Fallback Name"

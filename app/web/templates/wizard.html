@@ -129,9 +129,9 @@
           <span>目标写入日历</span>
           <select name="caldav_calendar_url" id="wizard-caldav-picker">
             {% if caldav.caldav_calendar_url %}
-            <option value="{{ caldav.caldav_calendar_url }}" selected>{{ caldav.caldav_calendar_name or caldav.caldav_calendar_url }}</option>
+            <option value="{{ caldav.caldav_calendar_url }}" selected>[当前已保存] {{ caldav.caldav_calendar_name or caldav.caldav_calendar_url }}</option>
             {% else %}
-            <option value="">请先点击上方「拉取日历列表」</option>
+            <option value="">未配置日历（请先点击上方「拉取日历列表」）</option>
             {% endif %}
           </select>
           <input type="hidden" name="caldav_calendar_name" id="wizard-caldav-name" value="{{ caldav.caldav_calendar_name or '' }}">
@@ -439,6 +439,8 @@ window.addEventListener('DOMContentLoaded', function() {
     if (!p) return;
     if (p.url) caldavUrlInput.value = p.url;
     if (p.hint) caldavHint.textContent = p.hint;
+    caldavPicker.innerHTML = '<option value="">连接信息已更改，请重新拉取日历</option>';
+    caldavNameInput.value = '';
   });
 
   function setCaldavStatus(msg, error, success) {
@@ -460,19 +462,43 @@ window.addEventListener('DOMContentLoaded', function() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
-        setCaldavStatus(data.message || '操作成功。', false, true);
         if (action === 'calendars' && Array.isArray(data.calendars)) {
+          const previous = caldavPicker.value || '{{ caldav.caldav_calendar_url or "" }}';
+          const calendars = data.calendars;
+          const count = calendars.length;
           caldavPicker.innerHTML = '';
-          data.calendars.forEach(function(c) {
+
+          const placeholderOpt = document.createElement('option');
+          placeholderOpt.value = '';
+          placeholderOpt.textContent = count > 0 ? ('共发现 ' + count + ' 个日历，请选择目标') : '没有找到日历，请检查账号权限';
+          caldavPicker.appendChild(placeholderOpt);
+
+          let matched = null;
+          calendars.forEach(function(c) {
             const opt = document.createElement('option');
             opt.value = c.url;
-            opt.textContent = c.name + ' (' + c.url + ')';
+            opt.dataset.calendarName = c.name;
+            const isSaved = (previous && c.url === previous);
+            opt.textContent = (isSaved ? '[当前已保存] ' : '') + c.name + ' (' + c.url + ')';
             caldavPicker.appendChild(opt);
+            if (isSaved) matched = c;
           });
-          if (data.calendars.length > 0) {
-            caldavNameInput.value = data.calendars[0].name;
-            caldavPicker.value = data.calendars[0].url;
+
+          if (matched) {
+            caldavPicker.value = matched.url;
+            caldavNameInput.value = matched.name;
+            setCaldavStatus('日历列表拉取完成，共发现 ' + count + ' 个日历。已自动匹配当前选中的已保存日历「' + matched.name + '」。', false, true);
+          } else if (count > 0) {
+            caldavPicker.value = '';
+            caldavNameInput.value = '';
+            setCaldavStatus('日历列表拉取完成，共发现 ' + count + ' 个日历。请在下方选择目标日历后保存。', false, true);
+          } else {
+            caldavPicker.value = '';
+            caldavNameInput.value = '';
+            setCaldavStatus('未能发现可用日历（共 0 个），请检查服务商权限与日历服务地址。', true, false);
           }
+        } else {
+          setCaldavStatus(data.message || '操作成功。', false, true);
         }
       } else {
         setCaldavStatus(data.error || '操作失败。', true, false);
@@ -487,8 +513,13 @@ window.addEventListener('DOMContentLoaded', function() {
 
   caldavPicker.addEventListener('change', function() {
     const sel = caldavPicker.options[caldavPicker.selectedIndex];
-    if (sel) {
-      caldavNameInput.value = sel.textContent.split(' (')[0];
+    if (sel && sel.value) {
+      const calName = sel.dataset.calendarName || sel.textContent.replace(/^\[当前已保存\]\s*/, '').split(' (')[0];
+      caldavNameInput.value = calName;
+      setCaldavStatus('已选择日历「' + calName + '」，尚未保存。点击「保存日历设置」后生效。', false, false);
+    } else {
+      caldavNameInput.value = '';
+      setCaldavStatus('请选择要写入的目标日历。', false, false);
     }
   });
 

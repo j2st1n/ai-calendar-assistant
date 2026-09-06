@@ -163,3 +163,157 @@ def test_wizard_test_event_validation():
     res_empty = client.post("/console/wizard/test-event", data={"text": "   "}, headers={"origin": "http://testserver"})
     assert res_empty.status_code == 400
     assert "请输入测试日程文本" in res_empty.json()["error"]
+
+
+def test_dashboard_wizard_card_visibility_based_on_config():
+    from app.web import routes
+    request = Request({"type": "http", "method": "GET", "path": "/console", "headers": [], "session": {"admin_authenticated": True}})
+
+    base_ctx = {
+        "request": request,
+        "stats": {"today_processed": 0, "today_created": 0, "today_failed": 0, "today_success_rate": None, "today_no_event": 0, "today_quote_failures": 0, "week_created": 0, "month_created": 0, "today_events": 0, "week_events": 0, "month_events": 0},
+        "activity_timezone": "Asia/Shanghai",
+        "recent_activity": [],
+        "connection_checks": {"ai": {"label": "未验证", "time": ""}, "caldav": {"label": "未验证", "time": ""}},
+        "tg_running": False,
+        "dc_running": False,
+        "wechat_running": False,
+        "message": None,
+        "changes": None,
+        "ai_name": "DeepSeek",
+        "vision_label": "共用主模型",
+        "caldav_source": "icloud.com",
+        "caldav_name": "Work",
+        "last_calendar_success_current": "",
+        "last_calendar_success_legacy": "",
+    }
+
+    # 1. 均未配置 -> 显示向导卡片
+    html_none = routes.templates.get_template("dashboard.html").render(ai_ok=False, caldav_ok=False, **base_ctx)
+    assert "dashboard-wizard-card" in html_none
+    assert "初次配置向导" in html_none
+
+    # 2. 仅 AI 配置完成 -> 仍显示向导卡片
+    html_ai_only = routes.templates.get_template("dashboard.html").render(ai_ok=True, caldav_ok=False, **base_ctx)
+    assert "dashboard-wizard-card" in html_ai_only
+
+    # 3. 仅日历配置完成 -> 仍显示向导卡片
+    html_caldav_only = routes.templates.get_template("dashboard.html").render(ai_ok=False, caldav_ok=True, **base_ctx)
+    assert "dashboard-wizard-card" in html_caldav_only
+
+    # 4. 核心配置全部完成 -> 不再显示向导卡片
+    html_all_done = routes.templates.get_template("dashboard.html").render(ai_ok=True, caldav_ok=True, **base_ctx)
+    assert "dashboard-wizard-card" not in html_all_done
+    assert "初次配置向导" not in html_all_done
+
+
+def test_caldav_and_wizard_dropdown_options():
+    from app.web import routes
+    request = Request({"type": "http", "method": "GET", "path": "/console/caldav", "headers": [], "session": {"admin_authenticated": True}})
+
+    # caldav.html 包含已保存日历时
+    html_saved = routes.templates.get_template("caldav.html").render(
+        request=request,
+        caldav_url="https://caldav.icloud.com",
+        caldav_username="user@icloud.com",
+        caldav_password_masked=True,
+        caldav_ssl_verify="true",
+        caldav_calendar_name="个人日历",
+        caldav_calendar_url="https://caldav.icloud.com/cal/1",
+        caldav_timezone="Asia/Shanghai",
+        caldav_reminder_minutes="30",
+        caldav_default_duration="60",
+        timezones=["Asia/Shanghai"],
+    )
+    assert "[当前已保存] 个人日历" in html_saved
+
+    # caldav.html 未配置日历时
+    html_unsaved = routes.templates.get_template("caldav.html").render(
+        request=request,
+        caldav_url="",
+        caldav_username="",
+        caldav_password_masked=False,
+        caldav_ssl_verify="true",
+        caldav_calendar_name="",
+        caldav_calendar_url="",
+        caldav_timezone="Asia/Shanghai",
+        caldav_reminder_minutes="30",
+        caldav_default_duration="60",
+        timezones=["Asia/Shanghai"],
+    )
+    assert "未配置日历（请先点击上方「拉取日历列表」）" in html_unsaved
+
+    # wizard.html 包含已保存日历时
+    wizard_req = Request({"type": "http", "method": "GET", "path": "/console/wizard", "headers": [], "session": {"admin_authenticated": True}})
+    wizard_saved = routes.templates.get_template("wizard.html").render(
+        request=wizard_req,
+        ai={},
+        caldav={"caldav_calendar_name": "工作日历", "caldav_calendar_url": "https://caldav.example.com/work", "timezones": []},
+        status={},
+        ai_ok=True,
+        caldav_ok=True,
+        telegram_running=False,
+        discord_running=False,
+        wechat_running=False,
+        wechat_state="stopped",
+        telegram_bot_token_masked="",
+        discord_bot_token_masked="",
+        wechat_token_saved=False,
+    )
+    assert "[当前已保存] 工作日历" in wizard_saved
+
+    # wizard.html 未配置日历时
+    wizard_unsaved = routes.templates.get_template("wizard.html").render(
+        request=wizard_req,
+        ai={},
+        caldav={"caldav_calendar_name": "", "caldav_calendar_url": "", "timezones": []},
+        status={},
+        ai_ok=False,
+        caldav_ok=False,
+        telegram_running=False,
+        discord_running=False,
+        wechat_running=False,
+        wechat_state="stopped",
+        telegram_bot_token_masked="",
+        discord_bot_token_masked="",
+        wechat_token_saved=False,
+    )
+    assert "未配置日历（请先点击上方「拉取日历列表」）" in wizard_unsaved
+
+
+def test_dashboard_route_wizard_card_visibility():
+    import asyncio
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.db.models import Base
+    from app.services.settings_service import SettingsService
+    from app.web import routes
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings_service = SettingsService(session)
+        request = Request({"type": "http", "method": "GET", "path": "/console", "headers": [], "query_string": b"", "session": {"admin_authenticated": True}})
+
+        # 1. 均未配置 -> 出现向导卡片，且保留侧边栏入口
+        res_unconfigured = asyncio.run(routes.dashboard(request, session, _=None))
+        html_unconfigured = res_unconfigured.body.decode()
+        assert "dashboard-wizard-card" in html_unconfigured
+        assert "初次配置向导" in html_unconfigured
+        assert 'href="/console/wizard"' in html_unconfigured
+
+        # 2. 仅 AI 配置完成 -> 仍显示向导卡片
+        settings_service.set("ai_provider_name", "OpenAI")
+        settings_service.set("ai_model", "gpt-4o")
+        res_ai_only = asyncio.run(routes.dashboard(request, session, _=None))
+        html_ai_only = res_ai_only.body.decode()
+        assert "dashboard-wizard-card" in html_ai_only
+
+        # 3. 核心配置全部完成 (AI + CalDAV) -> 向导卡片隐藏，但侧边栏入口始终保留
+        settings_service.set("caldav_url", "https://caldav.example.com")
+        settings_service.set("caldav_calendar_name", "Work")
+        res_all_done = asyncio.run(routes.dashboard(request, session, _=None))
+        html_all_done = res_all_done.body.decode()
+        assert "dashboard-wizard-card" not in html_all_done
+        assert "初次配置向导" not in html_all_done
+        assert 'href="/console/wizard"' in html_all_done
