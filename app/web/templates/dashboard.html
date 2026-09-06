@@ -15,6 +15,19 @@
   <p class="event-count dashboard-kpi-note">今日按 {{ activity_timezone }} 划分；成功率不计入待处理记录。</p>
 </section>
 
+<section class="card dashboard-wizard-card" aria-label="初次配置引导向导">
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;">
+    <div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <h3 style="margin-bottom:0;">初次配置向导</h3>
+        <span class="chip" style="font-size:11px; padding:2px 8px;">新部署推荐</span>
+      </div>
+      <p class="dashboard-note" style="margin-top:6px; margin-bottom:0;">四步快速引导：AI 设置 → 日历服务 → 渠道选择 → 发送首条测试日程，支持每步测试与随时跳过。</p>
+    </div>
+    <a href="/console/wizard" class="button-link" style="white-space:nowrap;">进入配置向导 →</a>
+  </div>
+</section>
+
 <section class="card dashboard-attention" aria-labelledby="attention-title">
   <h3 id="attention-title">建议检查</h3>
   {% if not ai_ok %}<div class="dashboard-notice"><div><strong>完成 AI 配置</strong><p>设置主模型，让助手识别聊天中的日程。</p></div><a class="button-link secondary" href="/console/ai">配置 AI</a></div>{% endif %}
@@ -50,7 +63,13 @@
     {% endfor %}
   </div>
   <p class="event-count">验证时间：{{ activity_timezone }}。结果只代表测试当时，超过 24 小时需复核。主模型验证不覆盖识图或日程识别能力，日历连接验证不覆盖写入权限。</p>
-  <p class="event-count">最近日历操作成功：{{ last_calendar_success or '暂无记录' }}。依据本地历史记录，可能使用之前的配置。</p>
+  {% if last_calendar_success_current %}
+  <p class="event-count">最近日历操作成功：{{ last_calendar_success_current }}（当前配置已生效）。{% if last_calendar_success_legacy and last_calendar_success_legacy != last_calendar_success_current %}<span class="dashboard-note">历史旧配置最近成功：{{ last_calendar_success_legacy }}</span>{% endif %}</p>
+  {% elif last_calendar_success_legacy %}
+  <p class="event-count"><span class="dashboard-note">当前配置暂无日历操作成功记录</span>。历史旧配置最近成功：{{ last_calendar_success_legacy }}（配置已变更，历史记录不代表当前配置有效）。</p>
+  {% else %}
+  <p class="event-count">最近日历操作成功：暂无记录。</p>
+  {% endif %}
   <div class="dashboard-connections">
     <a href="/console/ai"><strong>AI</strong><span>{{ '配置已保存' if ai_ok else '未配置' }}</span><small>{% if ai_ok %}{{ ai_name }} · 识图：{{ vision_label }}{% else %}选择主模型{% endif %}</small></a>
     <a href="/console/caldav"><strong>日历</strong><span>{{ '配置已保存' if caldav_ok else '未配置' }}</span><small>{{ (caldav_source ~ ' / ' ~ caldav_name) if caldav_ok else '选择要写入的日历' }}</small></a>

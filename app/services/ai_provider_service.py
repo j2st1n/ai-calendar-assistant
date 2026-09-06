@@ -190,6 +190,86 @@ class AIProviderService:
 
         await self._test_openai_compatible(config)
 
+    async def probe_schema_compliance(self, config: AIProviderConfig) -> dict[str, Any]:
+        if not config.model:
+            raise AIProviderError("请先选择或输入模型。")
+
+        system_prompt = (
+            "You are a calendar event extraction assistant. Extract event information from the user's message.\n"
+            "Return ONLY a JSON object adhering to this schema:\n"
+            "{\n"
+            '  "intent": "create_event",\n'
+            '  "events": [\n'
+            "    {\n"
+            '      "title": "...",\n'
+            '      "start_time": "2026-10-15T15:00:00+08:00",\n'
+            '      "is_all_day": false\n'
+            "    }\n"
+            "  ]\n"
+            "}"
+        )
+        user_message = "明天下午3点开会讨论项目进度"
+
+        try:
+            raw = await self.chat_completion(config, system_prompt, user_message, json_mode=True)
+        except AIProviderError:
+            raise
+        except Exception as exc:
+            raise AIProviderError(f"模型调用失败：{exc}") from exc
+
+        if not raw or not raw.strip():
+            raise AIProviderError("模型返回空结果，未能遵循 JSON Schema。")
+
+        import json
+        import re
+
+        clean_text = raw.strip()
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", clean_text)
+        if m:
+            clean_text = m.group(1).strip()
+        m_obj = re.search(r"\{[\s\S]*\}", clean_text)
+        if m_obj:
+            clean_text = m_obj.group(0)
+
+        try:
+            data = json.loads(clean_text)
+        except Exception as exc:
+            raise AIProviderError(f"模型未返回合法的 JSON 格式：{raw[:100]}") from exc
+
+        if not isinstance(data, dict):
+            raise AIProviderError("模型返回的 JSON 顶层必须为对象。")
+
+        intent = data.get("intent")
+        if not intent:
+            raise AIProviderError("模型返回数据缺少 'intent' 字段。")
+
+        events = data.get("events")
+        if not events and "event" in data and isinstance(data["event"], dict):
+            events = [data["event"]]
+
+        if not isinstance(events, list) or not events:
+            raise AIProviderError("模型返回数据缺少有效的 'events' 列表。")
+
+        first_event = events[0]
+        if not isinstance(first_event, dict):
+            raise AIProviderError("日程事件项必须为对象。")
+
+        title = first_event.get("title")
+        start_time = first_event.get("start_time")
+
+        if not title or not isinstance(title, str) or not title.strip():
+            raise AIProviderError("模型未能提取到有效的日程标题 (title)。")
+        if not start_time or not isinstance(start_time, str) or not start_time.strip():
+            raise AIProviderError("模型未能提取到有效的日程时间 (start_time)。")
+
+        return {
+            "ok": True,
+            "intent": str(intent),
+            "title": title.strip(),
+            "start_time": start_time.strip(),
+            "raw": raw,
+        }
+
     async def _test_openai_compatible(self, config: AIProviderConfig) -> None:
         AsyncOpenAI, OpenAIAPIError = _openai_sdk()
         try:

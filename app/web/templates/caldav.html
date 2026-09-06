@@ -9,12 +9,27 @@
 <fieldset id="caldav-fields">
   <section class="card stack">
     <h3>1. 连接日历服务</h3>
+    <label>
+      <span>服务商预设</span>
+      <select id="caldav-provider-select">
+        <option value="custom">自定义 (Custom CalDAV)</option>
+        <option value="icloud">Apple iCloud</option>
+        <option value="nextcloud">Nextcloud / ownCloud</option>
+        <option value="163">网易 163 / 126 邮箱</option>
+        <option value="qq">QQ 邮箱 / 腾讯企业邮</option>
+        <option value="fastmail">Fastmail</option>
+      </select>
+    </label>
     <label><span>日历服务器地址</span><input type="url" name="caldav_url" value="{{ caldav_url }}" placeholder="https://caldav.icloud.com" required></label>
     <label><span>用户名</span><input name="caldav_username" value="{{ caldav_username }}" placeholder="日历服务的登录账号" required></label>
     <label><span>密码 / 应用密码</span><input name="caldav_password" type="password" autocomplete="off" placeholder="{{ '已保存，留空保持原值' if caldav_password_masked else '填写应用密码' }}"></label>
-    <p class="event-count">更换服务器或用户名后，需要填写对应的应用密码。</p>
+    <p class="event-count" id="caldav-provider-hint">更换服务器或用户名后，需要填写对应的应用密码。</p>
     <label class="caldav-checkbox"><input type="checkbox" name="caldav_ssl_verify" value="true" {% if caldav_ssl_verify != 'false' %}checked{% endif %}><span>验证 SSL 证书</span></label>
-    <div class="row"><button type="button" class="secondary" data-caldav-action="test">测试连接</button><button type="button" class="secondary" data-caldav-action="calendars">拉取日历列表</button></div>
+    <div class="row">
+      <button type="button" class="secondary" data-caldav-action="test">测试连接</button>
+      <button type="button" class="secondary" data-caldav-action="write-test">测试写入权限</button>
+      <button type="button" class="secondary" data-caldav-action="calendars">拉取日历列表</button>
+    </div>
   </section>
   <section class="card stack">
     <h3>2. 选择目标日历</h3>
@@ -28,7 +43,15 @@
   <section class="card stack">
     <h3>3. 默认日程规则</h3>
     <div class="caldav-defaults">
-      <label><span>默认时区</span><input name="caldav_timezone" value="{{ caldav_timezone }}" placeholder="Asia/Shanghai" required></label>
+      <label>
+        <span>默认时区</span>
+        <input name="caldav_timezone" value="{{ caldav_timezone }}" placeholder="Asia/Shanghai" list="iana-timezones" autocomplete="off" required>
+        <datalist id="iana-timezones">
+          {% for tz in timezones %}
+          <option value="{{ tz }}">{{ tz }}</option>
+          {% endfor %}
+        </datalist>
+      </label>
       <label><span>提前提醒（分钟）</span><input name="caldav_reminder_minutes" type="number" value="{{ caldav_reminder_minutes }}" min="0"></label>
       <label><span>默认时长（分钟）</span><input name="caldav_default_duration" type="number" value="{{ caldav_default_duration }}" min="5"></label>
     </div>
@@ -42,8 +65,112 @@
   const fields = document.getElementById('caldav-fields');
   const status = document.getElementById('caldav-status');
   const picker = document.getElementById('calendar-picker');
+  const providerSelect = document.getElementById('caldav-provider-select');
+  const providerHint = document.getElementById('caldav-provider-hint');
   const get = name => form.elements.namedItem(name);
   let dirty = false;
+
+  const providerPresets = {
+    icloud: {
+      name: 'Apple iCloud',
+      url: 'https://caldav.icloud.com',
+      usernamePlaceholder: 'Apple ID 邮箱，如 user@icloud.com',
+      passwordPlaceholder: '需使用 App 专用密码 (可在 appleid.apple.com 生成)',
+      hint: 'iCloud 必须使用 Apple ID 的 App 专用密码（可在 appleid.apple.com 生成），使用主密码会验证失败。',
+      sslVerify: true,
+    },
+    nextcloud: {
+      name: 'Nextcloud / ownCloud',
+      url: '',
+      urlPlaceholder: 'https://your-domain.com/remote.php/dav',
+      usernamePlaceholder: 'Nextcloud 用户名',
+      passwordPlaceholder: '账户密码或应用令牌 (App Token)',
+      hint: 'Nextcloud/ownCloud 服务地址通常以 /remote.php/dav 结尾。推荐在「个人设置 > 安全」生成应用令牌。',
+      sslVerify: true,
+    },
+    '163': {
+      name: '网易 163 / 126 邮箱',
+      url: 'https://caldav.m163.com/dav/',
+      usernamePlaceholder: '完整网易邮箱，如 user@163.com',
+      passwordPlaceholder: '需使用邮箱授权密码 / 应用密码',
+      hint: '网易邮箱需在「网页端 > 设置 > POP3/IMAP/SMTP/CalDAV」中开启服务并生成客户端专用授权密码。',
+      sslVerify: true,
+    },
+    qq: {
+      name: 'QQ 邮箱 / 腾讯企业邮',
+      url: 'https://dav.qq.com',
+      usernamePlaceholder: 'QQ 邮箱，如 123456@qq.com',
+      passwordPlaceholder: '需使用 QQ 邮箱授权码',
+      hint: 'QQ 邮箱需在「网页端 > 设置 > 账户」中开启 POP3/IMAP/CalDAV 服务并获取专属授权码（企业邮为 dav.exmail.qq.com）。',
+      sslVerify: true,
+    },
+    fastmail: {
+      name: 'Fastmail',
+      url: 'https://caldav.fastmail.com/dav/',
+      usernamePlaceholder: 'Fastmail 邮箱，如 user@fastmail.com',
+      passwordPlaceholder: '需使用 Fastmail App Password',
+      hint: 'Fastmail 需在「Settings > Password & Security > App Passwords」生成专用访问密码。',
+      sslVerify: true,
+    },
+    custom: {
+      name: '自定义 CalDAV',
+      url: '',
+      urlPlaceholder: 'https://caldav.example.com',
+      usernamePlaceholder: '日历服务的登录账号',
+      passwordPlaceholder: '填写应用密码',
+      hint: '更换服务器或用户名后，需要填写对应的应用密码。',
+      sslVerify: true,
+    }
+  };
+
+  function matchPresetKey(url) {
+    const u = (url || '').trim().toLowerCase();
+    if (u.includes('caldav.icloud.com')) return 'icloud';
+    if (u.includes('caldav.m163.com') || u.includes('caldav.163.com')) return '163';
+    if (u.includes('dav.qq.com') || u.includes('exmail.qq.com')) return 'qq';
+    if (u.includes('fastmail.com')) return 'fastmail';
+    if (u.includes('remote.php/dav')) return 'nextcloud';
+    return 'custom';
+  }
+
+  // Auto-detect preset on initial load
+  const initialKey = matchPresetKey(get('caldav_url').value);
+  if (providerSelect) {
+    providerSelect.value = initialKey;
+    if (initialKey !== 'custom' && providerPresets[initialKey] && providerHint) {
+      providerHint.textContent = providerPresets[initialKey].hint;
+    }
+    providerSelect.addEventListener('change', function () {
+      const preset = providerPresets[providerSelect.value];
+      if (!preset) return;
+      if (preset.url) {
+        get('caldav_url').value = preset.url;
+      } else if (preset.urlPlaceholder) {
+        if (!get('caldav_url').value || providerSelect.value === 'nextcloud') {
+          get('caldav_url').placeholder = preset.urlPlaceholder;
+        }
+      }
+      if (preset.usernamePlaceholder) {
+        get('caldav_username').placeholder = preset.usernamePlaceholder;
+      }
+      if (preset.passwordPlaceholder && !get('caldav_password').value) {
+        get('caldav_password').placeholder = preset.passwordPlaceholder;
+      }
+      if (preset.hint && providerHint) {
+        providerHint.textContent = preset.hint;
+      }
+      if (preset.sslVerify !== undefined) {
+        get('caldav_ssl_verify').checked = preset.sslVerify;
+      }
+      picker.replaceChildren(new Option('连接信息已更改，请重新拉取日历', ''));
+      get('caldav_calendar_name').value = '';
+      get('caldav_calendar_url').value = '';
+      get('caldav_password').value = '';
+      dirty = true;
+      announce('已切换至「' + preset.name + '」服务商预设。');
+    });
+  }
+
   function announce(message, error) {
     status.textContent = message;
     status.className = 'form-status' + (error ? ' error' : '');
@@ -69,7 +196,7 @@
     if (!get('caldav_url').reportValidity() || !get('caldav_username').reportValidity()) return;
     const data = new FormData(form);
     fields.disabled = true;
-    announce(action === 'save' ? '正在保存…' : '正在检查日历服务…');
+    announce(action === 'save' ? '正在保存…' : action === 'write-test' ? '正在测试日历写入与清理权限…' : '正在检查日历服务…');
     try {
       const response = await fetch(action === 'save' ? form.action : '/console/caldav/' + action, {
         method: 'POST', body: data, headers: {'Accept': 'application/json'}

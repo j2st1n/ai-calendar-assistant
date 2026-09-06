@@ -5,12 +5,17 @@ import re
 from app.db.models import EventRecord
 
 
-def event_feedback(record: EventRecord) -> dict[str, str]:
+def event_feedback(record: EventRecord) -> dict[str, object]:
     operation = record.operation or ""
-    result = {
+    result: dict[str, object] = {
         "operation_label": {"create": "创建", "update": "修改", "delete": "删除", "no_event": "识别", "quote_not_found": "引用定位"}.get(operation, "处理"),
         "result_label": "成功" if record.status == "success" else "待处理",
         "reason": "", "suggestion": "", "action_url": "", "action_label": "",
+        "failure_phase": getattr(record, "failure_phase", None),
+        "failure_phase_label": None,
+        "failure_stage": getattr(record, "failure_phase", None),
+        "failure_stage_label": None,
+        "can_retry": False,
     }
     if record.status != "failed":
         return result
@@ -24,6 +29,28 @@ def event_feedback(record: EventRecord) -> dict[str, str]:
     details = " ".join(str(x) for x in missing) if isinstance(missing, list) else ""
     error = (record.error_message or "") + " " + details
     lower = error.lower()
+
+    explicit_phase = getattr(record, "failure_phase", None)
+    if explicit_phase == "write" or (not explicit_phase and operation in {"create", "update", "delete"}):
+        stage = "write"
+        stage_label = "日历写入失败"
+        can_retry = bool(record.event_json and operation in {"create", "update"})
+    elif explicit_phase == "validation" or (not explicit_phase and (missing or "缺少字段" in error or payload.get("unsupported_reason") or error.startswith("不支持") or operation == "quote_not_found")):
+        stage = "validation"
+        stage_label = "校验失败"
+        can_retry = False
+    else:
+        stage = "extraction"
+        stage_label = "提取失败"
+        can_retry = False
+
+    result.update({
+        "failure_phase": stage,
+        "failure_phase_label": stage_label,
+        "failure_stage": stage,
+        "failure_stage_label": stage_label,
+        "can_retry": can_retry,
+    })
 
     def feedback(label: str, reason: str, suggestion: str, target: str = "") -> dict[str, str]:
         result.update(result_label=label, reason=reason, suggestion=suggestion)

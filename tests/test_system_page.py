@@ -1,6 +1,7 @@
 import io
 import json
 from pathlib import Path
+import re
 import sqlite3
 import zipfile
 
@@ -37,11 +38,57 @@ def test_login_page_does_not_prefill_admin_username():
     assert 'name="username" autocomplete="username" required' in template
 
 
+def test_login_page_passkey_experience_and_hierarchy():
+    template = Path("app/web/templates/login.html").read_text()
+
+    # 1. 首次部署默认密码折叠在 details 中
+    assert "<details" in template
+    assert "首次部署帮助" in template
+    assert "首次启动生成的管理员密码可在 Docker 日志中查看。" in template
+
+    # 2. 界面层级：通行密钥一键登录置顶凸显，密码登录降为二级样式
+    assert 'id="passkey-login"' in template
+    assert "使用通行密钥一键登录" in template
+    assert 'button type="submit" class="secondary"' in template
+    assert "密码登录" in template
+
+    # 3. 常见 WebAuthn DOM 异常捕获与友好中文提示
+    assert "getPasskeyErrorMessage" in template
+    assert "NotAllowedError" in template
+    assert "已取消或拒绝通行密钥验证" in template
+    assert "TimeoutError" in template
+    assert "通行密钥验证超时" in template
+    assert "NotSupportedError" in template
+    assert "当前浏览器或设备不支持通行密钥功能" in template
+    assert "SecurityError" in template
+    assert 'id="passkey-error"' in template
+
+
+def test_login_page_renders_passkey_elements_via_testclient():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as client:
+        resp = client.get("/console/login")
+        assert resp.status_code == 200
+        assert "使用通行密钥一键登录" in resp.text
+        assert "首次部署帮助" in resp.text
+        assert "首次启动生成的管理员密码可在 Docker 日志中查看。" in resp.text
+        assert "密码登录" in resp.text
+        assert "getPasskeyErrorMessage" in resp.text
+        assert "NotAllowedError" in resp.text
+        assert "已取消或拒绝通行密钥验证" in resp.text
+        assert "TimeoutError" in resp.text
+        assert "NotSupportedError" in resp.text
+        assert "SecurityError" in resp.text
+
+
+
 def test_mobile_navigation_uses_a_scrollable_drawer():
     template = Path("app/web/templates/base.html").read_text()
     styles = Path("app/web/static/styles.css").read_text()
 
-    assert 'href="/static/styles.css?v=7"' in template
+    assert re.search(r'href="/static/styles\.css\?v=\d+"', template)
     assert 'data-mobile-menu-toggle' in template
     assert 'id="console-sidebar"' in template
     assert 'data-mobile-menu-close' in template

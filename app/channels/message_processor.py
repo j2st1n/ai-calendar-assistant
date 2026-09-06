@@ -274,7 +274,8 @@ async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRe
                                           target.caldav_uid, target.caldav_href, ssl_verify=caldav["ssl"])
     _ = _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
                 target.event_json or "", cr={"uid": target.caldav_uid},
-                start_time=target.start_time or "", event_id=target.event_id)
+                start_time=target.start_time or "", event_id=target.event_id,
+                failure_phase="write" if not deleted else None)
     session.commit()
     status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
     return f"🗑️ 已删除日程：{title}{status}"
@@ -309,7 +310,8 @@ async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, targ
     rec_id = _record(session, ctx, "update", title, text, status,
              json.dumps(new_event, ensure_ascii=False),
              cr={"href": result.get("href"), "uid": result.get("uid")} if result else {"href": target.caldav_href, "uid": target.caldav_uid}, err=error_msg,
-             start_time=new_event.get("start_time", ""), event_id=target.event_id)
+             start_time=new_event.get("start_time", ""), event_id=target.event_id,
+             failure_phase="write" if status == "failed" else None)
     return rec_id, warning
 
 
@@ -463,12 +465,14 @@ async def _do_delete(session: Session, ctx: ChannelContext, caldav: dict[str, An
 async def _handle_new(session: Session, ctx: ChannelContext, text: str, result: ExtractionResult, caldav: dict[str, Any], _svc: SettingsService) -> list[tuple[str, int | None]]:
     if result.error_type:
         _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
-                    err=f"{'、'.join(result.missing_fields)}" if result.missing_fields else result.error_type)
+                    err=f"{'、'.join(result.missing_fields)}" if result.missing_fields else result.error_type,
+                    failure_phase="extraction")
         session.commit()
         return [("⚠️ 系统处理失败，请稍后重试。", None)]
 
     if result.intent == Intent.no_event:
-        _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息")
+        _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(), err="未识别到日程信息",
+                    failure_phase="extraction")
         session.commit()
         return [("🤔 未识别到日程信息，请补充时间和事件内容。", None)]
 
@@ -479,13 +483,15 @@ async def _handle_new(session: Session, ctx: ChannelContext, text: str, result: 
             "missing": result.missing_fields,
         }
         _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
-                    err=f"缺少字段：{'、'.join(result.missing_fields)}")
+                    err=f"缺少字段：{'、'.join(result.missing_fields)}",
+                    failure_phase="validation")
         session.commit()
         return [(f"🤔 未识别到{'、'.join(result.missing_fields)}，请补充。", None)]
 
     if result.unsupported_reason:
         _ = _record(session, ctx, "no_event", None, text, "failed", result.model_dump_json(),
-                    err=f"不支持：{result.unsupported_reason}")
+                    err=f"不支持：{result.unsupported_reason}",
+                    failure_phase="validation")
         session.commit()
         return [(f"🔁 {result.unsupported_reason}", None)]
 
@@ -552,25 +558,30 @@ async def _write_one(session: Session, ctx: ChannelContext, text: str, event: Ca
         dt = parse_date(event.start_time)
         event.end_time = (dt + timedelta(minutes=caldav["dur"])).isoformat()
 
+    event_uid = str(uuid.uuid4())
     caldav_result = None
     error_msg = None
     if caldav["url"] and caldav["user"]:
         try:
-            caldav_result = await _write_caldav(event, caldav)
+            caldav_result = await _write_caldav(event, caldav, uid=event_uid)
         except CalDAVServiceError as exc:
             error_msg = str(exc)
 
     caldav_enabled = bool(caldav["url"] and caldav["user"])
     caldav_ok: bool | None = caldav_result is not None if caldav_enabled else None
     status = "success" if (caldav_result or not caldav_enabled) else "failed"
+    failure_phase = "write" if status == "failed" else None
 
     rec_id = _record(session, ctx, "create", event.title, text,
-            status, event.model_dump_json(), caldav_result, error_msg,
-            start_time=getattr(event, "start_time", ""))
+            status, event.model_dump_json(),
+            caldav_result or ({"uid": event_uid} if caldav_enabled else None),
+            error_msg,
+            start_time=getattr(event, "start_time", ""),
+            failure_phase=failure_phase)
     return rec_id, caldav_ok
 
 
-async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any]) -> dict[str, Any] | None:
+async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any], uid: str | None = None) -> dict[str, Any] | None:
     svc = CalDAVService()
     return await svc.create_event(
         caldav["url"], caldav["user"], caldav["pw"], caldav["cal"],
@@ -580,10 +591,11 @@ async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any])
         event_dict.get("reminders"), event_dict.get("recurrence"),
         event_dict.get("is_all_day", False),
         ssl_verify=caldav["ssl"],
+        uid=uid,
     )
 
 
-async def _write_caldav(event: CalendarEvent, caldav: dict[str, Any]) -> dict[str, Any] | None:
+async def _write_caldav(event: CalendarEvent, caldav: dict[str, Any], uid: str | None = None) -> dict[str, Any] | None:
     svc = CalDAVService()
     rec: dict[str, Any] = event.model_dump() if hasattr(event, 'model_dump') else {}
     return await svc.create_event(
@@ -594,10 +606,22 @@ async def _write_caldav(event: CalendarEvent, caldav: dict[str, Any]) -> dict[st
         rec.get("recurrence"),
         event.is_all_day,
         ssl_verify=caldav["ssl"],
+        uid=uid,
     )
 
 
-def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, text: str, status: str, js: str, cr: dict[str, Any] | None = None, err: str | None = None, start_time: str = "", event_id: str | None = None) -> int:
+def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, text: str, status: str, js: str, cr: dict[str, Any] | None = None, err: str | None = None, start_time: str = "", event_id: str | None = None, failure_phase: str | None = None, retry_count: int = 0) -> int:
+    config_version = None
+    ai_hash = None
+    caldav_hash = None
+    try:
+        svc = SettingsService(session)
+        config_version = svc.get_config_version()
+        ai_hash = svc.get_ai_config_hash()
+        caldav_hash = svc.get_caldav_config_hash()
+    except Exception:
+        pass
+
     rec = EventRecord(
         source=ctx.source, telegram_user_id=ctx.source_user_id, source_user_id=ctx.source_user_id,
         conversation_id=ctx.conversation_id, event_id=event_id or uuid.uuid4().hex, operation=op,
@@ -608,6 +632,11 @@ def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, t
         caldav_uid=cr.get("uid") if cr else None,
         caldav_href=cr.get("href") if cr else None,
         error_message=_redact_sensitive_text(err) if err else err,
+        config_version=config_version,
+        ai_config_hash=ai_hash,
+        caldav_config_hash=caldav_hash,
+        failure_phase=failure_phase,
+        retry_count=retry_count,
     )
     session.add(rec)
     session.flush()
@@ -624,6 +653,7 @@ def _record_quote_failure(session: Session, ctx: ChannelContext, reason: str) ->
         "failed",
         "",
         err=reason,
+        failure_phase="validation",
     )
     session.commit()
 

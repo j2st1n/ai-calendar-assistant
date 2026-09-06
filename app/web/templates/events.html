@@ -29,12 +29,49 @@
         <span class="event-meta"><span>{{ event.operation_label }}</span><span>{{ {'wechat':'微信', 'telegram':'Telegram', 'discord':'Discord'}.get(event.source, event.source or '未知来源') }}</span><time>{{ event.time }}</time></span>
       </span>
       <span class="status-badge"><span class="dot {% if event.status == 'success' %}dot-success{% elif event.status == 'failed' %}dot-error{% else %}dot-warning{% endif %}"></span>{{ event.result_label }}</span>
+      {% if event.failure_phase_label or event.failure_stage_label %}
+      <span class="status-badge stage-badge stage-{{ event.failure_phase or event.failure_stage }}"><span class="dot {% if (event.failure_phase or event.failure_stage) in ('write', 'caldav_write') %}dot-warning{% else %}dot-error{% endif %}"></span>{{ event.failure_phase_label or event.failure_stage_label }}</span>
+      {% endif %}
       <span class="event-detail-label">详情</span>
     </summary>
-    {% if event.reason %}<div class="event-feedback"><strong>{{ event.reason }}</strong><p>{{ event.suggestion }}</p>{% if event.action_url %}<a class="button-link secondary" href="{{ event.action_url }}">{{ event.action_label }}</a>{% endif %}</div>{% endif %}
+    {% if event.reason %}
+    <div class="event-feedback">
+      <div class="row" style="gap:8px; margin-bottom:6px;">
+        <strong>{{ event.reason }}</strong>
+        {% if event.failure_phase_label or event.failure_stage_label %}
+        <span class="status-badge stage-badge stage-{{ event.failure_phase or event.failure_stage }}">
+          <span class="dot {% if (event.failure_phase or event.failure_stage) in ('write', 'caldav_write') %}dot-warning{% else %}dot-error{% endif %}"></span>
+          {{ event.failure_phase_label or event.failure_stage_label }}
+        </span>
+        {% endif %}
+      </div>
+      <p>{{ event.suggestion }}</p>
+      <div class="row retry-action-row" style="gap:10px;">
+        {% if event.action_url %}<a class="button-link secondary" href="{{ event.action_url }}">{{ event.action_label }}</a>{% endif %}
+        {% if event.can_retry %}
+        <button type="button" class="btn-retry-write" data-record-id="{{ event.id }}">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 101.5-3.8L2 6.5"/><path d="M2 2.5v4h4"/></svg>
+          重试写入
+        </button>
+        <span class="retry-feedback form-status" role="status" style="display:none;"></span>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
     <div class="event-body">
       {% if event.start_time %}<p class="event-time">日程开始时间：{{ event.start_time }}</p>{% endif %}
-      {% if event.original_text %}<h3>原始输入</h3><pre>{{ event.original_text }}</pre>{% endif %}
+      {% if event.original_text %}
+      <div style="margin-bottom:16px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:6px;">
+          <h3 style="margin-bottom:0;">原始输入</h3>
+          <button type="button" class="secondary text-xs btn-copy-text" data-copy="{{ event.original_text }}">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M2.5 11.5v-7A1.5 1.5 0 014 3h7"/></svg>
+            复制原文
+          </button>
+        </div>
+        <pre>{{ event.original_text }}</pre>
+      </div>
+      {% endif %}
       <details class="event-technical"><summary>技术详情</summary>
         <dl><dt>用户</dt><dd>{{ event.user or '未记录' }}</dd>{% if event.conversation %}<dt>会话</dt><dd>{{ event.conversation }}</dd>{% endif %}
         {% if event.caldav_href %}<dt>CalDAV 地址</dt><dd>{{ event.caldav_href }}</dd>{% endif %}
@@ -57,4 +94,95 @@
 <span>第 {{ page }} / {{ pages }} 页</span>
 {% if next_url %}<a class="button-link secondary" href="{{ next_url }}">下一页</a>{% endif %}
 </nav>{% endif %}
+
+<script>
+window.addEventListener('DOMContentLoaded', function() {
+  // 一键复制原文
+  document.querySelectorAll('.btn-copy-text').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      var text = btn.getAttribute('data-copy');
+      var origHTML = btn.innerHTML;
+      function onSuccess() {
+        btn.innerHTML = '✓ 已复制';
+        setTimeout(function() { btn.innerHTML = origHTML; }, 2000);
+      }
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(onSuccess).catch(fallbackCopy);
+      } else {
+        fallbackCopy();
+      }
+      function fallbackCopy() {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+          document.execCommand('copy');
+          onSuccess();
+        } catch (err) {
+          alert('复制失败，请手动选取复制');
+        }
+        document.body.removeChild(ta);
+      }
+    });
+  });
+
+  // 日历写入失败项重试（带前端防重禁用及即时反馈）
+  document.querySelectorAll('.btn-retry-write').forEach(function(btn) {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      var recordId = btn.getAttribute('data-record-id');
+      var row = btn.closest('.retry-action-row');
+      var feedback = row ? row.querySelector('.retry-feedback') : null;
+
+      // 前端防重禁用
+      btn.disabled = true;
+      var origHTML = btn.innerHTML;
+      btn.innerHTML = '正在重试…';
+      if (feedback) {
+        feedback.style.display = 'inline-block';
+        feedback.className = 'retry-feedback form-status';
+        feedback.textContent = '正在连接日历执行重试…';
+      }
+
+      try {
+        var res = await fetch('/console/events/' + encodeURIComponent(recordId) + '/retry', {
+          method: 'POST',
+          headers: { 'Accept': 'application/json' }
+        });
+        var data = await res.json().catch(function() { return {}; });
+        if (res.ok && data.ok) {
+          if (feedback) {
+            feedback.className = 'retry-feedback form-status success';
+            feedback.textContent = data.message || '重试写入成功！';
+          }
+          btn.innerHTML = '✓ 写入成功';
+          setTimeout(function() { location.reload(); }, 1200);
+        } else {
+          var errMsg = data.error || data.detail || '重试写入失败，请检查日历配置。';
+          if (feedback) {
+            feedback.className = 'retry-feedback form-status error';
+            feedback.textContent = errMsg;
+          }
+          btn.disabled = false;
+          btn.innerHTML = origHTML;
+        }
+      } catch (err) {
+        if (feedback) {
+          feedback.className = 'retry-feedback form-status error';
+          feedback.textContent = '网络请求异常：' + err.message;
+        }
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+      }
+    });
+  });
+});
+</script>
 {% endblock %}

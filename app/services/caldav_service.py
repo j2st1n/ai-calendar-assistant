@@ -138,16 +138,118 @@ class CalDAVService:
         error_detail = "; ".join(errors) if errors else "所有方法均未发现日历"
         raise CalDAVServiceError(f"未发现任何日历。({error_detail})")
 
+    async def probe_write(
+        self,
+        url: str,
+        username: str,
+        password: str,
+        calendar_url: str | None = None,
+        ssl_verify: bool = True,
+    ) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                self._probe_write_sync, url, username, password, calendar_url, ssl_verify
+            )
+        except CalDAVServiceError:
+            raise
+        except Exception as exc:
+            raise CalDAVServiceError(f"日历写入探针失败：{exc}") from exc
+
+    def _probe_write_sync(
+        self,
+        caldav_url: str,
+        username: str,
+        password: str,
+        calendar_url: str | None,
+        ssl_verify: bool,
+    ) -> dict[str, Any]:
+        from icalendar import Calendar, Event
+
+        probe_uid = f"probe-{uuid.uuid4()}"
+        probe_summary = f"[PROBE-TEST] 权限验证-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc)
+
+        client = _DAVClient(
+            url=caldav_url.strip(),
+            username=username,
+            password=password,
+            ssl_verify_cert=ssl_verify,
+            timeout=120,
+        )
+        calendars = client.get_calendars()
+        target_cal = None
+        calendar_url_str = calendar_url.strip() if calendar_url else ""
+        for cal in calendars:
+            if calendar_url_str and str(cal.url) == calendar_url_str:
+                target_cal = cal
+                break
+        if target_cal is None and calendars:
+            target_cal = calendars[0]
+        if target_cal is None:
+            raise CalDAVServiceError("未找到可用日历，请先检查账号或拉取日历列表。")
+
+        cal = Calendar()
+        _ical_add(cal, "prodid", "-//AI Calendar Assistant//Probe Test//EN")
+        _ical_add(cal, "version", "2.0")
+        event = Event()
+        _ical_add(event, "summary", probe_summary)
+        _ical_add(event, "uid", probe_uid)
+        _ical_add(event, "dtstamp", now)
+        _ical_add(event, "dtstart", now)
+        _ical_add(event, "dtend", now + timedelta(minutes=30))
+        _ical_add(event, "description", "Temporary probe test event for write capability verification.")
+        cal.add_component(event)
+        ical_str = cal.to_ical().decode()
+
+        saved_obj = None
+        saved_href: str | None = None
+        try:
+            saved_obj = target_cal.save_event(ical_str)
+            saved_href = str(getattr(saved_obj, "url", "") or target_cal.url)
+            return {
+                "ok": True,
+                "uid": probe_uid,
+                "href": saved_href,
+                "summary": probe_summary,
+                "calendar_url": str(target_cal.url),
+                "message": "日历写入探针成功，临时测试日程已安全清理。",
+            }
+        except CalDAVServiceError:
+            raise
+        except Exception as exc:
+            raise CalDAVServiceError(f"日历写入测试失败：{exc}") from exc
+        finally:
+            if saved_obj is not None or saved_href is not None:
+                deleted = False
+                if saved_obj is not None:
+                    try:
+                        delete_fn = getattr(saved_obj, "delete", None)
+                        if callable(delete_fn):
+                            delete_fn()
+                            deleted = True
+                    except Exception as del_exc:
+                        logger.warning("通过 saved_obj.delete 删除探针日程失败: %s", del_exc)
+                if not deleted:
+                    try:
+                        self._delete_event_sync(
+                            caldav_url, username, password, uid=probe_uid, href=saved_href, ssl_verify=ssl_verify
+                        )
+                    except Exception as fallback_exc:
+                        logger.warning("通过 _delete_event_sync 回退删除探针日程失败: %s", fallback_exc)
+
+    probe_write_permission = probe_write
+    _probe_write_permission_sync = _probe_write_sync
+
     async def create_event(self, caldav_url: str, username: str, password: str, calendar_url: str | None,
                            title: str, start_time: str, end_time: str | None, timezone_str: str | None,
                            location: str | None, description: str | None,
                            reminders: Sequence[ReminderData] | None, recurrence: RecurrenceData,
-                           is_all_day: bool, ssl_verify: bool = True) -> CalDAVResult:
+                           is_all_day: bool, ssl_verify: bool = True, uid: str | None = None) -> CalDAVResult:
         try:
             return await asyncio.to_thread(
                 self._create_event_sync, caldav_url, username, password, calendar_url,
                 title, start_time, end_time, timezone_str, location, description,
-                reminders, recurrence, is_all_day, ssl_verify)
+                reminders, recurrence, is_all_day, ssl_verify, uid)
         except CalDAVServiceError:
             raise
         except Exception as exc:
@@ -157,7 +259,7 @@ class CalDAVService:
                            title: str, start_time: str, end_time: str | None, timezone_str: str | None,
                            location: str | None, description: str | None,
                            reminders: Sequence[ReminderData] | None, recurrence: RecurrenceData,
-                           is_all_day: bool, ssl_verify: bool) -> CalDAVResult:
+                           is_all_day: bool, ssl_verify: bool, uid: str | None = None) -> CalDAVResult:
         from dateutil.parser import parse as parse_date
         from icalendar import Alarm, Calendar, Event
 
@@ -175,7 +277,7 @@ class CalDAVService:
         if target_cal is None:
             raise CalDAVServiceError("找不到目标日历。请先在 Console 中拉取并保存日历。")
 
-        uid = str(uuid.uuid4())
+        uid = uid or str(uuid.uuid4())
         cal = Calendar()
         _ical_add(cal, "prodid", "-//AI Calendar Assistant//EN")
         _ical_add(cal, "version", "2.0")

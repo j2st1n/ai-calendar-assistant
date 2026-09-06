@@ -1,0 +1,582 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="wizard-container">
+  <div class="wizard-header">
+    <h2 class="section-title">初次配置向导</h2>
+    <p class="section-sub">跟随向导完成核心配置与首次日程验证。每步均可独立测试，随时可跳过。</p>
+  </div>
+
+  <div class="wizard-stepper" role="tablist" aria-label="配置步骤导航">
+    <div class="wizard-step-item active" data-step="1" role="tab" tabindex="0" aria-selected="true" aria-controls="wizard-pane-1">
+      <span class="wizard-step-num">1</span>
+      <span>AI 模型设置</span>
+    </div>
+    <span class="wizard-step-arrow">→</span>
+    <div class="wizard-step-item" data-step="2" role="tab" tabindex="0" aria-selected="false" aria-controls="wizard-pane-2">
+      <span class="wizard-step-num">2</span>
+      <span>日历服务连接</span>
+    </div>
+    <span class="wizard-step-arrow">→</span>
+    <div class="wizard-step-item" data-step="3" role="tab" tabindex="0" aria-selected="false" aria-controls="wizard-pane-3">
+      <span class="wizard-step-num">3</span>
+      <span>选择聊天渠道</span>
+    </div>
+    <span class="wizard-step-arrow">→</span>
+    <div class="wizard-step-item" data-step="4" role="tab" tabindex="0" aria-selected="false" aria-controls="wizard-pane-4">
+      <span class="wizard-step-num">4</span>
+      <span>首条测试日程</span>
+    </div>
+  </div>
+
+  <!-- 步骤 1: AI 设置 -->
+  <section class="wizard-pane active" id="wizard-pane-1" role="tabpanel" aria-labelledby="step-1">
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between;">
+        <h3 style="margin-bottom:0;">第一步：配置主 AI 模型</h3>
+        <span class="chip" id="ai-status-chip">{% if ai_ok %}已配置{% else %}待配置{% endif %}</span>
+      </div>
+      <p class="muted" style="margin-bottom:8px;">日程助手使用 AI 识别自然语言消息中的时间、地点与事项。兼容 OpenAI 格式 API（如 DeepSeek、OpenAI、OneAPI、Gemini 等）。</p>
+
+      <form id="wizard-ai-form" class="stack" method="post" action="/console/ai">
+        <label>
+          <span>服务商类型</span>
+          <select name="provider_type" id="wizard-ai-provider-type">
+            <option value="openai_compatible" {% if ai.ai_provider_type == 'openai_compatible' %}selected{% endif %}>OpenAI 兼容接口 (openai_compatible)</option>
+          </select>
+        </label>
+        <label>
+          <span>供应商名称（仅用于显示）</span>
+          <input name="provider_name" value="{{ ai.ai_provider_name or 'OpenAI Compatible' }}" placeholder="如 DeepSeek / OpenAI">
+        </label>
+        <label>
+          <span>API Base URL</span>
+          <input type="url" name="base_url" value="{{ ai.ai_base_url }}" placeholder="https://api.openai.com/v1" required>
+        </label>
+        <label>
+          <span>API Key</span>
+          <input type="password" name="api_key" autocomplete="off" placeholder="{{ '已保存，留空保持原值' if ai.ai_api_key_masked else 'sk-...' }}">
+        </label>
+        <label>
+          <span>模型名称</span>
+          <input name="model" value="{{ ai.ai_model }}" placeholder="如 deepseek-chat / gpt-4o-mini / gemini-2.5-flash" required>
+        </label>
+
+        <p class="form-status" id="wizard-ai-status" role="status" aria-live="polite" style="display:none;"></p>
+
+        <div class="row" style="margin-top:8px;">
+          <button type="button" class="secondary" id="wizard-ai-test-btn">测试连接</button>
+          <button type="button" class="secondary" id="wizard-ai-schema-btn">验证结构输出</button>
+          <button type="button" id="wizard-ai-save-btn">保存并继续</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="wizard-footer-actions">
+      <span></span>
+      <div class="row">
+        <button type="button" class="secondary wizard-skip-btn" data-target-step="2">跳过此步 →</button>
+        <button type="button" class="wizard-next-btn" data-target-step="2">下一步：配置日历 →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 步骤 2: 日历设置 -->
+  <section class="wizard-pane" id="wizard-pane-2" role="tabpanel" aria-labelledby="step-2">
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between;">
+        <h3 style="margin-bottom:0;">第二步：连接 CalDAV 日历服务</h3>
+        <span class="chip" id="caldav-status-chip">{% if caldav_ok %}已配置{% else %}待配置{% endif %}</span>
+      </div>
+      <p class="muted" style="margin-bottom:8px;">日程将写入至你的 CalDAV 日历，支持 Apple iCloud、Nextcloud、网易邮箱、QQ 邮箱、Fastmail 或自建服务。</p>
+
+      <form id="wizard-caldav-form" class="stack" method="post" action="/console/caldav">
+        <label>
+          <span>快速选择服务商预设</span>
+          <select id="wizard-caldav-preset">
+            <option value="custom">自定义 (Custom CalDAV)</option>
+            <option value="icloud">Apple iCloud (推荐 iPhone / Mac 用户)</option>
+            <option value="nextcloud">Nextcloud / ownCloud</option>
+            <option value="163">网易 163 / 126 邮箱</option>
+            <option value="qq">QQ 邮箱 / 腾讯企业邮</option>
+            <option value="fastmail">Fastmail</option>
+          </select>
+        </label>
+        <label>
+          <span>日历服务器地址 (CalDAV URL)</span>
+          <input type="url" name="caldav_url" id="wizard-caldav-url" value="{{ caldav.caldav_url }}" placeholder="https://caldav.icloud.com" required>
+        </label>
+        <label>
+          <span>用户名 / 邮箱</span>
+          <input name="caldav_username" id="wizard-caldav-user" value="{{ caldav.caldav_username }}" placeholder="日历登录用户名" required>
+        </label>
+        <label>
+          <span>密码 / 应用专用密码</span>
+          <input type="password" name="caldav_password" id="wizard-caldav-pw" autocomplete="off" placeholder="{{ '已保存，留空保持原值' if caldav.caldav_password_masked else '输入应用密码' }}">
+        </label>
+        <p class="muted text-xs" id="wizard-caldav-hint">更换用户名或服务器后需填写密码。iCloud 请使用 Apple ID 应用专用密码。</p>
+        <label class="caldav-checkbox">
+          <input type="checkbox" name="caldav_ssl_verify" value="true" {% if caldav.caldav_ssl_verify != 'false' %}checked{% endif %}>
+          <span>验证 SSL 证书</span>
+        </label>
+
+        <div class="row">
+          <button type="button" class="secondary" id="wizard-caldav-test-btn">测试连接</button>
+          <button type="button" class="secondary" id="wizard-caldav-write-btn">测试写入权限</button>
+          <button type="button" class="secondary" id="wizard-caldav-fetch-btn">拉取日历列表</button>
+        </div>
+
+        <label style="margin-top:8px;">
+          <span>目标写入日历</span>
+          <select name="caldav_calendar_url" id="wizard-caldav-picker">
+            {% if caldav.caldav_calendar_url %}
+            <option value="{{ caldav.caldav_calendar_url }}" selected>{{ caldav.caldav_calendar_name or caldav.caldav_calendar_url }}</option>
+            {% else %}
+            <option value="">请先点击上方「拉取日历列表」</option>
+            {% endif %}
+          </select>
+          <input type="hidden" name="caldav_calendar_name" id="wizard-caldav-name" value="{{ caldav.caldav_calendar_name or '' }}">
+        </label>
+
+        <div class="caldav-defaults">
+          <label>
+            <span>默认时区</span>
+            <input name="caldav_timezone" value="{{ caldav.caldav_timezone or 'Asia/Shanghai' }}" list="wizard-iana-tz" required>
+            <datalist id="wizard-iana-tz">
+              {% for tz in caldav.timezones %}
+              <option value="{{ tz }}">{{ tz }}</option>
+              {% endfor %}
+            </datalist>
+          </label>
+          <label>
+            <span>提前提醒（分钟）</span>
+            <input name="caldav_reminder_minutes" type="number" value="{{ caldav.caldav_reminder_minutes or '30' }}" min="0">
+          </label>
+          <label>
+            <span>默认时长（分钟）</span>
+            <input name="caldav_default_duration" type="number" value="{{ caldav.caldav_default_duration or '60' }}" min="5">
+          </label>
+        </div>
+
+        <p class="form-status" id="wizard-caldav-status" role="status" aria-live="polite" style="display:none;"></p>
+
+        <div class="row" style="margin-top:8px;">
+          <button type="button" id="wizard-caldav-save-btn">保存日历设置</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="wizard-footer-actions">
+      <button type="button" class="secondary wizard-prev-btn" data-target-step="1">← 上一步</button>
+      <div class="row">
+        <button type="button" class="secondary wizard-skip-btn" data-target-step="3">跳过此步 →</button>
+        <button type="button" class="wizard-next-btn" data-target-step="3">下一步：选择渠道 →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 步骤 3: 渠道选择 -->
+  <section class="wizard-pane" id="wizard-pane-3" role="tabpanel" aria-labelledby="step-3">
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between;">
+        <h3 style="margin-bottom:0;">第三步：选择并启用聊天渠道</h3>
+        <span class="chip">任选其一即可</span>
+      </div>
+      <p class="muted">日程助手支持微信个人号、Telegram 机器人和 Discord 机器人。只需配置其中任意一个，即可随时向它发送日程消息。</p>
+
+      <div class="wizard-channels-grid">
+        <!-- 微信卡片 -->
+        <div class="wizard-channel-card">
+          <div>
+            <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+              <strong>微信 (WeChat)</strong>
+              <span class="status-badge"><span class="dot {% if wechat_running %}dot-success{% else %}dot-warning{% endif %}"></span>{{ '运行中' if wechat_running else '未登录' }}</span>
+            </div>
+            <p class="muted text-xs">无需申请任何 API Token，通过 iPad 协议安全扫码直接登录个人微信，私聊或在群内 @ 机器人均可识别日程。</p>
+          </div>
+          <a href="/console/wechat" target="_blank" class="button-link secondary text-xs">前往微信扫码登录 ↗</a>
+        </div>
+
+        <!-- Telegram 卡片 -->
+        <div class="wizard-channel-card">
+          <div>
+            <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+              <strong>Telegram</strong>
+              <span class="status-badge"><span class="dot {% if telegram_running %}dot-success{% else %}dot-warning{% endif %}"></span>{{ '运行中' if telegram_running else '未启动' }}</span>
+            </div>
+            <p class="muted text-xs">通过 @BotFather 快速创建机器人获取 Token，支持私聊指令与直接文字、语音、图片识别。</p>
+          </div>
+          <a href="/console/telegram" target="_blank" class="button-link secondary text-xs">前往 Telegram 设置 ↗</a>
+        </div>
+
+        <!-- Discord 卡片 -->
+        <div class="wizard-channel-card">
+          <div>
+            <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+              <strong>Discord</strong>
+              <span class="status-badge"><span class="dot {% if discord_running %}dot-success{% else %}dot-warning{% endif %}"></span>{{ '运行中' if discord_running else '未启动' }}</span>
+            </div>
+            <p class="muted text-xs">通过 Discord Developer Portal 创建 Bot 并邀请入服务器，私聊或频道内发送日程。</p>
+          </div>
+          <a href="/console/discord" target="_blank" class="button-link secondary text-xs">前往 Discord 设置 ↗</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="wizard-footer-actions">
+      <button type="button" class="secondary wizard-prev-btn" data-target-step="2">← 上一步</button>
+      <div class="row">
+        <button type="button" class="secondary wizard-skip-btn" data-target-step="4">跳过此步 →</button>
+        <button type="button" class="wizard-next-btn" data-target-step="4">下一步：发送测试日程 →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 步骤 4: 发送首条测试日程 -->
+  <section class="wizard-pane" id="wizard-pane-4" role="tabpanel" aria-labelledby="step-4">
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between;">
+        <h3 style="margin-bottom:0;">第四步：发送首条测试日程</h3>
+        <span class="chip">全链路验证</span>
+      </div>
+      <p class="muted">验证整个处理链路：AI 理解自然语言 → 抽取时间与标题 → 自动写入日历。无需切换至聊天客户端，直接在此输入测试文字即可运行。</p>
+
+      <div class="stack">
+        <label>
+          <span>测试消息内容</span>
+          <textarea id="wizard-test-input" rows="3" placeholder="例如：明天下午3点项目进度会议">明天下午3点项目进度会议</textarea>
+        </label>
+        <div class="row">
+          <button type="button" id="wizard-send-test-btn">提取并写入首条测试日程</button>
+        </div>
+
+        <div id="wizard-test-result-box" class="card" style="display:none; margin-top:12px; background:var(--code-bg); border-color:var(--border-base);">
+          <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+            <strong id="wizard-test-result-title">处理反馈</strong>
+            <span id="wizard-test-result-badge" class="status-badge"><span class="dot dot-success"></span>成功</span>
+          </div>
+          <pre id="wizard-test-result-text" style="white-space:pre-wrap; margin-bottom:12px; font-size:13px;"></pre>
+          <div class="row" style="gap:10px;">
+            <a href="/console/events" class="button-link secondary text-xs">前往事件记录查看完整详情 ↗</a>
+            <a href="/console" class="button-link text-xs">完成向导，返回概览 →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="wizard-footer-actions">
+      <button type="button" class="secondary wizard-prev-btn" data-target-step="3">← 上一步</button>
+      <a href="/console" class="button-link">完成向导并返回概览 ✓</a>
+    </div>
+  </section>
+</div>
+
+<script>
+window.addEventListener('DOMContentLoaded', function() {
+  // Stepper pane switching
+  const steps = document.querySelectorAll('.wizard-step-item');
+  const panes = document.querySelectorAll('.wizard-pane');
+
+  function goToStep(stepNumber) {
+    steps.forEach(function(s) {
+      const sNum = parseInt(s.dataset.step, 10);
+      s.classList.toggle('active', sNum === stepNumber);
+      s.classList.toggle('completed', sNum < stepNumber);
+      s.setAttribute('aria-selected', sNum === stepNumber ? 'true' : 'false');
+    });
+    panes.forEach(function(p) {
+      const pNum = parseInt(p.id.replace('wizard-pane-', ''), 10);
+      p.classList.toggle('active', pNum === stepNumber);
+    });
+    window.location.hash = 'step-' + stepNumber;
+  }
+
+  steps.forEach(function(s) {
+    s.addEventListener('click', function() {
+      goToStep(parseInt(this.dataset.step, 10));
+    });
+  });
+
+  document.querySelectorAll('.wizard-next-btn, .wizard-skip-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      goToStep(parseInt(this.dataset.targetStep, 10));
+    });
+  });
+
+  document.querySelectorAll('.wizard-prev-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      goToStep(parseInt(this.dataset.targetStep, 10));
+    });
+  });
+
+  // Restore hash on load
+  if (window.location.hash) {
+    const match = window.location.hash.match(/step-(\d+)/);
+    if (match) {
+      const stepIdx = parseInt(match[1], 10);
+      if (stepIdx >= 1 && stepIdx <= 4) goToStep(stepIdx);
+    }
+  }
+
+  // AI Step Actions
+  const aiForm = document.getElementById('wizard-ai-form');
+  const aiStatus = document.getElementById('wizard-ai-status');
+  const aiStatusChip = document.getElementById('ai-status-chip');
+
+  function setAiStatus(msg, error, success) {
+    aiStatus.style.display = 'block';
+    aiStatus.textContent = msg;
+    aiStatus.className = 'form-status' + (error ? ' error' : success ? ' success' : '');
+  }
+
+  async function postAi(endpoint, button, workingText) {
+    if (!aiForm.reportValidity()) return;
+    const orig = button.textContent;
+    button.disabled = true;
+    button.textContent = workingText;
+    setAiStatus(workingText, false, false);
+    try {
+      const fd = new FormData(aiForm);
+      const res = await fetch(endpoint, { method: 'POST', body: fd, headers: {'Accept': 'application/json'} });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        setAiStatus(data.message || '操作成功。', false, true);
+        if (aiStatusChip) {
+          aiStatusChip.textContent = '已配置';
+          aiStatusChip.classList.add('active');
+        }
+      } else {
+        setAiStatus(data.error || data.detail || '操作失败。', true, false);
+      }
+    } catch (err) {
+      setAiStatus('请求失败：' + err.message, true, false);
+    } finally {
+      button.disabled = false;
+      button.textContent = orig;
+    }
+  }
+
+  document.getElementById('wizard-ai-test-btn').addEventListener('click', function() {
+    postAi('/console/ai/test', this, '正在测试连接…');
+  });
+
+  document.getElementById('wizard-ai-schema-btn').addEventListener('click', function() {
+    postAi('/console/ai/schema-test', this, '正在验证结构输出…');
+  });
+
+  document.getElementById('wizard-ai-save-btn').addEventListener('click', async function() {
+    if (!aiForm.reportValidity()) return;
+    const btn = this;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '正在保存…';
+    setAiStatus('正在保存 AI 设置…', false, false);
+    try {
+      const fd = new FormData(aiForm);
+      const res = await fetch('/console/ai', { method: 'POST', body: fd });
+      if (res.ok) {
+        setAiStatus('AI 设置已成功保存！', false, true);
+        if (aiStatusChip) {
+          aiStatusChip.textContent = '已配置';
+          aiStatusChip.classList.add('active');
+        }
+        setTimeout(() => goToStep(2), 600);
+      } else {
+        setAiStatus('保存失败，请检查填写内容。', true, false);
+      }
+    } catch (err) {
+      setAiStatus('保存请求异常：' + err.message, true, false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+
+  // CalDAV Presets and Step Actions
+  const caldavPresets = {
+    icloud: {
+      url: 'https://caldav.icloud.com',
+      hint: 'iCloud 必须在 appleid.apple.com 生成并使用 App 专用密码。',
+      ssl: true
+    },
+    nextcloud: {
+      url: '',
+      hint: 'Nextcloud 服务地址通常以 /remote.php/dav 结尾，推荐在安全设置中生成 App Token。',
+      ssl: true
+    },
+    '163': {
+      url: 'https://caldav.m163.com/dav/',
+      hint: '网易邮箱需在网页设置中开启 CalDAV 并获取客户端授权密码。',
+      ssl: true
+    },
+    qq: {
+      url: 'https://dav.qq.com',
+      hint: 'QQ 邮箱需在网页设置中开启 CalDAV 并生成授权码。',
+      ssl: true
+    },
+    fastmail: {
+      url: 'https://caldav.fastmail.com/dav/',
+      hint: 'Fastmail 需在设置中生成 App Password。',
+      ssl: true
+    },
+    custom: {
+      url: '',
+      hint: '更换用户名或服务器后需填写密码。',
+      ssl: true
+    }
+  };
+
+  const presetSel = document.getElementById('wizard-caldav-preset');
+  const caldavUrlInput = document.getElementById('wizard-caldav-url');
+  const caldavHint = document.getElementById('wizard-caldav-hint');
+  const caldavForm = document.getElementById('wizard-caldav-form');
+  const caldavStatus = document.getElementById('wizard-caldav-status');
+  const caldavPicker = document.getElementById('wizard-caldav-picker');
+  const caldavNameInput = document.getElementById('wizard-caldav-name');
+  const caldavStatusChip = document.getElementById('caldav-status-chip');
+
+  presetSel.addEventListener('change', function() {
+    const p = caldavPresets[this.value];
+    if (!p) return;
+    if (p.url) caldavUrlInput.value = p.url;
+    if (p.hint) caldavHint.textContent = p.hint;
+  });
+
+  function setCaldavStatus(msg, error, success) {
+    caldavStatus.style.display = 'block';
+    caldavStatus.textContent = msg;
+    caldavStatus.className = 'form-status' + (error ? ' error' : success ? ' success' : '');
+  }
+
+  async function postCaldavAction(action, button, workingText) {
+    if (!caldavUrlInput.reportValidity() || !document.getElementById('wizard-caldav-user').reportValidity()) return;
+    const orig = button.textContent;
+    button.disabled = true;
+    button.textContent = workingText;
+    setCaldavStatus(workingText, false, false);
+    try {
+      const fd = new FormData(caldavForm);
+      const res = await fetch('/console/caldav/' + action, {
+        method: 'POST', body: fd, headers: {'Accept': 'application/json'}
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        setCaldavStatus(data.message || '操作成功。', false, true);
+        if (action === 'calendars' && Array.isArray(data.calendars)) {
+          caldavPicker.innerHTML = '';
+          data.calendars.forEach(function(c) {
+            const opt = document.createElement('option');
+            opt.value = c.url;
+            opt.textContent = c.name + ' (' + c.url + ')';
+            caldavPicker.appendChild(opt);
+          });
+          if (data.calendars.length > 0) {
+            caldavNameInput.value = data.calendars[0].name;
+            caldavPicker.value = data.calendars[0].url;
+          }
+        }
+      } else {
+        setCaldavStatus(data.error || '操作失败。', true, false);
+      }
+    } catch (err) {
+      setCaldavStatus('请求异常：' + err.message, true, false);
+    } finally {
+      button.disabled = false;
+      button.textContent = orig;
+    }
+  }
+
+  caldavPicker.addEventListener('change', function() {
+    const sel = caldavPicker.options[caldavPicker.selectedIndex];
+    if (sel) {
+      caldavNameInput.value = sel.textContent.split(' (')[0];
+    }
+  });
+
+  document.getElementById('wizard-caldav-test-btn').addEventListener('click', function() {
+    postCaldavAction('test', this, '正在测试日历连接…');
+  });
+
+  document.getElementById('wizard-caldav-write-btn').addEventListener('click', function() {
+    postCaldavAction('write-test', this, '正在验证写入权限…');
+  });
+
+  document.getElementById('wizard-caldav-fetch-btn').addEventListener('click', function() {
+    postCaldavAction('calendars', this, '正在拉取日历…');
+  });
+
+  document.getElementById('wizard-caldav-save-btn').addEventListener('click', async function() {
+    if (!caldavForm.reportValidity()) return;
+    const btn = this;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '正在保存…';
+    setCaldavStatus('正在保存日历配置…', false, false);
+    try {
+      const fd = new FormData(caldavForm);
+      const res = await fetch('/console/caldav', { method: 'POST', body: fd });
+      if (res.ok) {
+        setCaldavStatus('日历配置已成功保存！', false, true);
+        if (caldavStatusChip) {
+          caldavStatusChip.textContent = '已配置';
+          caldavStatusChip.classList.add('active');
+        }
+        setTimeout(() => goToStep(3), 600);
+      } else {
+        setCaldavStatus('保存失败，请核对输入。', true, false);
+      }
+    } catch (err) {
+      setCaldavStatus('保存请求异常：' + err.message, true, false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+
+  // Step 4: Test Event Creation
+  const sendTestBtn = document.getElementById('wizard-send-test-btn');
+  const testInput = document.getElementById('wizard-test-input');
+  const resultBox = document.getElementById('wizard-test-result-box');
+  const resultText = document.getElementById('wizard-test-result-text');
+  const resultBadge = document.getElementById('wizard-test-result-badge');
+
+  sendTestBtn.addEventListener('click', async function() {
+    const text = testInput.value.trim();
+    if (!text) {
+      alert('请输入测试日程文本');
+      return;
+    }
+    const orig = sendTestBtn.textContent;
+    sendTestBtn.disabled = true;
+    sendTestBtn.textContent = '正在提取与写入…';
+    resultBox.style.display = 'none';
+
+    try {
+      const fd = new FormData();
+      fd.append('text', text);
+      const res = await fetch('/console/wizard/test-event', {
+        method: 'POST', body: fd, headers: {'Accept': 'application/json'}
+      });
+      const data = await res.json().catch(() => ({}));
+      resultBox.style.display = 'block';
+      if (res.ok && data.ok) {
+        resultBadge.className = 'status-badge';
+        resultBadge.innerHTML = '<span class="dot dot-success"></span>成功写入';
+        resultText.textContent = data.message || '日程已成功提取并写入至日历！';
+      } else {
+        resultBadge.className = 'status-badge';
+        resultBadge.innerHTML = '<span class="dot dot-error"></span>处理失败';
+        resultText.textContent = data.error || '日程处理未成功完成，请检查前面的 AI 与日历连接配置。';
+      }
+    } catch (err) {
+      resultBox.style.display = 'block';
+      resultBadge.className = 'status-badge';
+      resultBadge.innerHTML = '<span class="dot dot-error"></span>网络异常';
+      resultText.textContent = '请求异常：' + err.message;
+    } finally {
+      sendTestBtn.disabled = false;
+      sendTestBtn.textContent = orig;
+    }
+  });
+});
+</script>
+{% endblock %}

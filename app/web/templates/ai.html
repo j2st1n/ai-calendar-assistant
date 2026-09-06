@@ -283,11 +283,11 @@ async function runProbe(button, prefix, operation) {
   const baseUrl = form.elements[fields.baseUrl];
   const model = form.elements[fields.model];
   if (!baseUrl.reportValidity()) return;
-  if (operation === 'test' && !model.reportValidity()) return;
+  if ((operation === 'test' || operation === 'schema-test') && !model.reportValidity()) return;
 
   const originalText = button.textContent;
   button.disabled = true;
-  button.textContent = operation === 'models' ? '正在拉取…' : '正在测试…';
+  button.textContent = operation === 'models' ? '正在拉取…' : operation === 'schema-test' ? '正在验证结构…' : '正在测试…';
   setFormStatus(form, button.textContent, false);
   try {
     const response = await fetch(button.dataset.endpoint, {
@@ -394,6 +394,7 @@ window.addEventListener('DOMContentLoaded', function() {
     <p class="form-status" data-form-status role="status" aria-live="polite" hidden></p>
     <div class="row" style="margin-top:4px;">
       <button type="button" class="secondary" data-endpoint="/console/ai/test" onclick="runProbe(this, 'main', 'test')">测试连接</button>
+      <button type="button" class="secondary" data-endpoint="/console/ai/schema-test" onclick="runProbe(this, 'main', 'schema-test')">验证结构输出</button>
       <button type="submit">保存主模型</button>
     </div>
   </form>

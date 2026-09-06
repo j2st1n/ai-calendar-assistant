@@ -7,8 +7,30 @@
 {% block content_login %}
 <section class="card narrow">
   <h1 style="font-size: 20px; font-weight: 590; letter-spacing: -0.24px; color: #f7f8f8;">登录后台</h1>
-  <p class="muted" style="margin-bottom: 20px;">首次启动生成的管理员密码可在 Docker 日志中查看。</p>
+  <details style="margin-bottom: 20px; font-size: 13px;">
+    <summary style="cursor: pointer; color: #8a8f98; user-select: none;">首次部署帮助</summary>
+    <p class="muted" style="margin-top: 8px; margin-bottom: 0; font-size: 12px; line-height: 1.5;">首次启动生成的管理员密码可在 Docker 日志中查看。</p>
+  </details>
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
+
+  <div class="passkey-login-section" style="margin-bottom: 20px;">
+    <button type="button" id="passkey-login" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 550; padding: 10px 16px;">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="7.5" cy="15.5" r="5.5"/>
+        <path d="m21 2-9.6 9.6"/>
+        <path d="m15.5 7.5 3 3"/>
+      </svg>
+      使用通行密钥一键登录
+    </button>
+    <p id="passkey-error" class="alert error" style="display: none; margin-top: 12px; margin-bottom: 0;"></p>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+    <span style="flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08);"></span>
+    <span style="font-size: 12px; color: #62666d;">或使用账号密码</span>
+    <span style="flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08);"></span>
+  </div>
+
   <form method="post" action="/console/login" class="stack">
     <label>
       <span>用户名</span>
@@ -21,10 +43,8 @@
     {% if turnstile_site_key %}
     <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-action="login" data-theme="dark"></div>
     {% endif %}
-    <button type="submit" style="width:100%;">登录</button>
+    <button type="submit" class="secondary" style="width: 100%;">密码登录</button>
   </form>
-  <button type="button" id="passkey-login" style="width:100%;margin-top:10px;">使用通行密钥登录</button>
-  <p id="passkey-error" class="muted"></p>
 </section>
 <script>
 function b64buf(value) {
@@ -42,9 +62,41 @@ async function apiPayload(response, fallback) {
   try { return text ? JSON.parse(text) : {}; }
   catch (_error) { throw new Error(response.ok ? '服务器返回格式不正确' : fallback); }
 }
+function getPasskeyErrorMessage(exc) {
+  if (!exc) return '通行密钥登录失败，请重试。';
+  if (exc.name === 'NotAllowedError') {
+    return '已取消或拒绝通行密钥验证，如需登录请重试或使用密码登录。';
+  }
+  if (exc.name === 'TimeoutError') {
+    return '通行密钥验证超时，请重试。';
+  }
+  if (exc.name === 'NotSupportedError') {
+    return '当前浏览器或设备不支持通行密钥功能，请使用密码登录。';
+  }
+  if (exc.name === 'SecurityError') {
+    return '安全环境限制：通行密钥仅在 HTTPS 或本地环境下可用。';
+  }
+  if (exc.name === 'AbortError') {
+    return '通行密钥操作已中止。';
+  }
+  if (exc.name === 'InvalidStateError') {
+    return '通行密钥状态异常，请刷新页面重试。';
+  }
+  return exc.message || '通行密钥登录失败，请重试。';
+}
 document.getElementById('passkey-login').addEventListener('click', async function () {
+  const btn = document.getElementById('passkey-login');
   const error = document.getElementById('passkey-error');
   error.textContent = '';
+  error.style.display = 'none';
+
+  if (!window.PublicKeyCredential || !navigator.credentials || !navigator.credentials.get) {
+    error.textContent = '当前浏览器或设备不支持通行密钥功能，请使用密码登录。';
+    error.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
   try {
     const optionsResponse = await fetch('/console/login/passkey/options', {method: 'POST'});
     const options = await apiPayload(optionsResponse, '服务器暂时无法开始通行密钥登录');
@@ -69,7 +121,10 @@ document.getElementById('passkey-login').addEventListener('click', async functio
     if (!verifyResponse.ok) throw new Error(verified.detail || '通行密钥登录失败');
     location.href = '/console';
   } catch (exc) {
-    error.textContent = exc.message || '通行密钥登录已取消。';
+    error.textContent = getPasskeyErrorMessage(exc);
+    error.style.display = 'block';
+  } finally {
+    btn.disabled = false;
   }
 });
 </script>

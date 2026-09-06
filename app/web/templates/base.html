@@ -6,9 +6,32 @@
   <title>AI Calendar Assistant</title>
   <link rel="icon" href="/favicon.ico" sizes="any" type="image/vnd.microsoft.icon">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script>
+  (function() {
+    var theme = localStorage.getItem('theme') || 'auto';
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+  </script>
   <link rel="stylesheet" href="/static/styles.css?v=7">
   <script>
   window.addEventListener('DOMContentLoaded', function(){
+    function updateTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('theme', theme);
+      document.querySelectorAll('[data-theme-btn]').forEach(function(btn) {
+        var active = btn.getAttribute('data-theme-btn') === theme;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+    var currentTheme = localStorage.getItem('theme') || 'auto';
+    updateTheme(currentTheme);
+    document.querySelectorAll('[data-theme-btn]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        updateTheme(this.getAttribute('data-theme-btn'));
+      });
+    });
+
     document.querySelectorAll('.cs-wrap').forEach(function(w){
       var t = w.querySelector('.cs-trigger'), d = w.querySelector('.cs-drop'), h = w.querySelector('input[type="hidden"]');
       if (!t || !d || !h) return;
@@ -71,11 +94,18 @@
       <strong>AI Calendar Assistant</strong>
       <span>自部署日程助手</span>
     </div>
-    {% if request.session.get('admin_authenticated') %}
-      <form method="post" action="/console/logout" style="margin:0;">
-        <button type="submit">退出</button>
-      </form>
-    {% endif %}
+    <div class="topbar-actions">
+      <div class="theme-switcher" role="group" aria-label="界面外观主题">
+        <button type="button" class="theme-btn" data-theme-btn="auto" title="跟随系统">跟随系统</button>
+        <button type="button" class="theme-btn" data-theme-btn="light" title="浅色模式">浅色</button>
+        <button type="button" class="theme-btn" data-theme-btn="dark" title="深色模式">深色</button>
+      </div>
+      {% if request.session.get('admin_authenticated') %}
+        <form method="post" action="/console/logout" style="margin:0;">
+          <button type="submit">退出</button>
+        </form>
+      {% endif %}
+    </div>
   </header>
 
   {% if request.session.get('admin_authenticated') %}
@@ -87,6 +117,20 @@
       </div>
       <!-- 系统 -->
       <div class="sidebar-section-label">系统</div>
+      <a href="/console" class="sidebar-item {% if request.url.path == '/console' %}active{% endif %}">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 8h6M8 5v6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        概览
+      </a>
+      <a href="/console/wizard" class="sidebar-item {% if request.url.path == '/console/wizard' %}active{% endif %}">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M8 2l1.8 3.6 4 .6-2.9 2.8.7 4-3.6-1.9-3.6 1.9.7-4-2.9-2.8 4-.6L8 2z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        配置向导
+      </a>
+      <a href="/console/system" class="sidebar-item {% if request.url.path == '/console/system' %}active{% endif %}">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        系统设置
+      </a>
+      <!-- 配置 -->
+      <div class="sidebar-section-label">配置</div>
       <a href="/console" class="sidebar-item {% if request.url.path == '/console' %}active{% endif %}">
         <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 8h6M8 5v6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         概览

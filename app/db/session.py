@@ -32,12 +32,45 @@ def _migrate_event_records() -> None:
         if "event_id" not in columns:
             conn.execute(text("ALTER TABLE event_records ADD COLUMN event_id VARCHAR(64)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_event_records_event_id ON event_records (event_id)"))
-        conn.execute(text("UPDATE event_records SET source_user_id = telegram_user_id WHERE source_user_id IS NULL"))
-        conn.execute(text(
-            "UPDATE event_records SET bot_message_id = NULL "
-            "WHERE source = 'wechat' AND bot_message_id IS NOT NULL "
-            "AND (bot_message_id = '' OR bot_message_id GLOB '*[^0-9]*')"
-        ))
+        if "config_version" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN config_version INTEGER"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_event_records_config_version ON event_records (config_version)"))
+        if "ai_config_hash" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN ai_config_hash VARCHAR(64)"))
+        if "caldav_config_hash" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN caldav_config_hash VARCHAR(64)"))
+        if "failure_phase" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN failure_phase VARCHAR(50)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_event_records_failure_phase ON event_records (failure_phase)"))
+            conn.execute(text(
+                "UPDATE event_records SET failure_phase = 'write' "
+                "WHERE status = 'failed' AND failure_phase IS NULL AND operation IN ('create', 'update', 'delete')"
+            ))
+            if "error_message" in columns:
+                conn.execute(text(
+                    "UPDATE event_records SET failure_phase = 'validation' "
+                    "WHERE status = 'failed' AND failure_phase IS NULL AND (operation = 'quote_not_found' OR error_message LIKE '缺少字段%' OR error_message LIKE '不支持%')"
+                ))
+            else:
+                conn.execute(text(
+                    "UPDATE event_records SET failure_phase = 'validation' "
+                    "WHERE status = 'failed' AND failure_phase IS NULL AND operation = 'quote_not_found'"
+                ))
+            conn.execute(text(
+                "UPDATE event_records SET failure_phase = 'extraction' "
+                "WHERE status = 'failed' AND failure_phase IS NULL"
+            ))
+        if "retry_count" not in columns:
+            conn.execute(text("ALTER TABLE event_records ADD COLUMN retry_count INTEGER DEFAULT 0"))
+            conn.execute(text("UPDATE event_records SET retry_count = 0 WHERE retry_count IS NULL"))
+        if "telegram_user_id" in columns:
+            conn.execute(text("UPDATE event_records SET source_user_id = telegram_user_id WHERE source_user_id IS NULL"))
+        if "bot_message_id" in columns:
+            conn.execute(text(
+                "UPDATE event_records SET bot_message_id = NULL "
+                "WHERE source = 'wechat' AND bot_message_id IS NOT NULL "
+                "AND (bot_message_id = '' OR bot_message_id GLOB '*[^0-9]*')"
+            ))
 
 
 def _migrate_passkey_credentials() -> None:

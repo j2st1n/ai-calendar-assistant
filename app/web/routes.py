@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Generator, MutableMapping
 from datetime import datetime, date, timedelta, timezone
+import uuid
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import base64
 import hashlib
@@ -422,13 +424,19 @@ def status_context(session: Session) -> dict[str, object]:
     ).scalars().all()
     activity = []
     for rec in recent:
+        feedback = event_feedback(rec)
         activity.append({
+            "id": rec.id,
             "title": rec.title or "未命名记录",
             "source": rec.source or "未知来源",
             "status": rec.status,
             "time": _record_time(rec.created_at, activity_tz),
             "original_text": rec.original_text or "",
-            **event_feedback(rec),
+            "failure_phase": rec.failure_phase or feedback.get("failure_phase", ""),
+            "failure_phase_label": feedback.get("failure_phase_label", ""),
+            "retry_count": rec.retry_count or 0,
+            "can_retry": feedback.get("can_retry", False),
+            **feedback,
         })
 
     connection_checks = {}
@@ -436,12 +444,34 @@ def status_context(session: Session) -> dict[str, object]:
         check = check_summary(session, kind)
         check["time"] = _record_time(check["at"], activity_tz)
         connection_checks[kind] = check
-    last_calendar_success = session.scalar(select(EventRecord.created_at).where(
-        EventRecord.status == "success", EventRecord.operation.in_(["create", "update", "delete"])
-    ).order_by(EventRecord.created_at.desc()).limit(1))
+
+    current_version = settings_service.get_config_version()
+    last_current_success = session.scalar(
+        select(EventRecord.created_at).where(
+            EventRecord.status == "success",
+            EventRecord.operation.in_(["create", "update", "delete"]),
+            EventRecord.config_version == current_version,
+        ).order_by(EventRecord.created_at.desc()).limit(1)
+    )
+    last_legacy_success = session.scalar(
+        select(EventRecord.created_at).where(
+            EventRecord.status == "success",
+            EventRecord.operation.in_(["create", "update", "delete"]),
+            or_(
+                EventRecord.config_version != current_version,
+                EventRecord.config_version.is_(None),
+            ),
+        ).order_by(EventRecord.created_at.desc()).limit(1)
+    )
+    last_calendar_success_current = _record_time(last_current_success, activity_tz)
+    last_calendar_success_legacy = _record_time(last_legacy_success, activity_tz)
+
     return {
         "connection_checks": connection_checks,
-        "last_calendar_success": _record_time(last_calendar_success, activity_tz),
+        "last_calendar_success": last_calendar_success_current or last_calendar_success_legacy,
+        "last_calendar_success_current": last_calendar_success_current,
+        "last_calendar_success_legacy": last_calendar_success_legacy,
+        "current_config_version": current_version,
         "ai_ok": ai_ok,
         "ai_name": f"{ai_name} / {ai_model}" if ai_ok else "未配置",
         "vision_label": vision_label,
@@ -544,6 +574,95 @@ async def dashboard(request: Request, session: Session = Depends(get_db), _: Non
     ctx["request"] = request
     ctx["message"] = get_flash(request) or request.query_params.get("message")
     return templates.TemplateResponse(request, "dashboard.html", ctx)
+
+
+@router.get("/wizard", response_class=HTMLResponse)
+async def setup_wizard(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    settings_service = SettingsService(session)
+    status_ctx = status_context(session)
+    ai_data = ai_settings_payload(settings_service)
+    caldav_data = caldav_payload(settings_service)
+    tg_running = bool(status_ctx.get("tg_running"))
+    dc_running = bool(status_ctx.get("dc_running"))
+    wechat_running = bool(status_ctx.get("wechat_running"))
+
+    payload = {
+        "request": request,
+        "ai": ai_data,
+        "caldav": caldav_data,
+        "status": status_ctx,
+        "ai_ok": status_ctx.get("ai_ok"),
+        "caldav_ok": status_ctx.get("caldav_ok"),
+        "telegram_running": tg_running,
+        "discord_running": dc_running,
+        "wechat_running": wechat_running,
+        "wechat_state": "running" if wechat_running else "stopped",
+        "telegram_bot_token_masked": settings_service.get_masked("telegram_bot_token"),
+        "discord_bot_token_masked": settings_service.get_masked("discord_bot_token"),
+        "wechat_token_saved": bool(settings_service.get("wechat_bot_token")),
+        "message": get_flash(request) or request.query_params.get("message"),
+        "error": get_error_flash(request) or request.query_params.get("error"),
+    }
+    return templates.TemplateResponse(request, "wizard.html", payload)
+
+
+@router.post("/wizard/test-event")
+async def test_wizard_event(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> JSONResponse:
+    content = ""
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            content = body.get("text", "")
+        except Exception:
+            content = ""
+    else:
+        try:
+            form = await request.form()
+            content = form.get("text", "")
+        except Exception:
+            content = ""
+    content = str(content or "").strip()
+    if not content:
+        return JSONResponse({"ok": False, "error": "请输入测试日程文本（例如「明天下午3点项目进度会议」）。"}, status_code=400)
+    try:
+        from app.channels.message_processor import MessageProcessor
+        processor = MessageProcessor()
+        results = await processor.process(session, user_id="admin_wizard", text=content, source="wizard")
+        if not results:
+            return JSONResponse({"ok": True, "message": "消息已处理，但未提取到日程或无回复消息。", "data": {}})
+        reply_texts = [r[0] for r in results]
+        first_reply, rec_id = results[0]
+        data_payload = {
+            "record_id": rec_id,
+            "reply": first_reply,
+            "title": "",
+            "source": "wizard",
+        }
+        if rec_id:
+            rec = session.get(EventRecord, rec_id)
+            if rec:
+                data_payload.update({
+                    "title": rec.title or "",
+                    "source": rec.source or "wizard",
+                    "status": rec.status or "",
+                    "caldav_uid": rec.caldav_uid or "",
+                })
+        return JSONResponse({
+            "ok": True,
+            "message": "\n\n".join(reply_texts),
+            "data": data_payload,
+        })
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": f"测试日程处理失败：{exc}"}, status_code=500)
 
 
 @router.post("/connections/{kind}/test")
@@ -1284,6 +1403,53 @@ async def test_ai_connection(
     return JSONResponse({"ok": True, "message": "AI 连接测试成功。"})
 
 
+@router.post("/ai/schema-test")
+async def test_ai_schema_compliance(
+    request: Request,
+    provider_name: str = Form(""),
+    provider_type: str = Form(""),
+    base_url: str = Form(""),
+    api_key: str = Form(""),
+    clear_api_key: str = Form(""),
+    model: str = Form(""),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> JSONResponse:
+    settings_service = SettingsService(session)
+    try:
+        provider_type = _validated_provider_type(
+            provider_type or settings_service.get("ai_provider_type") or "openai_compatible",
+            provider_name,
+        )
+        base_url = _normalize_url(
+            base_url or settings_service.get("ai_base_url") or "https://api.openai.com/v1"
+        )
+    except ValueError as exc:
+        return _probe_error(str(exc))
+    api_key = _probe_api_key(
+        settings_service,
+        api_key,
+        provider_name,
+        "ai_provider_name",
+        "ai_api_key",
+        clear_api_key,
+        provider_type,
+        "ai_provider_type",
+    )
+    model = model or settings_service.get("ai_model") or ""
+    AIProviderConfig, AIProviderError, AIProviderService = _ai_components()
+    config = AIProviderConfig(provider_type=provider_type, base_url=base_url, api_key=api_key, model=model)
+    try:
+        res = await AIProviderService().probe_schema_compliance(config)
+    except AIProviderError as exc:
+        return _probe_error(str(exc), 502)
+    return JSONResponse({
+        "ok": True,
+        "message": f"结构化日程 Schema 探针验证成功（成功解析测试日程「{res.get('title')}」）。",
+        "data": res,
+    })
+
+
 @router.post("/ai/vision-test")
 async def test_vision_connection(
     request: Request,
@@ -1376,6 +1542,15 @@ def _caldav_ssl_from_settings(settings_service: SettingsService) -> bool:
 def _caldav_ssl_from_form(value: str) -> bool:
     return value.strip().lower() == "true"
 
+
+def _available_iana_timezones() -> list[str]:
+    import zoneinfo
+    try:
+        return sorted(zoneinfo.available_timezones())
+    except Exception:
+        return ["Asia/Shanghai", "UTC"]
+
+
 def caldav_payload(settings_service: SettingsService) -> dict[str, object]:
     return {
         "caldav_url": settings_service.get("caldav_url") or "",
@@ -1387,6 +1562,7 @@ def caldav_payload(settings_service: SettingsService) -> dict[str, object]:
         "caldav_reminder_minutes": settings_service.get("caldav_reminder_minutes") or "30",
         "caldav_default_duration": settings_service.get("caldav_default_duration") or "60",
         "caldav_ssl_verify": "true" if _caldav_ssl_from_settings(settings_service) else "false",
+        "timezones": _available_iana_timezones(),
     }
 
 
@@ -1510,6 +1686,43 @@ async def list_caldav_calendars(
     _: None = Depends(require_admin),
 ) -> JSONResponse:
     return await _probe_caldav(session, caldav_url, caldav_username, caldav_password, caldav_ssl_verify, True)
+
+
+@router.post("/caldav/write-test")
+async def test_caldav_write_permission(
+    request: Request,
+    caldav_url: str = Form(""),
+    caldav_username: str = Form(""),
+    caldav_password: str = Form(""),
+    caldav_calendar_url: str = Form(""),
+    caldav_ssl_verify: str = Form("false"),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> JSONResponse:
+    try:
+        url, username, password = _caldav_probe_credentials(
+            SettingsService(session), caldav_url, caldav_username, caldav_password
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    CalDAVService, CalDAVServiceError = _caldav_components()
+    try:
+        service = CalDAVService()
+        cal_url = caldav_calendar_url.strip() or None
+        res = await service.probe_write(
+            url,
+            username,
+            password,
+            calendar_url=cal_url,
+            ssl_verify=_caldav_ssl_from_form(caldav_ssl_verify),
+        )
+        return JSONResponse({
+            "ok": True,
+            "message": "日历写入探针成功：已创建临时测试日程并安全回滚清理，未污染日历数据。",
+            "data": res,
+        })
+    except CalDAVServiceError as exc:
+        return JSONResponse({"ok": False, "error": f"日历写入权限验证失败：{exc}"}, status_code=400)
 
 
 async def _probe_caldav(session: Session, url: str, username: str, password: str, ssl: str, list_calendars: bool) -> JSONResponse:
@@ -1970,7 +2183,7 @@ async def event_records(
 ) -> HTMLResponse:
     status_filter = status_filter if status_filter in {"all", "success", "failed"} else "all"
     search = search.strip()
-    source = source if source in {"wechat", "telegram", "discord"} else ""
+    source = source if source in {"wechat", "telegram", "discord", "wizard"} else ""
     activity_tz = _calendar_timezone(SettingsService(session))
     filters = []
     filter_error = ""
@@ -2012,6 +2225,7 @@ async def event_records(
             source=source, date_from=date_from, date_to=date_to, page=number))
     events: list[dict[str, object]] = []
     for rec in records:
+        feedback = event_feedback(rec)
         events.append({
             "id": rec.id,
             "time": _record_time(rec.created_at, activity_tz),
@@ -2022,13 +2236,20 @@ async def event_records(
             "title": rec.title or "",
             "start_time": rec.start_time or "",
             "is_recurring": "🔁" if rec.is_recurring else "",
-            **event_feedback(rec),
+            **feedback,
             "status": rec.status or "",
             "error": rec.error_message or "",
             "original_text": rec.original_text or "",
             "event_json": rec.event_json or "",
             "caldav_href": rec.caldav_href or "",
             "caldav_uid": rec.caldav_uid or "",
+            "config_version": rec.config_version,
+            "ai_config_hash": rec.ai_config_hash,
+            "caldav_config_hash": rec.caldav_config_hash,
+            "failure_phase": rec.failure_phase or feedback.get("failure_phase", ""),
+            "failure_phase_label": feedback.get("failure_phase_label", ""),
+            "retry_count": rec.retry_count or 0,
+            "can_retry": feedback.get("can_retry", False),
         })
 
     return templates.TemplateResponse(
@@ -2133,6 +2354,169 @@ async def clear_event_records(
     session.commit()
     set_flash(request, "事件记录已清空。")
     return redirect("/console/events")
+
+
+_retry_locks: set[int] = set()
+_retry_mutex = asyncio.Lock()
+
+
+@router.post("/events/{event_id}/retry")
+async def retry_event(
+    request: Request,
+    event_id: int,
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> JSONResponse:
+    async with _retry_mutex:
+        if event_id in _retry_locks:
+            return JSONResponse(
+                {"ok": False, "error": "该日程正在重试写入中，请勿重复操作", "record_id": event_id},
+                status_code=409,
+            )
+        _retry_locks.add(event_id)
+
+    try:
+        rec = session.get(EventRecord, event_id)
+        if not rec:
+            return JSONResponse(
+                {"ok": False, "error": "未找到指定的事件记录", "record_id": event_id},
+                status_code=404,
+            )
+
+        if rec.status == "success":
+            return JSONResponse(
+                {"ok": False, "error": "该日程已成功写入日历，无需重试", "record_id": event_id},
+                status_code=400,
+            )
+
+        phase = rec.failure_phase or ("write" if rec.operation in ("create", "update") else "other")
+        if phase != "write" or rec.operation not in ("create", "update"):
+            return JSONResponse(
+                {"ok": False, "error": "仅支持日历写入阶段失败的记录进行重试", "record_id": event_id},
+                status_code=400,
+            )
+
+        if not rec.event_json:
+            return JSONResponse(
+                {"ok": False, "error": "缺少有效的日程数据，无法重试", "record_id": event_id},
+                status_code=400,
+            )
+
+        try:
+            event_payload = json.loads(rec.event_json)
+            if not isinstance(event_payload, dict) or not event_payload.get("title"):
+                return JSONResponse(
+                    {"ok": False, "error": "日程数据格式无效或缺少标题，无法重试", "record_id": event_id},
+                    status_code=400,
+                )
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": f"解析日程数据失败：{exc}", "record_id": event_id},
+                status_code=400,
+            )
+
+        settings_service = SettingsService(session)
+        caldav_url = settings_service.get("caldav_url") or ""
+        caldav_user = settings_service.get("caldav_username") or ""
+        caldav_pw = settings_service.get("caldav_password") or ""
+        caldav_calendar_url = settings_service.get("caldav_calendar_url") or ""
+        caldav_ssl = _caldav_ssl_from_settings(settings_service)
+
+        if not caldav_url or not caldav_user:
+            return JSONResponse(
+                {"ok": False, "error": "尚未配置有效的日历连接，请先在日历设置中配置", "record_id": event_id},
+                status_code=400,
+            )
+
+        # Idempotent caldav_uid: reuse existing UID to prevent duplicate calendar events
+        target_uid = rec.caldav_uid or f"retry-{uuid.uuid4().hex}"
+        if not rec.caldav_uid:
+            rec.caldav_uid = target_uid
+            session.flush()
+
+        CalDAVService_cls, CalDAVServiceError_cls = _caldav_components()
+        caldav_service = CalDAVService_cls()
+
+        # Extract & format reminders
+        reminders_data = event_payload.get("reminders")
+        formatted_reminders = []
+        if reminders_data:
+            for r in reminders_data:
+                if isinstance(r, dict) and "minutes_before" in r:
+                    formatted_reminders.append({"minutes_before": int(r["minutes_before"])})
+                elif hasattr(r, "minutes_before"):
+                    formatted_reminders.append({"minutes_before": int(r.minutes_before)})
+                elif isinstance(r, int):
+                    formatted_reminders.append({"minutes_before": r})
+
+        try:
+            write_res = await caldav_service.create_event(
+                caldav_url=caldav_url,
+                username=caldav_user,
+                password=caldav_pw,
+                calendar_url=caldav_calendar_url or None,
+                title=event_payload.get("title", "日程"),
+                start_time=event_payload.get("start_time", ""),
+                end_time=event_payload.get("end_time"),
+                timezone_str=event_payload.get("timezone", "Asia/Shanghai"),
+                location=event_payload.get("location"),
+                description=event_payload.get("description"),
+                reminders=formatted_reminders if formatted_reminders else None,
+                recurrence=event_payload.get("recurrence"),
+                is_all_day=bool(event_payload.get("is_all_day", False)),
+                ssl_verify=caldav_ssl,
+                uid=target_uid,
+            )
+        except CalDAVServiceError_cls as exc:
+            rec.retry_count = (rec.retry_count or 0) + 1
+            rec.error_message = f"重试失败：{exc}"
+            rec.failure_phase = "write"
+            rec.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return JSONResponse(
+                {"ok": False, "error": f"重试写入日历失败：{exc}", "record_id": event_id, "retry_count": rec.retry_count},
+                status_code=400,
+            )
+        except Exception as exc:
+            rec.retry_count = (rec.retry_count or 0) + 1
+            rec.error_message = f"重试异常：{exc}"
+            rec.failure_phase = "write"
+            rec.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return JSONResponse(
+                {"ok": False, "error": f"重试写入日历异常：{exc}", "record_id": event_id, "retry_count": rec.retry_count},
+                status_code=500,
+            )
+
+        # Success!
+        rec.status = "success"
+        rec.failure_phase = None
+        rec.error_message = None
+        rec.caldav_uid = write_res.get("uid", target_uid)
+        rec.caldav_href = write_res.get("href")
+        rec.retry_count = (rec.retry_count or 0) + 1
+        rec.updated_at = datetime.now(timezone.utc)
+        try:
+            rec.config_version = settings_service.get_config_version()
+            rec.caldav_config_hash = settings_service.get_caldav_config_hash()
+        except Exception:
+            pass
+        session.commit()
+
+        return JSONResponse({
+            "ok": True,
+            "message": "日程重试写入成功！",
+            "data": {
+                "id": rec.id,
+                "status": "success",
+                "caldav_uid": rec.caldav_uid,
+                "caldav_href": rec.caldav_href,
+                "retry_count": rec.retry_count,
+            },
+        })
+    finally:
+        async with _retry_mutex:
+            _retry_locks.discard(event_id)
 
 
 @router.get("/system/backup")
