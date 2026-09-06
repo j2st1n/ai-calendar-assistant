@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.18.0] - 2026-09-06
+
+
+### Features
+
+- improve console workflows and saved connection verification
+
+
 ## [v1.17.2] - 2026-09-04
 
 
@@ -12,6 +20,12 @@
 ### Features
 
 - improve model picker interactions
+
+
+
+### Maintenance
+
+- release v1.17.2
 
 
 ## [v1.17.1] - 2026-09-04
