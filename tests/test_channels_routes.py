@@ -123,7 +123,7 @@ class TestChannelsPage:
         resp = await _get(app, "/console/channels?tab=telegram")
         assert resp.status_code == 200
         assert 'id="tab-btn-telegram" aria-controls="panel-telegram" aria-selected="true"' in resp.text
-        assert "Telegram：" in resp.text
+        assert "运行中（1人）" in resp.text
         assert "my_bot" in resp.text
 
         resp_dc = await _get(app, "/console/channels?tab=discord")
@@ -238,3 +238,117 @@ class TestSidebarConvergence:
         assert '<a href="/console/telegram" class="sidebar-item' not in resp.text
         assert '<a href="/console/discord" class="sidebar-item' not in resp.text
         assert '<a href="/console/wechat" class="sidebar-item' not in resp.text
+
+
+class TestChannelsUIRedesignAndDeduplication:
+    """Tests for channels UI polish: segmented control tab, deduplicated badge text, and unfolded WeChat card."""
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.DiscordService")
+    @patch("app.web.routes.TelegramService")
+    @patch("app.web.routes.WechatService")
+    async def test_segmented_control_tab_structure(self, MockWx, MockTg, MockDc):
+        MockWx.return_value.config_summary = MagicMock(return_value={"wechat_token_set": True, "wechat_running": True})
+        MockTg.return_value.config_summary = MagicMock(return_value={"bot_token_set": True, "bot_running": True, "allowed_users": [{"id": 1}], "rejected_users": []})
+        MockDc.return_value.config_summary = MagicMock(return_value={"discord_token_set": True, "discord_bot_running": True, "discord_allowed_users": [{"id": 1}]})
+
+        app = _make_app()
+        resp = await _get(app, "/console/channels")
+        assert resp.status_code == 200
+
+        # Segmented control tab bar container
+        assert '<div class="channel-tabs channel-pills" role="tablist"' in resp.text
+        # Pill buttons
+        assert 'class="channel-tab channel-pill active"' in resp.text
+        assert 'class="channel-tab-title">微信 (WeChat)</span>' in resp.text
+        assert 'class="channel-tab-title">Telegram</span>' in resp.text
+        assert 'class="channel-tab-title">Discord</span>' in resp.text
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.DiscordService")
+    @patch("app.web.routes.TelegramService")
+    @patch("app.web.routes.WechatService")
+    async def test_badge_text_deduplication(self, MockWx, MockTg, MockDc):
+        # When all configured and running
+        MockWx.return_value.config_summary = MagicMock(return_value={
+            "wechat_token_set": True,
+            "wechat_running": True,
+            "wechat_error": "",
+        })
+        MockTg.return_value.config_summary = MagicMock(return_value={
+            "bot_token_set": True,
+            "bot_running": True,
+            "allowed_users": [{"id": 1}],
+            "rejected_users": [],
+        })
+        MockDc.return_value.config_summary = MagicMock(return_value={
+            "discord_token_set": True,
+            "discord_bot_running": True,
+            "discord_allowed_users": [{"id": 2}],
+        })
+
+        app = _make_app()
+        resp = await _get(app, "/console/channels")
+        assert resp.status_code == 200
+
+        # Assert no redundant channel prefix in badge spans
+        assert 'id="pill-text-wechat">微信：' not in resp.text
+        assert 'id="pill-text-telegram">Telegram：' not in resp.text
+        assert 'id="pill-text-discord">Discord：' not in resp.text
+
+        # Assert clean badge content
+        assert 'id="pill-text-wechat">在线</span>' in resp.text
+        assert 'id="pill-text-telegram">运行中（1人）</span>' in resp.text
+        assert 'id="pill-text-discord">运行中（1人）</span>' in resp.text
+
+        # Ensure dynamic polling JS does not inject prefix
+        assert "pillText.textContent = '微信：'" not in resp.text
+        assert "pillText.textContent = d.configured ? (d.state_label || '在线') : '未配置';" in resp.text
+
+    @pytest.mark.anyio
+    @patch("app.web.routes.DiscordService")
+    @patch("app.web.routes.TelegramService")
+    @patch("app.web.routes.WechatService")
+    async def test_wechat_card_unfolded_and_recovery_action(self, MockWx, MockTg, MockDc):
+        MockWx.return_value.config_summary = MagicMock(return_value={
+            "wechat_token_set": True,
+            "wechat_running": True,
+            "wechat_error": "",
+        })
+        MockTg.return_value.config_summary = MagicMock(return_value={"bot_token_set": False, "allowed_users": [], "rejected_users": []})
+        MockDc.return_value.config_summary = MagicMock(return_value={"discord_token_set": False, "discord_allowed_users": []})
+
+        app = _make_app()
+        resp = await _get(app, "/console/channels?tab=wechat")
+        assert resp.status_code == 200
+
+        # Card is flat div instead of details/summary
+        assert '<div class="card stack" id="wechat-login">' in resp.text
+        assert '<details class="card settings-disclosure" id="wechat-login"' not in resp.text
+        # Heading and status badge
+        assert '<h3 style="margin:0;font-size:16px;">重新登录或更换账号</h3>' in resp.text
+        assert '<span class="status-badge"><span class="dot dot-success"></span>已接入</span>' in resp.text
+        # Fetch QR button directly exposed
+        assert '<button type="button" id="btn-fetch-qr" onclick="fetchQR()">获取二维码</button>' in resp.text
+
+        # Recovery link uses scrollIntoView instead of opening details
+        assert "scrollIntoView" in resp.text
+        assert "document.getElementById('wechat-login').open=true" not in resp.text
+
+    def test_styles_css_segmented_control_definitions(self):
+        with open("app/web/static/styles.css", encoding="utf-8") as f:
+            css = f.read()
+
+        # Modern Segmented Control styles
+        assert ".channel-tabs" in css
+        assert ".channel-tabs.channel-pills" in css
+        assert "border-radius: 12px;" in css
+        assert "gap: 4px;" in css
+        assert "padding: 4px;" in css
+        # Dark & Light & Auto theme rules
+        assert 'html[data-theme="light"] .channel-tabs' in css
+        assert '@media (prefers-color-scheme: light)' in css
+        assert '@media (prefers-color-scheme: dark)' in css
+        # Tab active state floating & elevation
+        assert ".channel-tab.active" in css
+        assert "transform: translateY(-0.5px);" in css

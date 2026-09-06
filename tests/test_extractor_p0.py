@@ -199,8 +199,9 @@ def _past_payload(hours_ago: int = 2, end_delta_hours: int | None = None) -> dic
     }
 
 
-def _future_payload(hours_ahead: int = 1) -> dict:
-    now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
+def _future_payload(hours_ahead: int = 1, now: datetime | None = None) -> dict:
+    if now is None:
+        now = datetime(2026, 6, 1, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
     st = now + timedelta(hours=hours_ahead)
     return {
         "intent": "create_event",
@@ -221,11 +222,12 @@ def _future_payload(hours_ahead: int = 1) -> dict:
 
 
 def test_ensure_hour_only_does_not_modify_future_time():
-    payload = _future_payload(1)
+    now = datetime(2026, 6, 1, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    payload = _future_payload(1, now=now)
     result = _build_result(payload)
     original = result.events[0].start_time
 
-    result = _ensure_hour_only_is_future(result, "10点测试", "Asia/Shanghai")
+    result = _ensure_hour_only_is_future(result, "10点测试", "Asia/Shanghai", now=now)
 
     assert result.events[0].start_time == original
 

@@ -11,17 +11,17 @@
   <button type="button" role="tab" class="channel-tab channel-pill {% if active_tab == 'wechat' %}active{% endif %}" id="tab-btn-wechat" aria-controls="panel-wechat" aria-selected="{% if active_tab == 'wechat' %}true{% else %}false{% endif %}" onclick="switchChannelTab('wechat')">
     <span class="dot {% if wechat_state == 'polling' %}dot-success{% elif wechat_state in ('retrying', 'paused', 'starting') %}dot-warning{% elif wechat_configured %}dot-muted{% else %}dot-error{% endif %}" id="pill-dot-wechat"></span>
     <span class="channel-tab-title">微信 (WeChat)</span>
-    <span class="channel-tab-badge" id="pill-text-wechat">微信：{{ wechat_state_label if wechat_configured else '未配置' }}</span>
+    <span class="channel-tab-badge" id="pill-text-wechat">{{ wechat_state_label if wechat_configured else '未配置' }}</span>
   </button>
   <button type="button" role="tab" class="channel-tab channel-pill {% if active_tab == 'telegram' %}active{% endif %}" id="tab-btn-telegram" aria-controls="panel-telegram" aria-selected="{% if active_tab == 'telegram' %}true{% else %}false{% endif %}" onclick="switchChannelTab('telegram')">
     <span class="dot {% if bot_running %}dot-success{% elif bot_token_set %}dot-muted{% else %}dot-error{% endif %}" id="pill-dot-telegram"></span>
     <span class="channel-tab-title">Telegram</span>
-    <span class="channel-tab-badge" id="pill-text-telegram">Telegram：{% if bot_running %}运行中（{{ allowed_users|length }}人）{% elif bot_token_set %}未启动{% else %}未配置{% endif %}</span>
+    <span class="channel-tab-badge" id="pill-text-telegram">{% if bot_running %}运行中（{{ allowed_users|length }}人）{% elif bot_token_set %}未启动{% else %}未配置{% endif %}</span>
   </button>
   <button type="button" role="tab" class="channel-tab channel-pill {% if active_tab == 'discord' %}active{% endif %}" id="tab-btn-discord" aria-controls="panel-discord" aria-selected="{% if active_tab == 'discord' %}true{% else %}false{% endif %}" onclick="switchChannelTab('discord')">
     <span class="dot {% if discord_bot_running %}dot-success{% elif discord_token_set %}dot-muted{% else %}dot-error{% endif %}" id="pill-dot-discord"></span>
     <span class="channel-tab-title">Discord</span>
-    <span class="channel-tab-badge" id="pill-text-discord">Discord：{% if discord_bot_running %}运行中（{{ discord_allowed_users|length }}人）{% elif discord_token_set %}未启动{% else %}未配置{% endif %}</span>
+    <span class="channel-tab-badge" id="pill-text-discord">{% if discord_bot_running %}运行中（{{ discord_allowed_users|length }}人）{% elif discord_token_set %}未启动{% else %}未配置{% endif %}</span>
   </button>
 </div>
 
@@ -37,21 +37,26 @@
   {% set needs_login = wechat_current_error and wechat_current_error.category == 'stale_token' %}
   <div id="wechat-recovery" class="alert error" {% if not needs_login %}hidden{% endif %} role="status">
     <strong>微信会话需要重新验证</strong><p>服务报告登录凭据失效，当前会话可能处于冷却中。重新扫码登录后再检查连接状态。</p>
-    <a class="button-link" href="#wechat-login" onclick="document.getElementById('wechat-login').open=true">重新扫码登录</a>
+    <a class="button-link" href="#wechat-login" onclick="var el=document.getElementById('wechat-login');if(el&&el.scrollIntoView){el.scrollIntoView({behavior:'smooth'});}">重新扫码登录</a>
   </div>
 
   <div class="settings-layout">
     <!-- 左栏：微信配置与扫码接入 -->
     <div class="settings-main stack">
-      <details class="card settings-disclosure" id="wechat-login" {% if not wechat_configured or needs_login %}open{% endif %}>
-        <summary>{{ "重新登录或更换账号" if wechat_configured else "扫码登录微信" }}</summary>
-        <p class="muted" style="margin-bottom:16px;">点击下方按钮获取二维码，使用手机微信扫码完成接入。登录成功后 Bot Token 将自动加密保存。</p>
+      <div class="card stack" id="wechat-login">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <h3 style="margin:0;font-size:16px;">{{ "重新登录或更换账号" if wechat_configured else "扫码登录微信" }}</h3>
+          {% if wechat_configured %}
+          <span class="status-badge"><span class="dot dot-success"></span>已接入</span>
+          {% endif %}
+        </div>
+        <p class="muted" style="margin:0;font-size:13px;">点击下方按钮获取二维码，使用手机微信扫码完成接入。登录成功后 Bot Token 将自动加密保存。</p>
 
-        <div id="qr-step-1">
+        <div id="qr-step-1" style="margin-top:4px;">
           <button type="button" id="btn-fetch-qr" onclick="fetchQR()">获取二维码</button>
         </div>
 
-        <div id="qr-step-2" style="display:none;margin-top:16px;">
+        <div id="qr-step-2" style="display:none;margin-top:12px;">
           <div style="margin-bottom:12px;">
             <span class="muted" style="font-size:12px;">QR 码有效期内请尽快扫码</span>
           </div>
@@ -65,14 +70,14 @@
           </div>
         </div>
 
-        <div id="qr-step-3" style="display:none;margin-top:16px;">
+        <div id="qr-step-3" style="display:none;margin-top:12px;">
           <span class="status-badge"><span class="dot dot-success"></span>登录成功！Bot Token 已保存。</span>
         </div>
 
-        <div id="qr-error" style="display:none;margin-top:16px;">
+        <div id="qr-error" style="display:none;margin-top:12px;">
           <p class="alert error" id="qr-error-msg"></p>
         </div>
-      </details>
+      </div>
 
       {% if wechat_configured %}
       <details class="card danger-zone settings-disclosure"><summary>清除登录凭据</summary>
@@ -605,7 +610,7 @@
       pillDot.className = 'dot ' + dotClass;
     }
     if (pillText) {
-      pillText.textContent = '微信：' + (d.configured ? (d.state_label || '在线') : '未配置');
+      pillText.textContent = d.configured ? (d.state_label || '在线') : '未配置';
     }
 
     setTimedRow('wechat-last-poll-row', 'wechat-last-poll', d.last_poll_success_at);
