@@ -5,10 +5,10 @@
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
 
-<div class="grid" style="grid-template-columns:1fr 1fr;">
+<div class="system-settings">
 
   <div class="card" style="margin-bottom:0;">
-    <h2>管理员</h2>
+    <h2>账户与安全</h2>
     <form method="post" action="/console/system/admin" class="stack">
       <label>
         <span>用户名</span>
@@ -27,38 +27,41 @@
         <input name="confirm_password" type="password" autocomplete="new-password">
       </label>
       <div>
-        <button type="submit">保存</button>
+        <button type="submit">保存账户信息</button>
       </div>
     </form>
   </div>
 
-  <div class="card" style="margin-bottom:0;">
-    <h2>数据管理</h2>
-    <form method="post" action="/console/system/data" class="stack">
-      <label>
-        <span>事件记录保留数量</span>
-        <input name="event_record_limit" type="number" min="1" max="100000" value="{{ event_record_limit }}" required>
-      </label>
-      <label>
+  {% include "_security_section.html" %}
+  <div class="card"><h2>日程偏好</h2><form class="stack" method="post" action="/console/system/preferences">      <label>
         <span>每周起始日</span>
         <select name="week_start_day">
           <option value="0" {% if week_start_day == "0" %}selected{% endif %}>周日</option>
           <option value="1" {% if week_start_day == "1" %}selected{% endif %}>周一</option>
         </select>
       </label>
+<div><button type="submit">保存日程偏好</button></div></form><p class="event-count">时区、提醒和默认时长在 <a href="/console/caldav">日历设置</a> 中调整。</p></div>
+  <div class="card" style="margin-bottom:0;">
+    <h2>数据与备份</h2>
+    <form method="post" action="/console/system/data" class="stack">
+      <label>
+        <span>事件记录保留数量</span>
+        <input name="event_record_limit" type="number" min="1" max="100000" value="{{ event_record_limit }}" required>
+      </label>
       <div>
-        <button type="submit">保存</button>
+        <button type="submit">保存记录保留设置</button>
       </div>
     </form>
 
+    <p class="event-count">保存时会清理超出保留数量的旧记录。调小数量前请先下载备份。</p>
     <hr style="border:none;border-top:1px solid rgba(255,255,255,0.06);margin:16px 0;">
 
     <p class="muted" style="margin-bottom:8px;font-size:12px;">备份包含默认数据目录下的数据库和密钥文件，恢复时需一起使用。</p>
     <p class="muted" style="margin-bottom:8px;font-size:12px;">若你自定义了数据目录或数据库路径，请手动备份对应的 app.db 和 secrets.json。</p>
     <a href="/console/system/backup" class="button-link">下载备份</a>
+    <details class="event-technical"><summary>如何恢复与检查备份</summary><p>恢复前停止服务并另存当前数据，将备份中的 app.db 和 secrets.json 一起还原到对应数据目录，再启动服务。网页暂不提供上传恢复。</p><p>先在隔离环境检查能否登录、读取配置及历史记录，再恢复正式服务；验证时避免启动聊天渠道处理真实消息。</p></details>
   </div>
 
 </div>
 
-{% include "_security_section.html" %}
 {% endblock %}

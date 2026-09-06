@@ -1,85 +1,108 @@
 {% extends "base.html" %}
 {% block content %}
-<script>
-function selectCalendar(sel) {
-  const opt = document.querySelector('.cs-drop .sel') || document.querySelector('.cs-drop .cs-opt');
-  const urlInput = document.querySelector('input[name="caldav_calendar_url"]');
-  if (urlInput && opt) urlInput.value = opt.dataset.url;
-}
-window.addEventListener('DOMContentLoaded', function(){ selectCalendar(); });
-</script>
-
 <h2 class="section-title">日历设置</h2>
-<p class="section-sub">配置 CalDAV 服务器，用于日程写入。支持 Apple iCloud、Nextcloud、Radicale 等标准 CalDAV 服务。</p>
-
+<p class="section-sub">连接 CalDAV 日历。测试和拉取只检查当前填写内容，点击保存后才会生效。</p>
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
-
-<div class="card">
-  <form method="post" action="/console/caldav" class="stack">
-    <label>
-      <span>日历服务器地址</span>
-      <input name="caldav_url" value="{{ caldav_url }}" placeholder="https://caldav.icloud.com" required>
-    </label>
-    <label>
-      <span>用户名</span>
-      <input name="caldav_username" value="{{ caldav_username }}" placeholder="your-email@example.com" required>
-    </label>
-    <label>
-      <span>密码 / 应用密码</span>
-      <input name="caldav_password" type="password" value="" placeholder="{{ caldav_password_masked or '留空表示保持现有值' }}" autocomplete="off">
-    </label>
-
-    <div class="row" style="align-items:flex-end;">
-      <label style="flex:1;">
-        <span>日历</span>
-        {% if calendars %}
-        <div class="cs-wrap" data-onchange="selectCalendar">
-          <div class="cs-trigger">{{ caldav_calendar_name or '选择日历' }}</div>
-          <div class="cs-drop">
-            {% for cal in calendars %}
-            <div class="cs-opt {% if caldav_calendar_name == cal.name %}sel{% endif %}" data-value="{{ cal.name }}" data-url="{{ cal.url }}">{{ cal.name }}</div>
-            {% endfor %}
-          </div>
-          <input type="hidden" name="caldav_calendar_name" value="{{ caldav_calendar_name }}">
-        </div>
-        {% else %}
-        <input name="caldav_calendar_name" value="{{ caldav_calendar_name }}" placeholder="先拉取日历列表后选择">
-        {% endif %}
-      </label>
-      <button type="submit" formaction="/console/caldav/calendars" class="secondary">拉取日历列表</button>
+<form method="post" action="/console/caldav" id="caldav-form" class="caldav-form">
+<p id="caldav-status" class="form-status" role="status" aria-live="polite">当前显示已保存的配置。</p>
+<fieldset id="caldav-fields">
+  <section class="card stack">
+    <h3>1. 连接日历服务</h3>
+    <label><span>日历服务器地址</span><input type="url" name="caldav_url" value="{{ caldav_url }}" placeholder="https://caldav.icloud.com" required></label>
+    <label><span>用户名</span><input name="caldav_username" value="{{ caldav_username }}" placeholder="日历服务的登录账号" required></label>
+    <label><span>密码 / 应用密码</span><input name="caldav_password" type="password" autocomplete="off" placeholder="{{ '已保存，留空保持原值' if caldav_password_masked else '填写应用密码' }}"></label>
+    <p class="event-count">更换服务器或用户名后，需要填写对应的应用密码。</p>
+    <label class="caldav-checkbox"><input type="checkbox" name="caldav_ssl_verify" value="true" {% if caldav_ssl_verify != 'false' %}checked{% endif %}><span>验证 SSL 证书</span></label>
+    <div class="row"><button type="button" class="secondary" data-caldav-action="test">测试连接</button><button type="button" class="secondary" data-caldav-action="calendars">拉取日历列表</button></div>
+  </section>
+  <section class="card stack">
+    <h3>2. 选择目标日历</h3>
+    <label><span>写入日历</span><select id="calendar-picker"><option value="">先拉取列表，再选择日历</option>{% if caldav_calendar_url %}<option value="{{ caldav_calendar_url }}" selected>{{ caldav_calendar_name or '已保存的日历' }}</option>{% endif %}</select></label>
+    <p class="event-count">选择日历后仍需保存。连接测试不会创建测试日程。</p>
+    <details class="event-technical"><summary>手动配置日历地址</summary><div class="stack">
+      <label><span>日历名称</span><input name="caldav_calendar_name" value="{{ caldav_calendar_name }}" required></label>
+      <label><span>日历地址</span><input name="caldav_calendar_url" value="{{ caldav_calendar_url }}" required></label>
+    </div></details>
+  </section>
+  <section class="card stack">
+    <h3>3. 默认日程规则</h3>
+    <div class="caldav-defaults">
+      <label><span>默认时区</span><input name="caldav_timezone" value="{{ caldav_timezone }}" placeholder="Asia/Shanghai" required></label>
+      <label><span>提前提醒（分钟）</span><input name="caldav_reminder_minutes" type="number" value="{{ caldav_reminder_minutes }}" min="0"></label>
+      <label><span>默认时长（分钟）</span><input name="caldav_default_duration" type="number" value="{{ caldav_default_duration }}" min="5"></label>
     </div>
-
-    <label>
-      <span>日历地址</span>
-      <input name="caldav_calendar_url" value="{{ caldav_calendar_url }}" placeholder="选择日历后自动填充">
-    </label>
-
-    <div class="row" style="gap:16px;">
-      <label style="flex:1;">
-        <span>默认时区</span>
-        <input name="caldav_timezone" value="{{ caldav_timezone }}" placeholder="Asia/Shanghai">
-      </label>
-      <label style="max-width:160px;">
-        <span>提醒（分钟）</span>
-        <input name="caldav_reminder_minutes" type="number" value="{{ caldav_reminder_minutes }}" min="0">
-      </label>
-      <label style="max-width:160px;">
-        <span>时长（分钟）</span>
-        <input name="caldav_default_duration" type="number" value="{{ caldav_default_duration }}" min="5">
-      </label>
-    </div>
-
-    <label class="checkbox-wrap" style="margin-top:4px;">
-      <input type="checkbox" name="caldav_ssl_verify" value="true" {% if caldav_ssl_verify != 'false' %}checked{% endif %}>
-      <span>验证 SSL 证书</span>
-      <span class="help-text">默认开启。如果使用自签名证书的 NAS（如群晖），可以取消此选项。</span>
-    </label>
-
-    <div class="row" style="margin-top:4px;">
-      <button type="submit">保存 CalDAV 设置</button>
-      <button type="submit" formaction="/console/caldav/test" class="secondary">测试连接</button>
-    </div>
-  </form>
-</div>
+  </section>
+  <button type="submit">保存日历设置</button>
+</fieldset>
+</form>
+<script>
+(function () {
+  const form = document.getElementById('caldav-form');
+  const fields = document.getElementById('caldav-fields');
+  const status = document.getElementById('caldav-status');
+  const picker = document.getElementById('calendar-picker');
+  const get = name => form.elements.namedItem(name);
+  let dirty = false;
+  function announce(message, error) {
+    status.textContent = message;
+    status.className = 'form-status' + (error ? ' error' : '');
+  }
+  form.addEventListener('input', function (event) {
+    dirty = true;
+    announce('有未保存的修改。测试和拉取不会保存这些内容。');
+    if (['caldav_url', 'caldav_username'].includes(event.target.name)) {
+      picker.replaceChildren(new Option('连接信息已更改，请重新拉取日历', ''));
+      get('caldav_calendar_name').value = '';
+      get('caldav_calendar_url').value = '';
+      get('caldav_password').value = '';
+    }
+  });
+  picker.addEventListener('change', function () {
+    const option = picker.selectedOptions[0];
+    get('caldav_calendar_url').value = option.value;
+    get('caldav_calendar_name').value = option.value ? option.textContent : '';
+    dirty = true;
+    announce('目标日历已选择，尚未保存。');
+  });
+  async function run(action) {
+    if (!get('caldav_url').reportValidity() || !get('caldav_username').reportValidity()) return;
+    const data = new FormData(form);
+    fields.disabled = true;
+    announce(action === 'save' ? '正在保存…' : '正在检查日历服务…');
+    try {
+      const response = await fetch(action === 'save' ? form.action : '/console/caldav/' + action, {
+        method: 'POST', body: data, headers: {'Accept': 'application/json'}
+      });
+      if (response.redirected) throw new Error('登录状态可能已过期，请重新登录。当前填写内容已保留。');
+      const payload = await response.json().catch(() => { throw new Error('服务器返回异常，请稍后重试。当前填写内容已保留。'); });
+      if (!response.ok || !payload.ok) throw new Error(payload.error || '操作失败，当前填写内容已保留。');
+      if (action === 'calendars') {
+        const previous = get('caldav_calendar_url').value;
+        const calendars = payload.calendars || [];
+        picker.replaceChildren(new Option(calendars.length ? '请选择日历' : '没有找到日历，请检查账号权限', ''));
+        calendars.forEach(cal => picker.add(new Option(cal.name, cal.url)));
+        const match = calendars.find(cal => cal.url === previous);
+        picker.value = match ? previous : '';
+        get('caldav_calendar_url').value = match ? match.url : '';
+        get('caldav_calendar_name').value = match ? match.name : '';
+        dirty = true;
+      }
+      if (action === 'save') {
+        dirty = false;
+        get('caldav_password').value = '';
+        get('caldav_password').placeholder = '已保存，留空保持原值';
+      }
+      announce(payload.message);
+    } catch (error) {
+      announce(error.message || '操作失败，当前填写内容已保留。', true);
+    } finally { fields.disabled = false; }
+  }
+  form.querySelectorAll('[data-caldav-action]').forEach(button => button.addEventListener('click', () => run(button.dataset.caldavAction)));
+  form.addEventListener('submit', function (event) { event.preventDefault(); run('save'); });
+  // Open manual fields before native validation tries to focus a missing value.
+  form.addEventListener('invalid', function (event) { const detail = event.target.closest('details'); if (detail) detail.open = true; }, true);
+  window.addEventListener('beforeunload', function (event) { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
+})();
+</script>
 {% endblock %}

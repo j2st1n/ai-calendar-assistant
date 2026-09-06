@@ -315,3 +315,78 @@ def test_update_caldav_settings_saves_ssl_verify_false_when_checkbox_missing():
         assert settings.get("caldav_ssl_verify") == "false"
 
     asyncio.run(run())
+
+
+def test_probes_do_not_persist_drafts_and_do_not_reuse_password_for_new_account(monkeypatch):
+    import json
+    from app.web import routes
+    from app.db.models import Setting
+    from sqlalchemy import select
+    session = _session()
+    svc = SettingsService(session)
+    svc.set('caldav_url', 'https://old.example.com')
+    svc.set('caldav_username', 'old-user')
+    svc.set('caldav_password', 'saved-test-password')
+    svc.commit()
+    before = [(r.key, r.value) for r in session.scalars(select(Setting)).all()]
+    calls = []
+    class FakeError(Exception): pass
+    class FakeCalendar:
+        async def test_connection(self, url, user, password, **kwargs):
+            calls.append((url,user,password,kwargs))
+        async def list_calendars(self, url, user, password, **kwargs):
+            calls.append((url,user,password,kwargs))
+            return [{'name':'Work','url':url+'/work'}, {'name':'Work','url':url+'/other'}]
+    monkeypatch.setattr(routes, '_caldav_components', lambda: (FakeCalendar, FakeError))
+    for listing in (False, True):
+        response = asyncio.run(routes._probe_caldav(session,'https://new.example.com','new-user','new-test-password','false',listing))
+        assert response.status_code == 200
+        assert json.loads(response.body)['ok']
+    assert all(call[2] == 'new-test-password' and call[3]['ssl_verify'] is False for call in calls)
+    assert before == [(r.key,r.value) for r in session.scalars(select(Setting)).all()]
+    response = asyncio.run(routes._probe_caldav(session,'https://new.example.com','new-user','','true',False))
+    assert response.status_code == 400 and len(calls) == 2
+    response = asyncio.run(routes._probe_caldav(session,'https://old.example.com','old-user','','true',False))
+    assert response.status_code == 200 and calls[-1][2] == 'saved-test-password'
+
+
+def test_probe_failure_does_not_echo_credentials_or_write(monkeypatch):
+    from app.web import routes
+    class FakeError(Exception): pass
+    class FakeCalendar:
+        async def test_connection(self, *args, **kwargs):
+            raise FakeError('password=private-test-credential')
+    monkeypatch.setattr(routes,'_caldav_components',lambda: (FakeCalendar, FakeError))
+    session=_session()
+    response=asyncio.run(routes._probe_caldav(session,'https://example.com','user','private-test-credential','true',False))
+    assert response.status_code == 400
+    assert b'private-test-credential' not in response.body
+    assert SettingsService(session).get('caldav_url') is None
+
+
+def test_inline_save_validation_keeps_saved_settings():
+    from app.web import routes
+    session=_session()
+    service=SettingsService(session)
+    service.set('caldav_url','https://old.example.com');service.commit()
+    req=Request({'type':'http','method':'POST','path':'/console/caldav','headers':[(b'accept',b'application/json')], 'session':{}})
+    response=asyncio.run(routes.update_caldav_settings(req,caldav_reminder_minutes='bad',caldav_default_duration='60',session=session,_=None))
+    assert response.status_code == 400
+    assert service.get('caldav_url') == 'https://old.example.com'
+
+
+def test_inline_save_persists_only_on_save_and_changed_account_requires_password():
+    import json
+    from app.web import routes
+    session=_session()
+    req=Request({'type':'http','method':'POST','path':'/console/caldav','headers':[(b'accept',b'application/json')], 'session':{}})
+    kwargs=dict(caldav_url='https://example.com',caldav_username='user',caldav_password='',caldav_calendar_url='https://example.com/work',caldav_calendar_name='Work',caldav_timezone='Asia/Shanghai',caldav_reminder_minutes='15',caldav_default_duration='60',caldav_ssl_verify='true',session=session,_=None)
+    response=asyncio.run(routes.update_caldav_settings(req,**kwargs))
+    assert json.loads(response.body)['ok']
+    service=SettingsService(session)
+    assert service.get('caldav_calendar_name') == 'Work'
+    service.set('caldav_password','saved-test-password');service.commit()
+    kwargs['caldav_username']='other'
+    response=asyncio.run(routes.update_caldav_settings(req,**kwargs))
+    assert response.status_code == 400
+    assert service.get('caldav_username') == 'user'

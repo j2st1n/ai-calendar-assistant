@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator, MutableMapping
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import base64
 import hashlib
@@ -33,6 +33,8 @@ from app.ai.providers import PROVIDER_PRESETS
 from app.db.models import EventRecord, PasskeyCredential
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
+from app.web.event_presenter import event_feedback
+from app.web.connection_checks import revision, save_check, check_summary
 from app.web.security import (
     client_ip,
     login_rate_limiter,
@@ -277,12 +279,25 @@ def _parse_week_start(val: str) -> int:
     return 0 if val == "0" else 1
 
 
-def dashboard_stats(session: Session, settings_service: SettingsService) -> dict[str, int]:
-    tz_name = (settings_service.get("caldav_timezone") or "Asia/Shanghai").strip() or "Asia/Shanghai"
+def _calendar_timezone(settings_service: SettingsService) -> ZoneInfo:
+    name = (settings_service.get("caldav_timezone") or "Asia/Shanghai").strip()
     try:
-        tz = ZoneInfo(tz_name)
-    except (ZoneInfoNotFoundError, KeyError):
-        tz = ZoneInfo("Asia/Shanghai")
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, KeyError, ValueError):
+        return ZoneInfo("Asia/Shanghai")
+
+
+def _record_time(value: datetime | None, tz: ZoneInfo) -> str:
+    if value is None:
+        return ""
+    # SQLite returns UTC timestamps without tzinfo.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(tz).strftime("%Y-%m-%d %H:%M")
+
+
+def dashboard_stats(session: Session, settings_service: SettingsService) -> dict[str, int | None]:
+    tz = _calendar_timezone(settings_service)
 
     now = datetime.now(tz)
     today = now.date()
@@ -297,10 +312,15 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
     week_end = week_start + timedelta(days=6)
     month_start = today.replace(day=1)
 
+    # SQLite stores UTC timestamps without tzinfo; compare against local-day UTC bounds.
+    day_start = datetime.combine(today, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
+    day_end = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
+
     def count_records(*conditions: Any) -> int:
         return session.scalar(
             select(func.count()).select_from(EventRecord).where(
-                EventRecord.created_at >= today,
+                EventRecord.created_at >= day_start,
+                EventRecord.created_at < day_end,
                 *conditions,
             )
         ) or 0
@@ -314,7 +334,8 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
             select(func.count()).select_from(EventRecord).where(
                 EventRecord.operation == "create",
                 EventRecord.status == "success",
-                EventRecord.created_at >= since_date,
+                EventRecord.created_at >= datetime.combine(since_date, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None),
+                EventRecord.created_at < day_end,
                 or_(
                     EventRecord.caldav_uid.is_(None),
                     ~EventRecord.caldav_uid.in_(deleted_uids),
@@ -351,6 +372,8 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
 
     today_processed = count_records()
     today_failed = count_records(EventRecord.status == "failed")
+    today_success = count_records(EventRecord.status == "success")
+    today_finished = today_success + today_failed
     return {
         "today_created": count_since(today),
         "week_created": count_since(week_start),
@@ -363,9 +386,9 @@ def dashboard_stats(session: Session, settings_service: SettingsService) -> dict
         "today_no_event": count_records(EventRecord.operation == "no_event"),
         "today_quote_failures": count_records(EventRecord.operation == "quote_not_found"),
         "today_success_rate": (
-            round((today_processed - today_failed) * 100 / today_processed)
-            if today_processed
-            else 100
+            round(today_success * 100 / today_finished)
+            if today_finished
+            else None
         ),
     }
 
@@ -391,58 +414,34 @@ def status_context(session: Session) -> dict[str, object]:
         host = urlparse(caldav_url).hostname or ""
         caldav_source = host.removeprefix("caldav.").removeprefix("dav.")
 
+    activity_tz = _calendar_timezone(settings_service)
     recent = session.execute(
-        select(EventRecord).where(
-            EventRecord.operation.in_(["create", "update", "delete"]),
-            EventRecord.status == "success",
-        ).order_by(EventRecord.created_at.desc())
+        select(EventRecord)
+        .order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
+        .limit(5)
     ).scalars().all()
-
-    seen: set[str] = set()
-    deduped: list[EventRecord] = []
+    activity = []
     for rec in recent:
-        event_key = _event_key(rec)
-        if event_key not in seen:
-            seen.add(event_key)
-            if rec.operation != "delete":
-                deduped.append(rec)
-            if len(deduped) >= 5:
-                break
-
-    events = []
-    for rec in deduped:
-        events.append({
-            "time": rec.created_at.strftime("%m-%d %H:%M") if rec.created_at else "",
-            "operation": rec.operation or "",
-            "title": rec.title or "",
-            "status": rec.status or "",
-            "start": rec.start_time or "",
-            "end": "",
-            "location": "",
-            "description": "",
-            "recurrence": "",
-            "reminder": "",
+        activity.append({
+            "title": rec.title or "未命名记录",
+            "source": rec.source or "未知来源",
+            "status": rec.status,
+            "time": _record_time(rec.created_at, activity_tz),
+            "original_text": rec.original_text or "",
+            **event_feedback(rec),
         })
-        if rec.event_json:
-            try:
-                data = json.loads(rec.event_json)
-                start = data.get("start_time", "")
-                end = data.get("end_time", "")
-                events[-1]["start"] = start[:16].replace("T", " ") if start else ""
-                if end and start and start[:10] == end[:10]:
-                    events[-1]["end"] = end[11:16]
-                else:
-                    events[-1]["end"] = end[:16].replace("T", " ") if end else ""
-                events[-1]["location"] = data.get("location") or ""
-                events[-1]["description"] = data.get("description") or ""
-                events[-1]["recurrence"] = str(data.get("recurrence", {}).get("frequency", "")) if data.get("recurrence") else ""
-                reminders = data.get("reminders") or []
-                if reminders and reminders[0].get("minutes_before"):
-                    events[-1]["reminder"] = str(reminders[0]["minutes_before"])
-            except Exception:
-                pass
 
+    connection_checks = {}
+    for kind in ("ai", "caldav"):
+        check = check_summary(session, kind)
+        check["time"] = _record_time(check["at"], activity_tz)
+        connection_checks[kind] = check
+    last_calendar_success = session.scalar(select(EventRecord.created_at).where(
+        EventRecord.status == "success", EventRecord.operation.in_(["create", "update", "delete"])
+    ).order_by(EventRecord.created_at.desc()).limit(1))
     return {
+        "connection_checks": connection_checks,
+        "last_calendar_success": _record_time(last_calendar_success, activity_tz),
         "ai_ok": ai_ok,
         "ai_name": f"{ai_name} / {ai_model}" if ai_ok else "未配置",
         "vision_label": vision_label,
@@ -461,7 +460,8 @@ def status_context(session: Session) -> dict[str, object]:
             (wechat_runtime := _runtime_if_loaded("get_wechat_bot_runtime")) is not None
             and wechat_runtime.running
         ),
-        "recent_events": events,
+        "recent_activity": activity,
+        "activity_timezone": str(activity_tz),
         "version": read_version(),
         "changes": read_changes(),
     }
@@ -544,6 +544,46 @@ async def dashboard(request: Request, session: Session = Depends(get_db), _: Non
     ctx["request"] = request
     ctx["message"] = get_flash(request) or request.query_params.get("message")
     return templates.TemplateResponse(request, "dashboard.html", ctx)
+
+
+@router.post("/connections/{kind}/test")
+async def test_saved_connection(
+    kind: str, session: Session = Depends(get_db), _: None = Depends(require_admin),
+) -> JSONResponse:
+    if kind not in {"ai", "caldav"}:
+        raise HTTPException(status_code=404)
+    service = SettingsService(session)
+    signature = revision(session, kind)
+    if kind == "ai":
+        Config, ProviderError, Provider = _ai_components()
+        model = service.get("ai_model") or ""
+        if not model:
+            return _probe_error("请先保存主模型配置。")
+        config = Config(provider_type=service.get("ai_provider_type") or "openai_compatible",
+            base_url=service.get("ai_base_url") or "https://api.openai.com/v1",
+            api_key=service.get("ai_api_key") or "", model=model)
+        try:
+            await Provider().test_connection(config)
+            ok = True
+        except ProviderError:
+            ok = False
+    else:
+        Provider, ProviderError = _caldav_components()
+        url = service.get("caldav_url") or ""
+        if not url:
+            return _probe_error("请先保存日历连接配置。")
+        try:
+            await Provider().test_connection(url, service.get("caldav_username") or "",
+                service.get("caldav_password") or "", ssl_verify=_caldav_ssl_from_settings(service))
+            ok = True
+        except ProviderError:
+            ok = False
+    save_check(session, kind, signature, ok)
+    # A concurrent configuration change makes this result stale, never current.
+    session.expire_all()
+    summary = check_summary(session, kind)
+    summary["time"] = _record_time(summary.pop("at"), _calendar_timezone(service))
+    return JSONResponse({"ok": ok, "check": summary})
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -1361,19 +1401,7 @@ async def caldav_settings(
     payload["request"] = request
     payload["message"] = get_flash(request) or request.query_params.get("message")
     payload["error"] = get_error_flash(request) or request.query_params.get("error")
-    cal_url = request.query_params.get("cal_url")
-    cal_name = request.query_params.get("cal_name")
-    if cal_url and not payload.get("caldav_calendar_url"):
-        payload["caldav_calendar_url"] = cal_url
-    if cal_name and not payload.get("caldav_calendar_name"):
-        payload["caldav_calendar_name"] = cal_name
-    cal_urls = request.query_params.get("cal_urls")
-    if cal_urls:
-        payload["cal_urls"] = cal_urls
-
-    stored_calendars = request.session.get("caldav_calendars", [])
-    if stored_calendars:
-        payload["calendars"] = stored_calendars
+    request.session.pop("caldav_calendars", None)
     return templates.TemplateResponse(request, "caldav.html", payload)
 
 
@@ -1391,11 +1419,13 @@ async def update_caldav_settings(
     caldav_ssl_verify: str = Form("false"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
+) -> Response:
     reminder_val, error = _normalize_caldav_int_setting(
         caldav_reminder_minutes, 30, 0, "提醒分钟数必须是整数。", "提醒分钟数不能为负数。"
     )
     if error is not None or reminder_val is None:
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"ok": False, "error": error or "提醒分钟数无效。"}, status_code=400)
         set_error_flash(request, error or "提醒分钟数无效。")
         return redirect("/console/caldav")
 
@@ -1403,10 +1433,21 @@ async def update_caldav_settings(
         caldav_default_duration, 60, 5, "默认持续时间必须是整数。", "默认持续时间不能少于 5 分钟。"
     )
     if error is not None or duration_val is None:
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"ok": False, "error": error or "默认持续时间无效。"}, status_code=400)
         set_error_flash(request, error or "默认持续时间无效。")
         return redirect("/console/caldav")
 
     settings_service = SettingsService(session)
+    if not caldav_password and settings_service.get("caldav_password") and (
+        caldav_url.strip().rstrip("/") != (settings_service.get("caldav_url") or "").rstrip("/")
+        or caldav_username.strip() != (settings_service.get("caldav_username") or "")
+    ):
+        error = "服务器或用户名已更改，请填写对应的应用密码。"
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"ok": False, "error": error}, status_code=400)
+        set_error_flash(request, error)
+        return redirect("/console/caldav")
     settings_service.set("caldav_url", caldav_url.strip())
     settings_service.set("caldav_username", caldav_username.strip())
     if caldav_password:
@@ -1418,8 +1459,31 @@ async def update_caldav_settings(
     settings_service.set("caldav_default_duration", str(duration_val))
     settings_service.set("caldav_ssl_verify", "true" if _caldav_ssl_from_form(caldav_ssl_verify) else "false")
     settings_service.commit()
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"ok": True, "message": "日历设置已保存。"})
     set_flash(request, "CalDAV 设置已保存。")
     return redirect("/console/caldav")
+
+
+def _caldav_probe_credentials(service: SettingsService, url: str, username: str, password: str) -> tuple[str, str, str]:
+    url, username = url.strip(), username.strip()
+    if not url or not username:
+        raise ValueError("请填写日历服务器地址和用户名。")
+    try:
+        _normalize_url(url)
+        if urlsplit(url).scheme not in {"http", "https"}:
+            raise ValueError("请填写以 HTTP 或 HTTPS 开头的日历服务器地址。")
+    except ValueError as exc:
+        raise ValueError(str(exc).replace("Base URL", "日历服务器地址")) from exc
+    if not password:
+        same_account = (
+            url.rstrip("/") == (service.get("caldav_url") or "").rstrip("/")
+            and username == (service.get("caldav_username") or "")
+        )
+        if not same_account:
+            raise ValueError("服务器或用户名已更改，请填写对应的应用密码。")
+        password = service.get("caldav_password") or ""
+    return url, username, password
 
 
 @router.post("/caldav/test")
@@ -1431,30 +1495,8 @@ async def test_caldav_connection(
     caldav_ssl_verify: str = Form("false"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
-    url = caldav_url.strip()
-    username = caldav_username.strip()
-    password = caldav_password.strip()
-    settings_service = SettingsService(session)
-
-    url = url or settings_service.get("caldav_url") or ""
-    username = username or settings_service.get("caldav_username") or ""
-    password = password or settings_service.get("caldav_password") or ""
-    ssl_verify = _caldav_ssl_from_form(caldav_ssl_verify)
-    if not url:
-        set_error_flash(request, "请填写 CalDAV Server URL。")
-        return redirect("/console/caldav")
-    CalDAVService, CalDAVServiceError = _caldav_components()
-    try:
-        await CalDAVService().test_connection(url, username, password, ssl_verify=ssl_verify)
-    except CalDAVServiceError as exc:
-        error_msg = str(exc)
-        if "405" in error_msg or "Not Allowed" in error_msg or "nginx" in error_msg:
-            error_msg = f"连接失败：URL 可能不是 CalDAV 端点。请确认填的是 CalDAV 地址，不是网站首页。\n常见：iCloud: https://caldav.icloud.com，Nextcloud: https://your.domain/remote.php/dav/"
-        set_error_flash(request, error_msg)
-        return redirect("/console/caldav")
-    set_flash(request, "连接测试成功。")
-    return redirect("/console/caldav")
+) -> JSONResponse:
+    return await _probe_caldav(session, caldav_url, caldav_username, caldav_password, caldav_ssl_verify, False)
 
 
 @router.post("/caldav/calendars")
@@ -1466,41 +1508,25 @@ async def list_caldav_calendars(
     caldav_ssl_verify: str = Form("false"),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
-) -> RedirectResponse:
-    settings_service = SettingsService(session)
-    url = caldav_url.strip() or settings_service.get("caldav_url") or ""
-    username = caldav_username.strip() or settings_service.get("caldav_username") or ""
-    password = caldav_password.strip() or settings_service.get("caldav_password") or ""
-    ssl_verify = _caldav_ssl_from_form(caldav_ssl_verify)
-    if not url:
-        set_error_flash(request, "请填写 CalDAV Server URL。")
-        return redirect("/console/caldav")
+) -> JSONResponse:
+    return await _probe_caldav(session, caldav_url, caldav_username, caldav_password, caldav_ssl_verify, True)
+
+
+async def _probe_caldav(session: Session, url: str, username: str, password: str, ssl: str, list_calendars: bool) -> JSONResponse:
+    try:
+        url, username, password = _caldav_probe_credentials(SettingsService(session), url, username, password)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     CalDAVService, CalDAVServiceError = _caldav_components()
     try:
-        calendars = await CalDAVService().list_calendars(url, username, password, ssl_verify=ssl_verify)
-    except CalDAVServiceError as exc:
-        set_error_flash(request, str(exc))
-        return redirect("/console/caldav")
-
-    if url:
-        settings_service.set("caldav_url", url)
-    if username:
-        settings_service.set("caldav_username", username)
-    if password:
-        settings_service.set("caldav_password", password, encrypted=True)
-    settings_service.commit()
-
-    request.session["caldav_calendars"] = calendars
-    cal_names = [cal["name"] for cal in calendars]
-    msg = f"发现 {len(calendars)} 个日历：{'、'.join(cal_names)}"
-    set_flash(request, msg)
-    if len(calendars) == 1:
-        return redirect_with_query(
-            "/console/caldav",
-            cal_url=calendars[0]["url"],
-            cal_name=calendars[0]["name"],
-        )
-    return redirect("/console/caldav")
+        service = CalDAVService()
+        if list_calendars:
+            calendars = await service.list_calendars(url, username, password, ssl_verify=_caldav_ssl_from_form(ssl))
+            return JSONResponse({"ok": True, "calendars": calendars, "message": f"发现 {len(calendars)} 个日历，请选择目标后保存。"})
+        await service.test_connection(url, username, password, ssl_verify=_caldav_ssl_from_form(ssl))
+        return JSONResponse({"ok": True, "message": "连接测试成功，尚未保存配置。此测试不验证日历写入权限。"})
+    except CalDAVServiceError:
+        return JSONResponse({"ok": False, "error": "无法连接日历服务，请检查服务器地址、应用密码和网络后重试。当前填写内容已保留。"}, status_code=400)
 
 
 @router.get("/telegram", response_class=HTMLResponse)
@@ -1937,26 +1963,58 @@ async def event_records(
     search: str = "",
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
+    page: int = 1,
+    source: str = "",
+    date_from: str = "",
+    date_to: str = "",
 ) -> HTMLResponse:
-    query = select(EventRecord).order_by(EventRecord.created_at.desc()).limit(100)
-    if status_filter and status_filter != "all":
-        query = select(EventRecord).where(EventRecord.status == status_filter).order_by(EventRecord.created_at.desc()).limit(100)
+    status_filter = status_filter if status_filter in {"all", "success", "failed"} else "all"
+    search = search.strip()
+    source = source if source in {"wechat", "telegram", "discord"} else ""
+    activity_tz = _calendar_timezone(SettingsService(session))
+    filters = []
+    filter_error = ""
+    parsed_dates = []
+    for raw in (date_from, date_to):
+        try:
+            value = date.fromisoformat(raw) if raw else None
+            if value and value.year in (1, 9999):
+                raise ValueError("date boundary")
+            parsed_dates.append(value)
+        except ValueError:
+            parsed_dates.append(None)
+            filter_error = "请输入有效日期。"
+    start, end = parsed_dates
+    if start and end and start > end:
+        filter_error = "开始日期不能晚于结束日期。"
+    if status_filter != "all":
+        filters.append(EventRecord.status == status_filter)
     if search:
-        query = select(EventRecord).where(
-            EventRecord.original_text.contains(search.strip()) | EventRecord.title.contains(search.strip())
-        ).order_by(EventRecord.created_at.desc()).limit(100)
-        if status_filter and status_filter != "all":
-            query = select(EventRecord).where(
-                (EventRecord.original_text.contains(search.strip()) | EventRecord.title.contains(search.strip()))
-                & (EventRecord.status == status_filter)
-            ).order_by(EventRecord.created_at.desc()).limit(100)
-
-    records = session.execute(query).scalars().all()
+        filters.append(or_(EventRecord.original_text.contains(search), EventRecord.title.contains(search)))
+    if source:
+        filters.append(EventRecord.source == source)
+    if start:
+        filters.append(EventRecord.created_at >= datetime.combine(start, datetime.min.time(), tzinfo=activity_tz).astimezone(timezone.utc).replace(tzinfo=None))
+    if end:
+        # Inclusive date without overflowing on 9999-12-31.
+        filters.append(EventRecord.created_at <= datetime.combine(end, datetime.max.time(), tzinfo=activity_tz).astimezone(timezone.utc).replace(tzinfo=None))
+    if filter_error:
+        filters.append(EventRecord.id < 0)
+    total = session.scalar(select(func.count(EventRecord.id)).where(*filters)) or 0
+    page_size = 25
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = min(max(1, page), pages)
+    records = session.execute(select(EventRecord).where(*filters)
+        .order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
+        .offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    def page_url(number: int) -> str:
+        return "/console/events?" + urlencode(dict(status_filter=status_filter, search=search,
+            source=source, date_from=date_from, date_to=date_to, page=number))
     events: list[dict[str, object]] = []
     for rec in records:
         events.append({
             "id": rec.id,
-            "time": rec.created_at.strftime("%Y-%m-%d %H:%M") if rec.created_at else "",
+            "time": _record_time(rec.created_at, activity_tz),
             "source": rec.source or "",
             "user": rec.source_user_id or rec.telegram_user_id or "",
             "conversation": rec.conversation_id or "",
@@ -1964,6 +2022,7 @@ async def event_records(
             "title": rec.title or "",
             "start_time": rec.start_time or "",
             "is_recurring": "🔁" if rec.is_recurring else "",
+            **event_feedback(rec),
             "status": rec.status or "",
             "error": rec.error_message or "",
             "original_text": rec.original_text or "",
@@ -1977,6 +2036,13 @@ async def event_records(
         "events.html",
         {
             "events": events,
+            "source": source, "date_from": date_from, "date_to": date_to,
+            "filter_error": filter_error, "total": total, "page": page, "pages": pages,
+            "first_record": (page - 1) * page_size + 1 if total else 0,
+            "last_record": min(page * page_size, total),
+            "previous_url": page_url(page - 1) if page > 1 else "",
+            "next_url": page_url(page + 1) if page < pages else "",
+            "activity_timezone": str(activity_tz),
             "status_filter": status_filter,
             "search": search,
             "statuses": [("all", "全部"), ("success", "成功"), ("failed", "失败")],
@@ -2017,7 +2083,7 @@ async def update_admin_settings(
 async def update_data_settings(
     request: Request,
     event_record_limit: int = Form(...),
-    week_start_day: str = Form("1"),
+    week_start_day: str | None = Form(None),
     session: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ) -> RedirectResponse:
@@ -2025,16 +2091,34 @@ async def update_data_settings(
         set_error_flash(request, "记录保留数量必须在 1 到 100000 之间。")
         return redirect("/console/system")
 
-    if week_start_day not in ("0", "1"):
+    if week_start_day is not None and week_start_day not in ("0", "1"):
         set_error_flash(request, "每周起始日必须是周日或周一。")
         return redirect("/console/system")
 
     settings_service = SettingsService(session)
-    settings_service.set("week_start_day", week_start_day)
+    if week_start_day is not None:
+        settings_service.set("week_start_day", week_start_day)
     settings_service.set("event_record_limit", str(event_record_limit))
     settings_service.commit()
     prune_event_records(session, event_record_limit)
     set_flash(request, "系统设置已保存。")
+    return redirect("/console/system")
+
+
+@router.post("/system/preferences")
+async def update_preferences(
+    request: Request,
+    week_start_day: str = Form(...),
+    session: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+) -> RedirectResponse:
+    if week_start_day not in ("0", "1"):
+        set_error_flash(request, "每周起始日必须是周日或周一。")
+        return redirect("/console/system")
+    service = SettingsService(session)
+    service.set("week_start_day", week_start_day)
+    service.commit()
+    set_flash(request, "日程偏好已保存。")
     return redirect("/console/system")
 
 

@@ -1,86 +1,60 @@
 {% extends "base.html" %}
 {% block content %}
 <h2 class="section-title">事件记录</h2>
-<p class="section-sub">最近的事件创建、修改、删除记录。只查看，不做手动操作。</p>
+<p class="section-sub">查看日程处理结果，了解失败原因和下一步操作。</p>
 
-<form method="get" action="/console/events" class="row" style="margin-bottom:16px; gap:8px;">
-  <div class="cs-wrap" style="width:100px;">
-    <div class="cs-trigger">{{ status_filter or '全部' }}</div>
-    <div class="cs-drop">
-      {% for s in statuses %}
-      <div class="cs-opt {% if status_filter == s[0] %}sel{% endif %}" data-value="{{ s[0] }}">{{ s[1] }}</div>
-      {% endfor %}
-    </div>
-    <input type="hidden" name="status_filter" value="{{ status_filter or 'all' }}">
-  </div>
-  <input name="search" value="{{ search }}" placeholder="搜索原始输入或标题…" style="flex:1;">
-  <button type="submit">过滤</button>
-  {% if status_filter and status_filter != 'all' %}
-  <a href="/console/events" class="button-link secondary" style="padding:8px 14px;">清除</a>
-  {% endif %}
-  <button type="submit" class="secondary" style="padding:8px 14px;">刷新</button>
+<form method="get" action="/console/events" class="event-filters">
+  <label><span>处理状态</span>
+    <select name="status_filter">
+      {% for value, label in statuses %}<option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="event-search"><span>搜索记录</span><input name="search" value="{{ search }}" placeholder="搜索标题或原始输入"></label>
+  <label><span>聊天渠道</span><select name="source">{% for value, label in [('', '全部渠道'), ('wechat','微信'), ('telegram','Telegram'), ('discord','Discord')] %}<option value="{{ value }}" {% if source == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label><span>处理日期从</span><input type="date" name="date_from" value="{{ date_from }}"></label>
+  <label><span>处理日期至</span><input type="date" name="date_to" value="{{ date_to }}"></label>
+  <button type="submit">筛选</button>
+  {% if search or status_filter != 'all' or source or date_from or date_to %}<a href="/console/events" class="button-link secondary">清除筛选</a>{% endif %}
 </form>
+<p class="event-count">共 {{ total }} 条，当前显示 {{ first_record }}–{{ last_record }} 条，每页 25 条。时间为处理记录时间（{{ activity_timezone }}）。</p>
 
+{% if filter_error %}<p class="alert error" role="alert">{{ filter_error }}</p>{% endif %}
 {% if events %}
-<div class="table-wrap">
-  <table>
-    <thead>
-      <tr>
-        <th>时间</th>
-        <th>来源</th>
-        <th>用户</th>
-        <th>操作</th>
-        <th>标题</th>
-        <th>状态</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for event in events %}
-      <tr class="ev-row" style="cursor:pointer;" onclick="var d=this.nextElementSibling;if(d&&d.classList.contains('ev-detail')){d.classList.toggle('open');}">
-        <td style="white-space:nowrap;">{{ event.time }}</td>
-        <td style="white-space:nowrap;">{{ event.source }}</td>
-        <td class="mono" style="white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;">{{ event.user }}</td>
-        <td style="white-space:nowrap;">{% if event.operation == 'create' %}创建{% elif event.operation == 'update' %}修改{% elif event.operation == 'delete' %}删除{% else %}{{ event.operation }}{% endif %}</td>
-        <td class="text-ellipsis" style="max-width:450px;">{{ event.title or '(无标题)' }}</td>
-        <td>
-          {% if event.status == 'success' %}
-          <span class="status-badge"><span class="dot dot-success"></span>成功</span>
-          {% elif event.status == 'failed' %}
-          <span class="status-badge"><span class="dot dot-error"></span>失败</span>
-          {% else %}
-          <span class="status-badge"><span class="dot dot-warning"></span>{{ event.status }}</span>
-          {% endif %}
-        </td>
-      </tr>
-      <tr class="ev-detail" style="display:none;">
-        <td colspan="6" style="padding:12px 16px;background:rgba(255,255,255,0.01);">
-          {% if event.original_text %}
-          <div style="margin-bottom:8px;">
-            <span class="muted-secondary">原始输入：</span>
-            <pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-top:4px;white-space:pre-wrap;font:inherit;font-size:13px;color:#d0d6e0;">{{ event.original_text }}</pre>
-          </div>
-          {% endif %}
-          {% if event.event_json %}
-          <div style="margin-bottom:8px;">
-            <span class="muted-secondary">结构化结果：</span>
-            <pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;margin-top:4px;white-space:pre-wrap;max-height:200px;overflow:auto;font:inherit;font-size:13px;color:#d0d6e0;">{{ event.event_json }}</pre>
-          </div>
-          {% endif %}
-          {% if event.conversation %}<div style="margin-bottom:8px;color:#62666d;font-size:12px;">会话：<span class="mono">{{ event.conversation }}</span></div>{% endif %}
-          <div style="color:#62666d;font-size:12px;">
-            {% if event.caldav_href %}<div>CalDAV href: <span class="mono">{{ event.caldav_href }}</span></div>{% endif %}
-            {% if event.caldav_uid %}<div>CalDAV uid: <span class="mono">{{ event.caldav_uid }}</span></div>{% endif %}
-            {% if event.error %}<div style="margin-top:6px;color:#fca5a5;">错误：{{ event.error }}</div>{% endif %}
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="event-list">
+  {% for event in events %}
+  <details class="event-record">
+    <summary class="event-summary">
+      <span class="event-heading">
+        <span class="event-title">{{ event.title or (event.original_text|truncate(100, true) if event.original_text else '未命名记录') }}</span>
+        <span class="event-meta"><span>{{ event.operation_label }}</span><span>{{ {'wechat':'微信', 'telegram':'Telegram', 'discord':'Discord'}.get(event.source, event.source or '未知来源') }}</span><time>{{ event.time }}</time></span>
+      </span>
+      <span class="status-badge"><span class="dot {% if event.status == 'success' %}dot-success{% elif event.status == 'failed' %}dot-error{% else %}dot-warning{% endif %}"></span>{{ event.result_label }}</span>
+      <span class="event-detail-label">详情</span>
+    </summary>
+    {% if event.reason %}<div class="event-feedback"><strong>{{ event.reason }}</strong><p>{{ event.suggestion }}</p>{% if event.action_url %}<a class="button-link secondary" href="{{ event.action_url }}">{{ event.action_label }}</a>{% endif %}</div>{% endif %}
+    <div class="event-body">
+      {% if event.start_time %}<p class="event-time">日程开始时间：{{ event.start_time }}</p>{% endif %}
+      {% if event.original_text %}<h3>原始输入</h3><pre>{{ event.original_text }}</pre>{% endif %}
+      <details class="event-technical"><summary>技术详情</summary>
+        <dl><dt>用户</dt><dd>{{ event.user or '未记录' }}</dd>{% if event.conversation %}<dt>会话</dt><dd>{{ event.conversation }}</dd>{% endif %}
+        {% if event.caldav_href %}<dt>CalDAV 地址</dt><dd>{{ event.caldav_href }}</dd>{% endif %}
+        {% if event.caldav_uid %}<dt>CalDAV UID</dt><dd>{{ event.caldav_uid }}</dd>{% endif %}</dl>
+        {% if event.error %}<h3>原始错误</h3><pre>{{ event.error }}</pre>{% endif %}
+        {% if event.event_json %}<h3>结构化结果</h3><pre>{{ event.event_json }}</pre>{% endif %}
+      </details>
+    </div>
+  </details>
+  {% endfor %}
 </div>
 {% else %}
 <div class="card">
-  <p class="muted">暂无事件记录。当 Telegram 或 Web 创建/修改/删除日程时，记录会显示在这里。</p>
+  {% if search or status_filter != 'all' or source or date_from or date_to %}<h3>没有匹配的记录</h3><p class="muted">试试其他关键词，或清除筛选查看全部记录。</p><a class="button-link secondary" href="/console/events">清除筛选</a>
+  {% else %}<h3>还没有处理记录</h3><p class="muted">通过 Telegram、Discord 或微信发送日程消息后，处理结果会显示在这里。</p>{% endif %}
 </div>
 {% endif %}
+{% if pages > 1 %}<nav class="event-pagination" aria-label="记录分页">
+{% if previous_url %}<a class="button-link secondary" href="{{ previous_url }}">上一页</a>{% endif %}
+<span>第 {{ page }} / {{ pages }} 页</span>
+{% if next_url %}<a class="button-link secondary" href="{{ next_url }}">下一页</a>{% endif %}
+</nav>{% endif %}
 {% endblock %}

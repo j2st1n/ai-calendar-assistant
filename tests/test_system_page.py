@@ -41,7 +41,7 @@ def test_mobile_navigation_uses_a_scrollable_drawer():
     template = Path("app/web/templates/base.html").read_text()
     styles = Path("app/web/static/styles.css").read_text()
 
-    assert 'href="/static/styles.css?v=5"' in template
+    assert 'href="/static/styles.css?v=6"' in template
     assert 'data-mobile-menu-toggle' in template
     assert 'id="console-sidebar"' in template
     assert 'data-mobile-menu-close' in template
@@ -106,3 +106,15 @@ def test_release_reuses_docker_workflow_after_creating_version_tag():
     assert "new_version: ${{ steps.version.outputs.version }}" in release_workflow
     assert "uses: ./.github/workflows/docker-build.yml" in release_workflow
     assert "image_tag: ${{ needs.release.outputs.new_version }}" in release_workflow
+
+
+def test_wechat_login_disclosure_tracks_current_session_error():
+    from starlette.requests import Request
+    from app.web.routes import templates
+    request = Request({'type':'http','method':'GET','path':'/console/wechat','headers':[], 'session':{'admin_authenticated':True}})
+    for category, should_open in [('stale_token', True), ('network', False), (None, False)]:
+        html = templates.get_template('wechat.html').render(request=request,
+            wechat_configured=True, wechat_task_alive=True, wechat_state='polling',
+            wechat_state_label='在线', wechat_current_error={'category':category,'message':'demo'} if category else None)
+        assert ('id="wechat-login" open' in html) == should_open
+        assert ('id="wechat-recovery" class="alert error" hidden' in html) == (not should_open)

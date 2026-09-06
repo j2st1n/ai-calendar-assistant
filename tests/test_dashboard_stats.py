@@ -338,12 +338,12 @@ def test_dashboard_stats_skips_none_start_time(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_today_created_counts_recent_create_records(monkeypatch):
-    """today_created counts create+success records with created_at >= today."""
+    """today_created starts at midnight in the configured timezone."""
     monkeypatch.setattr(routes, "datetime", _FixedNow)
     session = _session()
     svc = _svc(session)
     today_start = datetime(2026, 6, 7, 0, 0, tzinfo=timezone.utc)
-    yesterday = datetime(2026, 6, 6, 23, 59, tzinfo=timezone.utc)
+    yesterday = datetime(2026, 6, 6, 15, 59, tzinfo=timezone.utc)
     _ = _seed(session, operation="create", status="success", created_at=today_start)
     _ = _seed(session, operation="create", status="success", created_at=yesterday)
     _ = _seed(session, operation="create", status="success", created_at=today_start,
@@ -444,7 +444,7 @@ def test_dashboard_stats_empty_database(monkeypatch):
         "today_failed": 0,
         "today_no_event": 0,
         "today_quote_failures": 0,
-        "today_success_rate": 100,
+        "today_success_rate": None,
     }
 
 
@@ -462,15 +462,18 @@ def test_dashboard_stats_preserves_key_set(monkeypatch):
     }
 
 
-def test_dashboard_stats_returns_int_values(monkeypatch):
-    """Every value in the returned dict is an int."""
+def test_dashboard_stats_returns_counts_and_optional_rate(monkeypatch):
+    """Counts are integers; an unsampled rate is unavailable."""
     monkeypatch.setattr(routes, "datetime", _FixedNow)
     session = _session()
     svc = _svc(session)
     _ = _seed(session, start_time="2026-06-03T09:00:00+08:00", event_id="ev1", caldav_uid="u1")
     stats = dashboard_stats(session, svc)
     for key, val in stats.items():
-        assert isinstance(val, int), f"{key} is {type(val).__name__}, not int"
+        if key == "today_success_rate":
+            assert val is None
+        else:
+            assert isinstance(val, int), f"{key} is {type(val).__name__}, not int"
 
 
 def test_dashboard_stats_reports_daily_processing_metrics(monkeypatch):
@@ -545,3 +548,77 @@ def test_update_data_settings_rejects_invalid_week_start_day():
         assert request.session["error_flash"] == "每周起始日必须是周日或周一。"
         assert settings.get("week_start_day") == "1"
     asyncio.run(run())
+
+
+def test_today_processing_uses_local_midnight_and_excludes_pending(monkeypatch):
+    monkeypatch.setattr(routes, "datetime", _FixedNow)
+    session = _session()
+    svc = _svc(session)
+    _seed(session, status="success", created_at=datetime(2026, 6, 6, 16, 1, tzinfo=timezone.utc))
+    _seed(session, status="failed", created_at=datetime(2026, 6, 6, 15, 59, tzinfo=timezone.utc))
+    _seed(session, status="pending", created_at=datetime(2026, 6, 7, 0, 0, tzinfo=timezone.utc))
+    _seed(session, status="failed", created_at=datetime(2026, 6, 7, 16, 0, tzinfo=timezone.utc))
+    stats = dashboard_stats(session, svc)
+    assert stats['today_processed'] == 2
+    assert stats['today_failed'] == 0
+    assert stats['today_success_rate'] == 100
+
+
+def test_recent_activity_includes_failures_and_deletes_with_stable_order():
+    session = _session()
+    _svc(session)
+    stamp = datetime(2026, 6, 7, 0, 30, tzinfo=timezone.utc)
+    for index in range(7):
+        _seed(session, title=f"record-{index}", event_id="same-event",
+              operation="delete" if index == 6 else "create",
+              status="failed" if index == 5 else "success", created_at=stamp)
+    context = routes.status_context(session)
+    activity = context["recent_activity"]
+    assert [row['title'] for row in activity] == [f"record-{i}" for i in range(6, 1, -1)]
+    assert activity[0]['operation_label'] == '删除'
+    assert activity[1]['status'] == 'failed'
+    assert activity[1]['reason']
+    assert activity[0]['time'] == '2026-06-07 08:30'
+    assert context['activity_timezone'] == 'Asia/Shanghai'
+    session.close()
+
+
+def test_dashboard_empty_state_and_unconfigured_actions():
+    session = _session()
+    svc = _svc(session, tz='invalid/timezone')
+    context = routes.status_context(session)
+    assert context['recent_activity'] == []
+    assert context['activity_timezone'] == 'Asia/Shanghai'
+    request = _request()
+    request.session['admin_authenticated'] = True
+    html = routes.templates.get_template('dashboard.html').render(
+        request=request, stats=dashboard_stats(session, svc), **context)
+    assert '还没有处理记录' in html
+    assert '完成 AI 配置' in html
+    assert '连接目标日历' in html
+    assert '暂无已完成记录' in html
+    assert '100%' not in html
+    assert '启动 Bot' not in html
+    assert 'action="/console/wechat/start"' not in html
+    session.close()
+
+
+def test_record_time_handles_utc_naive_aware_and_missing():
+    tz = routes.ZoneInfo('Asia/Shanghai')
+    assert routes._record_time(datetime(2026, 6, 6, 16, 30), tz) == '2026-06-07 00:30'
+    assert routes._record_time(datetime(2026, 6, 7, 0, 30, tzinfo=tz), tz) == '2026-06-07 00:30'
+    assert routes._record_time(None, tz) == ''
+
+
+def test_preferences_do_not_prune_history_and_retention_preserves_week_start():
+    session = _session()
+    svc = _svc(session, week_start='0')
+    svc.set('event_record_limit', '1')
+    svc.commit()
+    _seed(session)
+    _seed(session)
+    asyncio.run(routes.update_preferences(_request(), week_start_day='1', session=session, _=None))
+    assert session.query(EventRecord).count() == 2
+    assert SettingsService(session).get('event_record_limit') == '1'
+    asyncio.run(update_data_settings(_request(), event_record_limit=2, week_start_day=None, session=session, _=None))
+    assert SettingsService(session).get('week_start_day') == '1'

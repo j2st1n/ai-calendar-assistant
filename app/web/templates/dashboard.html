@@ -1,168 +1,72 @@
 {% extends "base.html" %}
 {% block content %}
-<h2 class="section-title">概览</h2>
-{% if message %}<p class="alert success" id="dash-msg">{{ message }}</p>
-<script>setTimeout(function(){var e=document.getElementById('dash-msg');if(e)e.remove();},3000);</script>
-{% endif %}
-
-<h3 class="muted" style="font-size:13px;font-weight:510;margin-bottom:12px;">系统</h3>
-<div class="grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:24px;">
-  <div class="metric">
-    <span>今日创建</span>
-    <strong>{{ stats.today_created }}</strong>
-  </div>
-  <div class="metric">
-    <span>本周创建</span>
-    <strong>{{ stats.week_created }}</strong>
-  </div>
-  <div class="metric">
-    <span>本月创建</span>
-    <strong>{{ stats.month_created }}</strong>
-  </div>
+<div class="dashboard-heading">
+  <div><h2 class="section-title">概览</h2><p class="section-sub">查看处理进展，继续需要关注的事项。</p></div>
+  <a href="/console/events" class="button-link">查看事件记录</a>
 </div>
+{% if message %}<p class="alert success" role="status">{{ message }}</p>{% endif %}
 
-<h3 class="muted" style="font-size:13px;font-weight:510;margin-bottom:12px;">今日处理</h3>
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-bottom:24px;">
-  <div class="metric">
-    <span>处理总数</span>
-    <strong>{{ stats.today_processed }}</strong>
-  </div>
-  <div class="metric">
-    <span>成功率</span>
-    <strong>{{ stats.today_success_rate }}%</strong>
-  </div>
-  <div class="metric">
-    <span>处理失败</span>
-    <strong>{{ stats.today_failed }}</strong>
-  </div>
-  <div class="metric">
-    <span>未识别</span>
-    <strong>{{ stats.today_no_event }}</strong>
-  </div>
-  <div class="metric">
-    <span>引用未命中</span>
-    <strong>{{ stats.today_quote_failures }}</strong>
-  </div>
-</div>
+<section class="card dashboard-attention" aria-labelledby="attention-title">
+  <h3 id="attention-title">建议检查</h3>
+  {% if not ai_ok %}<div class="dashboard-notice"><div><strong>完成 AI 配置</strong><p>设置主模型，让助手识别聊天中的日程。</p></div><a class="button-link secondary" href="/console/ai">配置 AI</a></div>{% endif %}
+  {% if not caldav_ok %}<div class="dashboard-notice"><div><strong>连接目标日历</strong><p>填写 CalDAV 连接信息并选择要写入的日历。</p></div><a class="button-link secondary" href="/console/caldav">配置日历</a></div>{% endif %}
+  {% if stats.today_failed %}<div class="dashboard-notice"><div><strong>今日有 {{ stats.today_failed }} 条失败记录</strong><p>查看原因及处理建议；历史失败可能已经后续重试成功。</p></div><a class="button-link secondary" href="/console/events?status_filter=failed">查看失败记录</a></div>
+  {% elif ai_ok and caldav_ok %}<p class="dashboard-note">今日暂无失败记录，AI 和日历配置已保存。连接是否可用仍需测试或实际处理验证。</p>{% endif %}
+</section>
 
-<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom:24px;">
-  <div class="card" style="margin-bottom:0;">
-    <h3 style="margin-bottom:8px;">AI</h3>
-    {% if ai_ok %}
-    <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
-    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">主模型：{{ ai_name }}</span>
-    <span class="muted" style="font-size:12px;display:block;">识图模型：{{ vision_label }}</span>
-    {% else %}
-    <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
-    <a href="/console/ai" class="button-link secondary" style="margin-top:8px;font-size:12px;padding:4px 10px;">去配置</a>
-    {% endif %}
-  </div>
+<section class="dashboard-section" aria-labelledby="activity-title">
+  <div class="dashboard-heading"><h3 id="activity-title">最近处理活动</h3><a href="/console/events">全部记录 →</a></div>
+  <p class="event-count">最近 5 条处理记录，包含成功、失败与删除。处理时间：{{ activity_timezone }}。</p>
+  {% if recent_activity %}<div class="event-list">
+  {% for event in recent_activity %}
+    <details class="event-record">
+      <summary class="event-summary">
+        <span class="event-heading"><span class="event-title">{{ event.title }}</span><span class="event-meta"><span>{{ event.operation_label }}</span><span>{{ {'wechat':'微信','telegram':'Telegram','discord':'Discord'}.get(event.source, event.source) }}</span><time>{{ event.time }}</time></span></span>
+        <span class="status-badge"><span class="dot {% if event.status == 'success' %}dot-success{% elif event.status == 'failed' %}dot-error{% else %}dot-warning{% endif %}"></span>{{ event.result_label }}</span><span class="event-detail-label">详情</span>
+      </summary>
+      {% if event.reason %}<div class="event-feedback"><strong>{{ event.reason }}</strong><p>{{ event.suggestion }}</p>{% if event.action_url %}<a class="button-link secondary" href="{{ event.action_url }}">{{ event.action_label }}</a>{% endif %}</div>{% endif %}
+      <div class="event-body">{% if event.original_text %}<h3>原始输入</h3><pre>{{ event.original_text }}</pre>{% else %}<p class="dashboard-note">未保留原始输入。</p>{% endif %}<a href="/console/events">前往事件记录查看完整详情 →</a></div>
+    </details>
+  {% endfor %}</div>
+  {% else %}<div class="card"><h3>还没有处理记录</h3><p class="dashboard-note">配置 AI、日历和任一聊天渠道后，发送一条包含日期、时间和事项的消息，开始创建日程。</p></div>{% endif %}
+</section>
 
-  <div class="card" style="margin-bottom:0;">
-    <h3 style="margin-bottom:8px;">日历</h3>
-    {% if caldav_ok %}
-    <span class="status-badge"><span class="dot dot-success"></span>已配置</span>
-    <span class="muted" style="font-size:12px;display:block;margin-top:4px;">{{ caldav_source }} / {{ caldav_name }}</span>
-    {% else %}
-    <span class="status-badge"><span class="dot dot-error"></span>未配置</span>
-    <a href="/console/caldav" class="button-link secondary" style="margin-top:8px;font-size:12px;padding:4px 10px;">去配置</a>
-    {% endif %}
+<section class="card" aria-labelledby="connections-title">
+  <h3 id="connections-title">连接摘要</h3>
+  <p class="event-count">配置已保存不代表实时可用；聊天渠道可按需启用。</p>
+  <div class="connection-checks">
+    {% for kind, label in [('ai','主模型'),('caldav','日历连接')] %}
+    <div><strong>{{ label }}</strong><p id="check-{{ kind }}" role="status">{{ connection_checks[kind].label }}{% if connection_checks[kind].time %} · {{ connection_checks[kind].time }}{% endif %}</p>
+    <button type="button" class="secondary" data-check-kind="{{ kind }}">验证已保存配置</button></div>
+    {% endfor %}
   </div>
+  <p class="event-count">验证时间：{{ activity_timezone }}。结果只代表测试当时，超过 24 小时需复核。主模型验证不覆盖识图或日程识别能力，日历连接验证不覆盖写入权限。</p>
+  <p class="event-count">最近日历操作成功：{{ last_calendar_success or '暂无记录' }}。依据本地历史记录，可能使用之前的配置。</p>
+  <div class="dashboard-connections">
+    <a href="/console/ai"><strong>AI</strong><span>{{ '配置已保存' if ai_ok else '未配置' }}</span><small>{% if ai_ok %}{{ ai_name }} · 识图：{{ vision_label }}{% else %}选择主模型{% endif %}</small></a>
+    <a href="/console/caldav"><strong>日历</strong><span>{{ '配置已保存' if caldav_ok else '未配置' }}</span><small>{{ (caldav_source ~ ' / ' ~ caldav_name) if caldav_ok else '选择要写入的日历' }}</small></a>
+    {% for name, running, path in [('Telegram',tg_running,'telegram'),('Discord',dc_running,'discord'),('微信',wechat_running,'wechat')] %}
+    <a href="/console/{{ path }}"><strong>{{ name }}</strong><span>{{ '运行中' if running else '未启动' }}</span><small>管理渠道 →</small></a>
+    {% endfor %}
+  </div>
+</section>
 
-  <div class="card" style="margin-bottom:0;">
-    <h3 style="margin-bottom:8px;">Telegram Bot</h3>
-    {% if tg_running %}
-    <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
-    {% else %}
-    <span class="status-badge"><span class="dot dot-error"></span>未启动</span>
-    <form method="post" action="/console/telegram" style="margin-top:8px;">
-      <input type="hidden" name="bot_token" value="">
-      <input type="hidden" name="bot_username" value="">
-      <input type="hidden" name="redirect" value="/console">
-      <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">启动 Bot</button>
-    </form>
-    {% endif %}
+<details class="card dashboard-statistics">
+  <summary>统计与本地日程 <span class="dashboard-note">今日处理 {{ stats.today_processed }} 条 · <span class="dashboard-expand">展开查看</span><span class="dashboard-collapse">收起统计</span></span></summary>
+  <h3>今日处理</h3><p class="event-count">成功率按今日已完成记录计算，待处理记录不计入；以配置的日历时区划分日期。</p>
+  <div class="dashboard-metrics">
+    <div class="metric"><span>处理总数</span><strong>{{ stats.today_processed }}</strong></div>
+    <div class="metric"><span>成功率</span><strong>{% if stats.today_success_rate is not none %}{{ stats.today_success_rate }}%{% else %}—{% endif %}</strong>{% if stats.today_success_rate is none %}<span>暂无已完成记录</span>{% endif %}</div>
+    <div class="metric"><span>处理失败</span><strong>{{ stats.today_failed }}</strong></div>
+    <div class="metric"><span>未识别</span><strong>{{ stats.today_no_event }}</strong></div>
+    <div class="metric"><span>引用未命中</span><strong>{{ stats.today_quote_failures }}</strong></div>
   </div>
-
-  <div class="card" style="margin-bottom:0;">
-    <h3 style="margin-bottom:8px;">Discord Bot</h3>
-    {% if dc_running %}
-    <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
-    {% else %}
-    <span class="status-badge"><span class="dot dot-error"></span>未启动</span>
-    <form method="post" action="/console/discord" style="margin-top:8px;">
-      <input type="hidden" name="bot_token" value="">
-      <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">启动 Bot</button>
-    </form>
-    {% endif %}
+  <h3>创建统计</h3><div class="dashboard-metrics">
+    {% for label, value in [('今日创建',stats.today_created),('本周创建',stats.week_created),('本月创建',stats.month_created)] %}<div class="metric"><span>{{ label }}</span><strong>{{ value }}</strong></div>{% endfor %}
   </div>
-
-  <div class="card" style="margin-bottom:0;">
-    <h3 style="margin-bottom:8px;">WeChat Bot</h3>
-    {% if wechat_running %}
-    <span class="status-badge"><span class="dot dot-success"></span>运行中</span>
-    {% else %}
-    <span class="status-badge"><span class="dot dot-error"></span>未启动</span>
-    <form method="post" action="/console/wechat/start" style="margin-top:8px;">
-      <button type="submit" class="secondary" style="font-size:12px;padding:4px 10px;">启动 Bot</button>
-    </form>
-    {% endif %}
-  </div>
-</div>
-
-<h3 class="muted" style="font-size:13px;font-weight:510;margin-bottom:12px;">日程</h3>
-<div class="grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:24px;">
-  <div class="metric">
-    <span>今日日程</span>
-    <strong>{{ stats.today_events }}</strong>
-  </div>
-  <div class="metric">
-    <span>本周日程</span>
-    <strong>{{ stats.week_events }}</strong>
-  </div>
-  <div class="metric">
-    <span>本月日程</span>
-    <strong>{{ stats.month_events }}</strong>
-  </div>
-</div>
-
-<h3 class="muted" style="font-size:14px;font-weight:510;margin-bottom:12px;">最近日程</h3>
-{% if recent_events %}
-<div class="card" style="padding:0;">
-  {% for ev in recent_events %}
-  <details style="border-bottom:1px solid rgba(255,255,255,0.04);">
-    <summary style="cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:8px;font-size:13px;list-style:none;">
-      <span class="muted-secondary" style="font-size:12px;min-width:90px;">{{ ev.time }}</span>
-      <span style="min-width:40px;">
-        {% if ev.operation == 'create' %}➕
-        {% elif ev.operation == 'update' %}✏️
-        {% elif ev.operation == 'delete' %}🗑️
-        {% else %}📋{% endif %}
-      </span>
-      <span style="flex:1;">{{ ev.title or '(无标题)' }}</span>
-      {% if ev.status == 'success' %}
-      <span class="status-badge"><span class="dot dot-success"></span>成功</span>
-      {% elif ev.status == 'failed' %}
-      <span class="status-badge"><span class="dot dot-error"></span>失败</span>
-      {% else %}
-      <span class="status-badge"><span class="dot dot-warning"></span>待处理</span>
-      {% endif %}
-    </summary>
-    <div style="padding:0 16px 12px 48px;font-size:13px;color:#d0d6e0;">
-      {% if ev.title %}<div style="margin-bottom:4px;">📌 标题：{{ ev.title }}</div>{% endif %}
-      {% if ev.start %}<div style="margin-bottom:4px;color:#8a8f98;">🕒 时间：{{ ev.start }}{% if ev.end %} - {{ ev.end }}{% endif %}</div>{% endif %}
-      {% if ev.location %}<div style="margin-bottom:4px;color:#8a8f98;">📍 地点：{{ ev.location }}</div>{% endif %}
-      {% if ev.description %}<div style="margin-bottom:4px;color:#8a8f98;">📝 描述：{{ ev.description }}</div>{% endif %}
-      {% if ev.recurrence %}<div style="margin-bottom:4px;color:#8a8f98;">🔁 重复：{{ ev.recurrence }}</div>{% endif %}
-      {% if ev.reminder %}<div style="color:#8a8f98;">⏰ 提醒：提前 {{ ev.reminder }} 分钟</div>{% endif %}
-    </div>
-  </details>
-  {% endfor %}
-</div>
-{% else %}
-<p class="muted" style="margin-bottom:24px;">暂无日程记录。</p>
-{% endif %}
-
+  <h3>本地记录中的日程</h3><p class="event-count">根据助手保留的操作记录统计，不包含其他客户端新增的日程，也不是日历的实时完整列表。</p>
+  <div class="dashboard-metrics">{% for label, value in [('今日日程',stats.today_events),('本周日程',stats.week_events),('本月日程',stats.month_events)] %}<div class="metric"><span>{{ label }}</span><strong>{{ value }}</strong></div>{% endfor %}</div>
+</details>
 
 {% if changes and changes.sections %}
 <details style="margin-top:24px;">
@@ -182,4 +86,20 @@
   </div>
 </details>
 {% endif %}
+<script>
+document.querySelectorAll('[data-check-kind]').forEach(function(button) {
+  button.addEventListener('click', async function() {
+    var target = document.getElementById('check-' + button.dataset.checkKind);
+    button.disabled = true;
+    target.textContent = '正在验证已保存配置…';
+    try {
+      var response = await fetch('/console/connections/' + button.dataset.checkKind + '/test', {method:'POST'});
+      var data = await response.json();
+      target.textContent = data.check ? data.check.label + (data.check.time ? ' · ' + data.check.time : '') : (data.error || '验证未完成，请重试。');
+    } catch (error) {
+      target.textContent = '验证结果未能加载，请刷新查看最近记录。';
+    } finally { button.disabled = false; }
+  });
+});
+</script>
 {% endblock %}
