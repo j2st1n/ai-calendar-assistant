@@ -709,3 +709,9 @@ a:hover { color: #828fff; }
 .connection-checks { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:16px 0; }
 .connection-checks p { color:#a7acb5; margin:8px 0; font-size:13px; }
 @media(max-width:768px) { .connection-checks { grid-template-columns:minmax(0,1fr); } }
+
+.dashboard-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; }
+.dashboard-kpis .metric { min-width:0; }
+.dashboard-kpis .metric span:last-child { font-size:12px; line-height:1.5; color:#a7acb5; }
+.dashboard-kpi-note { margin-top:12px; }
+@media(max-width:768px) { .dashboard-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .dashboard-kpis .metric { padding:16px; } }

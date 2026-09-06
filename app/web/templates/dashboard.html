@@ -2,9 +2,18 @@
 {% block content %}
 <div class="dashboard-heading">
   <div><h2 class="section-title">概览</h2><p class="section-sub">查看处理进展，继续需要关注的事项。</p></div>
-  <a href="/console/events" class="button-link">查看事件记录</a>
 </div>
 {% if message %}<p class="alert success" role="status">{{ message }}</p>{% endif %}
+
+<section class="dashboard-section" aria-label="今日关键指标">
+  <div class="dashboard-kpis">
+    <div class="metric"><span>今日处理</span><strong>{{ stats.today_processed }}</strong><span>包含待处理记录</span></div>
+    <div class="metric"><span>今日创建</span><strong>{{ stats.today_created }}</strong><span>成功创建的记录</span></div>
+    <div class="metric"><span>今日失败</span><strong>{{ stats.today_failed }}</strong><span>历史失败可能已重试成功</span></div>
+    <div class="metric"><span>今日成功率</span><strong>{% if stats.today_success_rate is not none %}{{ stats.today_success_rate }}%{% else %}—{% endif %}</strong><span>{{ '按已完成记录计算' if stats.today_success_rate is not none else '暂无已完成记录' }}</span></div>
+  </div>
+  <p class="event-count dashboard-kpi-note">今日按 {{ activity_timezone }} 划分；成功率不计入待处理记录。</p>
+</section>
 
 <section class="card dashboard-attention" aria-labelledby="attention-title">
   <h3 id="attention-title">建议检查</h3>
@@ -52,17 +61,14 @@
 </section>
 
 <details class="card dashboard-statistics">
-  <summary>统计与本地日程 <span class="dashboard-note">今日处理 {{ stats.today_processed }} 条 · <span class="dashboard-expand">展开查看</span><span class="dashboard-collapse">收起统计</span></span></summary>
-  <h3>今日处理</h3><p class="event-count">成功率按今日已完成记录计算，待处理记录不计入；以配置的日历时区划分日期。</p>
+  <summary>详细统计与本地日程 <span class="dashboard-note"><span class="dashboard-expand">展开查看</span><span class="dashboard-collapse">收起统计</span></span></summary>
+  <h3>今日识别情况</h3>
   <div class="dashboard-metrics">
-    <div class="metric"><span>处理总数</span><strong>{{ stats.today_processed }}</strong></div>
-    <div class="metric"><span>成功率</span><strong>{% if stats.today_success_rate is not none %}{{ stats.today_success_rate }}%{% else %}—{% endif %}</strong>{% if stats.today_success_rate is none %}<span>暂无已完成记录</span>{% endif %}</div>
-    <div class="metric"><span>处理失败</span><strong>{{ stats.today_failed }}</strong></div>
     <div class="metric"><span>未识别</span><strong>{{ stats.today_no_event }}</strong></div>
     <div class="metric"><span>引用未命中</span><strong>{{ stats.today_quote_failures }}</strong></div>
   </div>
   <h3>创建统计</h3><div class="dashboard-metrics">
-    {% for label, value in [('今日创建',stats.today_created),('本周创建',stats.week_created),('本月创建',stats.month_created)] %}<div class="metric"><span>{{ label }}</span><strong>{{ value }}</strong></div>{% endfor %}
+    {% for label, value in [('本周创建',stats.week_created),('本月创建',stats.month_created)] %}<div class="metric"><span>{{ label }}</span><strong>{{ value }}</strong></div>{% endfor %}
   </div>
   <h3>本地记录中的日程</h3><p class="event-count">根据助手保留的操作记录统计，不包含其他客户端新增的日程，也不是日历的实时完整列表。</p>
   <div class="dashboard-metrics">{% for label, value in [('今日日程',stats.today_events),('本周日程',stats.week_events),('本月日程',stats.month_events)] %}<div class="metric"><span>{{ label }}</span><strong>{{ value }}</strong></div>{% endfor %}</div>
