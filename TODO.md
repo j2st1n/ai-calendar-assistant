@@ -110,3 +110,9 @@ v1.21.0 发布与生产验收（2026-09-06）：代码提交 a24a233，发布提
 3) 生产数据库 SQLite PRAGMA integrity_check 与 foreign_key_check 100% 通过，增量迁移平滑生效（新增 snapshot_json, remote_etag, batch_id, batch_index 四项关键字段）；
 4) 限时撤销机制、ETag 校验防覆盖、批量日程聚合清单与局部精准防重重试全链路生产基线部署完毕；
 5) 本地分支代码与远端 Release v1.21.0 保持完全同步。
+
+v1.21.1 发布与生产验收（2026-09-06）：代码提交 d6613b8，发布提交 ce7ba21，Release run 34041801530 自动化生成 tag v1.21.1，Docker 镜像 ghcr.io/j2st1n/ai-calendar-assistant:v1.21.1 构建发布。andnode 生产环境灾备与升级切换完成（备份 pre-v1.21.1-20260906、保留 v1.21.0 回滚镜像）。线上生产环境全量验收通过：
+1) 容器 healthy，0 重启，启动与运行日志无 traceback 或异常错误；
+2) 内部 (http://127.0.0.1:9527/health) 与公网 (https://cal.3313107.xyz/health) 均返回 HTTP 200 及 {"status":"ok","version":"v1.21.1"}；
+3) 线上生产环境 /console/channels 页面实测：现代分段胶囊 Tab（.channel-tabs.channel-pills）结构完整渲染、文案前缀去重（无重复“微信：/Telegram：/Discord：”）生效、微信扫码卡片平铺展开（无 details 折叠）、微信/TG/Discord 渠道 Tab 切换流畅；
+4) 本地代码与远端 Release v1.21.1 保持完全同步（已拉取 ce7ba21），更新归档记录闭环。
