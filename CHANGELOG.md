@@ -1,6 +1,26 @@
 # Changelog
 
+## [v1.21.4] - 2026-09-07
+
+
+### Bug Fixes
+
+- scope message bindings and batch identities by conversation
+
+
+
+### Documentation
+
+- record v1.21.3 deployment and P1 verification
+
+
 ## [v1.21.3] - 2026-09-06
+
+
+### Maintenance
+
+- release v1.21.3
+
 
 
 ### Other
