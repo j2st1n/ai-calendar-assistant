@@ -607,10 +607,8 @@ def test_find_target_reply_to_still_works_for_telegram():
         session.commit()
         ctx = ChannelContext(source="telegram", source_user_id="u1", conversation_id="c1",
                              reply_to_message_id="some-bot-msg-id")
-        with patch.object(session, "execute") as mock_exec:
-            mock_exec.return_value.scalar.return_value = None
-            found = await _find_target(session, ctx)
-            assert found is None
+        found = await _find_target(session, ctx)
+        assert found is None
     asyncio.run(run())
 
 
@@ -637,6 +635,11 @@ def test_find_target_reply_to_list_item_works_across_source_and_conversation():
             reply_to_message_id="list-item-msg",
         )
 
+        assert await _find_target(session, ctx) is None
+        from app.channels.message_bindings import bind_bot_message
+        bind_bot_message(session, target.id, "list-item-msg", source="telegram",
+                         conversation_id="telegram-chat")
+        session.commit()
         found = await _find_target(session, ctx)
 
         assert found is not None

@@ -638,3 +638,75 @@ async def test_get_event_confirmed_not_found_is_none(anyio_backend):
     cal.objects.return_value = []
     with patch("app.services.caldav_service._DAVClient", return_value=client):
         assert await CalDAVService().get_event("https://example.test", "test", "test", uid="missing") is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("source,conversation", [("telegram", "c2"), ("discord", "c1")])
+async def test_ordinary_reply_rejects_foreign_message_without_binding(source, conversation):
+    from app.channels.message_processor import _find_target
+    with _session() as session:
+        session.add(EventRecord(source=source, source_user_id="u1", conversation_id=conversation,
+                                operation="create", title="Foreign", status="success", event_id="foreign",
+                                bot_message_id="42", created_at=datetime.now(timezone.utc)))
+        session.commit()
+        assert await _find_target(session, _ctx(reply_to_message_id="42")) is None
+
+
+def test_batch_identity_includes_conversation_and_is_stable():
+    from app.channels.message_processor import _generate_batch_id, derive_batch_uid
+    a = _ctx(conversation_id="A", source_message_id="42")
+    b = _ctx(conversation_id="B", source_message_id="42")
+    first = _generate_batch_id(a, "meeting")
+    assert first == _generate_batch_id(a, "meeting")
+    assert first != _generate_batch_id(b, "meeting")
+    assert derive_batch_uid(first, 0) != derive_batch_uid(_generate_batch_id(b, "meeting"), 0)
+
+
+@pytest.mark.anyio
+async def test_message_binding_keeps_multiple_list_replies_separate():
+    from app.channels.message_bindings import bind_bot_message, resolve_bot_message
+    with _session() as session:
+        a = EventRecord(source="telegram", conversation_id="A", operation="create", status="success", title="A")
+        b = EventRecord(source="telegram", conversation_id="B", operation="create", status="success", title="B")
+        session.add_all([a, b]); session.commit()
+        bind_bot_message(session, a.id, "42", source="telegram", conversation_id="A")
+        bind_bot_message(session, b.id, "42", source="telegram", conversation_id="B")
+        bind_bot_message(session, a.id, "43", source="telegram", conversation_id="A")
+        session.commit()
+        assert resolve_bot_message(session, "telegram", "A", "42").id == a.id
+        assert resolve_bot_message(session, "telegram", "A", "43").id == a.id
+        assert resolve_bot_message(session, "telegram", "B", "42").id == b.id
+        assert resolve_bot_message(session, "discord", "A", "42") is None
+
+
+@pytest.mark.anyio
+async def test_legacy_colliding_batch_is_blocked_in_chat_and_web():
+    from app.channels.message_processor import _handle_batch_retry
+    from app.web.routes import retry_batch_events
+    with _session() as session:
+        for conversation in ["c1", "c2"]:
+            session.add(EventRecord(source="telegram", source_user_id="u1", conversation_id=conversation,
+                                    batch_id="legacy", batch_index=0, operation="create", status="failed",
+                                    title="Fixture", created_at=datetime.now(timezone.utc)))
+        session.commit()
+        with patch("app.channels.message_processor._write_caldav", new_callable=AsyncMock) as writer:
+            chat = await _handle_batch_retry(session, _ctx(), _caldav(True))
+            web = await retry_batch_events("legacy", MagicMock(), None, session)
+        assert "多个会话" in chat[0][0]
+        assert web.status_code == 409
+        writer.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_undo_list_binding_can_target_original_channel():
+    from app.channels.message_bindings import bind_bot_message
+    with _session() as session:
+        original = EventRecord(source="discord", source_user_id="u1", conversation_id="discord-chat",
+                               event_id="shared-event", operation="create", status="success", title="Shared",
+                               created_at=datetime.now(timezone.utc))
+        session.add(original); session.commit()
+        bind_bot_message(session, original.id, "42", source="telegram", conversation_id="c1")
+        session.commit()
+        replies = await _do_undo(session, _ctx(reply_to_message_id="42"), "撤销", _caldav())
+        assert replies[0][1] is not None
+        assert session.get(EventRecord, replies[0][1]).event_id == "shared-event"

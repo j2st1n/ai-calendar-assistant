@@ -395,7 +395,8 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             for response, record_id in replies:
                 sent = await _reply_text(update.effective_message, response)
                 if record_id and sent:
-                    bind_bot_message(session, record_id, str(sent.message_id))
+                    bind_bot_message(session, record_id, str(sent.message_id), source="telegram",
+                                     conversation_id=str(update.effective_chat.id))
             session.commit()
         except Exception as exc:
             logger.exception("Message processing failed")
@@ -484,7 +485,8 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         for response, record_id in replies:
             sent = await _reply_text(update.effective_message, response)
             if record_id and sent:
-                    bind_bot_message(session, record_id, str(sent.message_id))
+                    bind_bot_message(session, record_id, str(sent.message_id), source="telegram",
+                                     conversation_id=str(update.effective_chat.id))
         session.commit()
 
 
@@ -557,5 +559,6 @@ async def _send_telegram_replies(update: Update, session: Session, replies: list
     for response, record_id in replies:
         sent = await _reply_text(update.effective_message, response)
         if sent:
-            bind_bot_message(session, record_id, str(sent.message_id))
+            bind_bot_message(session, record_id, str(sent.message_id), source="telegram",
+                                     conversation_id=str(update.effective_chat.id))
     session.commit()

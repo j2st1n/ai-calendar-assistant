@@ -219,7 +219,8 @@ async def _send_discord_replies(message: DiscordMessageProtocol, session: Sessio
                                 replies: list[tuple[str, int | None]]) -> None:
     for response, record_id in replies:
         sent = await message.reply(response)
-        bind_bot_message(session, record_id, str(sent.id))
+        bind_bot_message(session, record_id, str(sent.id), source="discord",
+                         conversation_id=str(message.channel.id))
     session.commit()
 
 
@@ -255,7 +256,8 @@ async def _send_interaction_replies(interaction: DiscordInteractionProtocol, ses
             first = False
         else:
             sent = await interaction.followup.send(response, wait=True)
-        bind_bot_message(session, record_id, str(sent.id))
+        bind_bot_message(session, record_id, str(sent.id), source="discord",
+                         conversation_id=str(interaction.channel_id))
     session.commit()
 
 

@@ -11,6 +11,8 @@ from typing import Any, Protocol, cast, runtime_checkable
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.channels.message_bindings import resolve_bot_message
+
 from app.ai.extractor import EventExtractor
 from datetime import datetime, timedelta, timezone
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
@@ -245,14 +247,15 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
     ]
 
     if ctx.reply_to_message_id:
+        bound = resolve_bot_message(session, ctx.source, ctx.conversation_id, ctx.reply_to_message_id)
+        if bound:
+            # The binding authorizes the displayed list item; follow its original event history.
+            base_filter[0] = EventRecord.source == bound.source
+            base_filter[1] = EventRecord.conversation_id == bound.conversation_id
         rec = session.execute(
             select(EventRecord).where(
-                EventRecord.operation.in_(["create", "update"]),
-                EventRecord.bot_message_id == ctx.reply_to_message_id,
-                or_(
-                    EventRecord.caldav_uid.is_(None),
-                    ~EventRecord.caldav_uid.in_(deleted_uids),
-                ),
+                *base_filter,
+                EventRecord.id == bound.id if bound else EventRecord.bot_message_id == ctx.reply_to_message_id,
             ).order_by(EventRecord.created_at.desc())
         ).scalar()
         if rec:
@@ -472,7 +475,7 @@ def _latest_record_for_event(session: Session, base_filter: list, rec: EventReco
             EventRecord.event_id == event_key,
         ).order_by(EventRecord.created_at.desc())
     ).scalar()
-    return latest or rec
+    return latest
 
 
 async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRecord, caldav: dict[str, Any]) -> str:
@@ -902,7 +905,8 @@ def derive_batch_uid(batch_id: str, index: int) -> str:
 
 def _generate_batch_id(ctx: ChannelContext, text: str) -> str:
     seed = ctx.source_message_id or uuid.uuid4().hex
-    return f"batch_{uuid.uuid5(uuid.NAMESPACE_OID, f'{ctx.source}:{ctx.source_user_id}:{seed}').hex[:16]}"
+    identity = json.dumps([ctx.source, ctx.conversation_id, ctx.source_user_id, seed], ensure_ascii=False)
+    return f"batch_{uuid.uuid5(uuid.NAMESPACE_OID, identity).hex}"
 
 
 async def _write_batch_one(
@@ -1120,6 +1124,10 @@ async def _handle_batch_retry(
         .order_by(EventRecord.batch_index.asc(), EventRecord.id.asc())
     ).scalars().all()
 
+    origins = {(r.source, r.conversation_id, r.source_user_id) for r in records}
+    if len(origins) > 1:
+        return [("⚠️ 历史批次包含多个会话，已停止批量重试，请先核对日程。", None)]
+
     latest_by_index: dict[int, EventRecord] = {}
     for r in records:
         idx = r.batch_index if r.batch_index is not None else 0
@@ -1261,10 +1269,12 @@ async def _do_undo(
         scope.append(EventRecord.source_user_id == ctx.source_user_id)
 
     if ctx.reply_to_message_id:
+        bound = resolve_bot_message(session, ctx.source, ctx.conversation_id, ctx.reply_to_message_id)
+        target_scope = [EventRecord.id == bound.id] if bound else scope
         target = session.execute(
             select(EventRecord).where(
-                *scope,
-                EventRecord.bot_message_id == ctx.reply_to_message_id,
+                *target_scope,
+                EventRecord.id == bound.id if bound else EventRecord.bot_message_id == ctx.reply_to_message_id,
                 status_condition,
                 EventRecord.operation.in_(["create", "update", "delete"]),
             ).order_by(EventRecord.created_at.desc())

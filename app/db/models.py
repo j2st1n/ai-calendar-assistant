@@ -84,3 +84,12 @@ class EventRecord(Base):
     remote_etag: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class BotMessageBinding(Base):
+    __tablename__ = "bot_message_bindings"
+
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    message_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    record_id: Mapped[int] = mapped_column(Integer, index=True)

@@ -3121,6 +3121,10 @@ async def retry_batch_events(
             status_code=404,
         )
 
+    origins = {(r.source, r.conversation_id, r.source_user_id) for r in records}
+    if len(origins) > 1:
+        return JSONResponse({"ok": False, "error": "历史批次包含多个会话，请逐条核对后使用单条重试。"}, status_code=409)
+
     latest_by_index: dict[int, EventRecord] = {}
     for r in records:
         idx = r.batch_index if r.batch_index is not None else 0
