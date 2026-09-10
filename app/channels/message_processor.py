@@ -113,7 +113,7 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
         if sel_idx is not None:
             _pending_ambiguities.pop(ambiguity_key, None)
             target = session.get(EventRecord, cand_ids[sel_idx - 1])
-            if target:
+            if target and _latest_record_for_event(session, [], target) is target:
                 action = ambiguity.get("action")
                 if action == "delete":
                     return [(await _do_delete_with(session, ctx, target, caldav), None)]
@@ -130,9 +130,6 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
 
     if _is_retry_command(text):
         return await _handle_batch_retry(session, ctx, caldav)
-
-    if _is_undo_command(text):
-        return await _do_undo(session, ctx, text, caldav)
 
     reply_to = ctx.reply_to_message_id
     if ctx.quote_reference_present and not reply_to and not ctx.quoted_text:
@@ -162,8 +159,12 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
             session.commit()
             return [(_format_modify_result(quick, warning, old_event=existing), rec_id)]
         mod_result = await extractor.modify(existing, text)
+        if mod_result.error_type or mod_result.missing_fields or mod_result.unsupported_reason:
+            return [("🤔 未获得有效修改，请明确说明要修改的内容。日程未变更。", None)]
         if mod_result.intent == Intent.delete_event:
             return [(await _do_delete_with(session, ctx, target, caldav), None)]
+        if mod_result.intent != Intent.update_event or mod_result.event is None:
+            return [("🤔 未识别到修改内容，请说明要调整的时间、地点或其他信息。日程未变更。", None)]
         merged = _merge_event(existing, mod_result.event, caldav["dur"])
         rec_id, warning = await _do_modify_with(session, ctx, text, target, merged, caldav)
         session.commit()
@@ -232,19 +233,13 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
 
 
 async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | None:
-    deleted_uids = select(EventRecord.caldav_uid).where(
-        EventRecord.operation == "delete",
-        EventRecord.caldav_uid.isnot(None),
-    )
     base_filter = [
         EventRecord.source == ctx.source,
         EventRecord.conversation_id == ctx.conversation_id,
         EventRecord.operation.in_(["create", "update"]),
-        or_(
-            EventRecord.caldav_uid.is_(None),
-            ~EventRecord.caldav_uid.in_(deleted_uids),
-        ),
     ]
+    if not ctx.conversation_id:
+        base_filter.append(EventRecord.source_user_id == ctx.source_user_id)
 
     if ctx.reply_to_message_id:
         bound = resolve_bot_message(session, ctx.source, ctx.conversation_id, ctx.reply_to_message_id)
@@ -256,7 +251,7 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
             select(EventRecord).where(
                 *base_filter,
                 EventRecord.id == bound.id if bound else EventRecord.bot_message_id == ctx.reply_to_message_id,
-            ).order_by(EventRecord.created_at.desc())
+            ).order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
         ).scalar()
         if rec:
             return _latest_record_for_event(session, base_filter, rec)
@@ -287,42 +282,23 @@ async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | N
 
 
 def _get_active_recent_events(session: Session, ctx: ChannelContext) -> list[EventRecord]:
-    deleted_uids = select(EventRecord.caldav_uid).where(
-        EventRecord.operation == "delete",
-        EventRecord.caldav_uid.isnot(None),
-    )
-    deleted_event_ids = select(EventRecord.event_id).where(
-        EventRecord.operation == "delete",
-        EventRecord.event_id.isnot(None),
-    )
-    base_filter = [
-        EventRecord.source == ctx.source,
-        EventRecord.conversation_id == ctx.conversation_id,
-        EventRecord.operation.in_(["create", "update"]),
-        or_(
-            EventRecord.caldav_uid.is_(None),
-            ~EventRecord.caldav_uid.in_(deleted_uids),
-        ),
-        or_(
-            EventRecord.event_id.is_(None),
-            ~EventRecord.event_id.in_(deleted_event_ids),
-        ),
-    ]
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=LAST_EVENT_WINDOW)
+    scope = [EventRecord.source == ctx.source, EventRecord.conversation_id == ctx.conversation_id]
+    if not ctx.conversation_id:
+        scope.append(EventRecord.source_user_id == ctx.source_user_id)
     records = session.execute(
-        select(EventRecord)
-        .where(*base_filter, EventRecord.created_at >= cutoff)
-        .order_by(EventRecord.created_at.desc())
+        select(EventRecord).where(*scope, EventRecord.operation.in_(["create", "update"]),
+                                  EventRecord.created_at >= cutoff)
+        .order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
     ).scalars().all()
-
-    seen_keys: set[str] = set()
-    unique_records: list[EventRecord] = []
+    seen: set[int] = set()
+    active = []
     for rec in records:
-        key = rec.event_id or rec.caldav_uid or str(rec.id)
-        if key not in seen_keys:
-            seen_keys.add(key)
-            unique_records.append(rec)
-    return unique_records
+        current = _latest_record_for_event(session, [], rec)
+        if current and current.id not in seen:
+            seen.add(current.id)
+            active.append(current)
+    return active
 
 
 def _filter_candidates_by_title(records: list[EventRecord], title_query: str | None) -> list[EventRecord]:
@@ -334,9 +310,9 @@ def _filter_candidates_by_title(records: list[EventRecord], title_query: str | N
     matched = []
     for r in records:
         rtitle = (r.title or "").strip().lower()
-        if q in rtitle or rtitle in q:
+        if rtitle and (q in rtitle or rtitle in q):
             matched.append(r)
-    return matched if matched else records
+    return matched
 
 
 def _extract_target_title(text: str) -> str | None:
@@ -451,7 +427,7 @@ async def _match_by_quoted_text(
             *base_filter,
             EventRecord.title == title,
             EventRecord.start_time.startswith(start_prefix),
-        ).order_by(EventRecord.created_at.desc())
+        ).order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
     ).scalars().all()
 
     event_ids = {candidate.event_id for candidate in candidates if candidate.event_id}
@@ -465,49 +441,44 @@ async def _match_by_quoted_text(
     return None
 
 
-def _latest_record_for_event(session: Session, base_filter: list, rec: EventRecord) -> EventRecord:
-    event_key = rec.event_id
-    if not event_key:
-        return rec
+def _latest_record_for_event(session: Session, base_filter: list, rec: EventRecord) -> EventRecord | None:
+    # Bindings establish access; event history may continue through another channel.
+    identity = (EventRecord.event_id == rec.event_id if rec.event_id else
+                EventRecord.caldav_uid == rec.caldav_uid if rec.caldav_uid else
+                EventRecord.id == rec.id)
     latest = session.execute(
-        select(EventRecord).where(
-            *base_filter,
-            EventRecord.event_id == event_key,
-        ).order_by(EventRecord.created_at.desc())
-    ).scalar()
-    return latest
+        select(EventRecord).where(identity, EventRecord.status == "success",
+                                  EventRecord.operation.in_(["create", "update", "delete"]))
+        .order_by(EventRecord.created_at.desc(), EventRecord.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    if latest:
+        return None if latest.operation == "delete" else latest
+    return rec if rec.operation in {"create", "update"} else None
 
 
 async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRecord, caldav: dict[str, Any]) -> str:
     title = target.title or "日程"
-    deleted = False
-    remote_etag = None
+    deleted = not bool(caldav["url"])
     if caldav["url"]:
         cal = CalDAVService()
-        if target.caldav_uid:
-            try:
-                remote_obj = await cal.get_event(
-                    caldav["url"], caldav["user"], caldav["pw"],
-                    uid=target.caldav_uid, href=target.caldav_href, ssl_verify=caldav["ssl"]
-                )
-                if remote_obj and remote_obj.get("etag"):
-                    remote_etag = remote_obj["etag"]
-            except Exception:
-                pass
         deleted = await cal.delete_event(caldav["url"], caldav["user"], caldav["pw"],
                                           target.caldav_uid, target.caldav_href, ssl_verify=caldav["ssl"])
     _ = _record(session, ctx, "delete", title, "", "success" if deleted else "failed",
-                target.event_json or "", cr={"uid": target.caldav_uid, "href": target.caldav_href, "etag": remote_etag},
+                target.event_json or "", cr={"uid": target.caldav_uid, "href": target.caldav_href, "etag": target.remote_etag},
                 start_time=target.start_time or "", event_id=target.event_id,
                 failure_phase="write" if not deleted else None,
                 snapshot_json=target.event_json,
-                remote_etag=remote_etag or target.remote_etag)
+                remote_etag=target.remote_etag)
     session.commit()
-    status = "" if deleted else "（CalDAV 删除失败，但本地记录已标记）"
-    return f"🗑️ 已删除日程：{title}{status}"
+    if not deleted:
+        return f"⚠️ CalDAV 删除失败：{title}。未标记为已删除，请核对日历后重试。"
+    return f"🗑️ 已删除日程：{title}"
 
 
 async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, target: EventRecord, new_event: dict[str, Any], caldav: dict[str, Any]) -> tuple[int, str | None]:
+    existing = json.loads(target.event_json) if target.event_json else {}
+    if new_event == existing:
+        return target.id, "ℹ️ 日程内容没有变化，未修改日历。"
     title = _g(new_event, "title") or "日程"
     status = "success"
     error_msg = None
@@ -1026,54 +997,58 @@ def _is_retry_command(text: str) -> bool:
     return bool(re.match(r"^(?:请)?重试(?:失败(?:项|日程)?)?$", clean))
 
 
+def _retry_not_superseded(session: Session, rec: EventRecord) -> bool:
+    identity = (EventRecord.event_id == rec.event_id if rec.event_id else
+                EventRecord.caldav_uid == rec.caldav_uid if rec.caldav_uid else
+                EventRecord.id == rec.id)
+    return session.execute(select(EventRecord.id).where(
+        identity, EventRecord.id > rec.id,
+        EventRecord.operation.in_(["create", "update", "delete"]),
+        or_(EventRecord.status == "success", EventRecord.operation.in_(["create", "update"])),
+    ).limit(1)).scalar_one_or_none() is None
+
+
 async def _handle_batch_retry(
     session: Session,
     ctx: ChannelContext,
     caldav: dict[str, Any],
 ) -> list[tuple[str, int | None]]:
-    base_filter = [
-        EventRecord.source == ctx.source,
-        EventRecord.batch_id.isnot(None),
-    ]
-    if ctx.conversation_id:
-        base_filter.append(EventRecord.conversation_id == ctx.conversation_id)
-    elif ctx.source_user_id:
-        base_filter.append(
-            or_(
-                EventRecord.source_user_id == ctx.source_user_id,
-                EventRecord.telegram_user_id == ctx.source_user_id,
-            )
-        )
+    scope = [EventRecord.source == ctx.source, EventRecord.conversation_id == ctx.conversation_id]
+    if not ctx.conversation_id:
+        scope.append(EventRecord.source_user_id == ctx.source_user_id)
 
-    latest_rec = session.execute(
-        select(EventRecord)
-        .where(*base_filter)
-        .order_by(EventRecord.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    referenced = bool(ctx.reply_to_message_id or ctx.quoted_text or ctx.quote_reference_present)
+    if referenced:
+        latest_rec = None
+        if ctx.reply_to_message_id:
+            latest_rec = resolve_bot_message(session, ctx.source, ctx.conversation_id, ctx.reply_to_message_id)
+            if not latest_rec:
+                latest_rec = session.execute(select(EventRecord).where(
+                    *scope, EventRecord.bot_message_id == ctx.reply_to_message_id,
+                    EventRecord.operation.in_(["create", "update"]),
+                ).order_by(EventRecord.id.desc()).limit(1)).scalar_one_or_none()
+        elif ctx.quoted_text:
+            latest_rec = await _find_target(session, ctx)
+        if not latest_rec:
+            return [("🤔 没有找到引用消息对应的日程，未执行重试。", None)]
+    else:
+        # Compare failed single events and batches together, not batches first.
+        candidates = session.execute(select(EventRecord).where(
+            *scope, EventRecord.operation.in_(["create", "update"]),
+        ).order_by(EventRecord.id.desc())).scalars().all()
+        latest_rec = next((r for r in candidates if r.status == "failed" and
+                           _retry_not_superseded(session, r)), None)
+        if latest_rec is None:
+            latest_rec = next((r for r in candidates if r.batch_id), None)
 
-    if not latest_rec or not latest_rec.batch_id:
-        single_filter = [
-            EventRecord.source == ctx.source,
-            EventRecord.status == "failed",
-            EventRecord.operation.in_(["create", "update"]),
-        ]
-        if ctx.conversation_id:
-            single_filter.append(EventRecord.conversation_id == ctx.conversation_id)
-        elif ctx.source_user_id:
-            single_filter.append(
-                or_(
-                    EventRecord.source_user_id == ctx.source_user_id,
-                    EventRecord.telegram_user_id == ctx.source_user_id,
-                )
-            )
-        single_rec = session.execute(
-            select(EventRecord)
-            .where(*single_filter)
-            .order_by(EventRecord.id.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-
+    if not latest_rec:
+        return [("🤔 未找到最近需要重试的失败日程记录。", None)]
+    if not latest_rec.batch_id:
+        single_rec = latest_rec
+        if single_rec.status != "failed":
+            return [("ℹ️ 该日程没有需要重试的失败写入。", single_rec.id)]
+        if not _retry_not_superseded(session, single_rec):
+            return [("ℹ️ 该日程已有后续操作，未重试旧记录。", single_rec.id)]
         if not single_rec or not single_rec.event_json:
             return [("🤔 未找到最近需要重试的失败日程记录。", None)]
 
@@ -1103,6 +1078,7 @@ async def _handle_batch_retry(
             single_rec.caldav_uid = target_uid
             if caldav_result:
                 single_rec.caldav_href = caldav_result.get("href")
+                single_rec.remote_etag = caldav_result.get("etag")
             try:
                 svc = SettingsService(session)
                 single_rec.config_version = svc.get_config_version()
@@ -1135,6 +1111,8 @@ async def _handle_batch_retry(
 
     items = sorted(latest_by_index.values(), key=lambda r: r.batch_index if r.batch_index is not None else 0)
     failed_items = [r for r in items if r.status == "failed"]
+    if any(not _retry_not_superseded(session, r) for r in failed_items):
+        return [("⚠️ 该批次部分日程已有后续操作，已停止重试旧批次，请核对日程。", latest_rec.id)]
 
     if not failed_items:
         return [(f"🎉 该批次日程（共 {len(items)} 项）已全部成功写入日历，无需重试。", latest_rec.id)]
@@ -1191,6 +1169,7 @@ async def _handle_batch_retry(
             r.caldav_uid = target_uid
             if caldav_result:
                 r.caldav_href = caldav_result.get("href")
+                r.remote_etag = caldav_result.get("etag")
             try:
                 svc = SettingsService(session)
                 r.config_version = svc.get_config_version()
@@ -1214,314 +1193,6 @@ async def _handle_batch_retry(
     session.commit()
     report = _format_batch_report(batch_report_items, is_retry=True, skipped_count=skipped_count)
     return [(report, latest_rec.id)]
-
-
-UNDO_TTL = 600  # 10 分钟限时撤销窗口 (秒)
-
-
-def _is_undo_command(text: str) -> bool:
-    clean = text.strip()
-    if not clean:
-        return False
-    normalized = re.sub(r"[\s,，。.!！?？、/]+", "", clean).lower()
-    if normalized in {
-        "撤销", "undo", "恢复", "撤回", "回退",
-        "撤销上一步", "撤销操作", "撤销修改", "撤销删除", "撤销创建",
-        "取消上一步", "取消修改", "取消删除", "取消创建",
-        "恢复日程", "恢复删除", "恢复上一步", "恢复修改",
-    }:
-        return True
-    if re.match(r"^(?:撤销|undo|撤回|回退)", clean, re.IGNORECASE):
-        return True
-    if clean.startswith("恢复"):
-        return True
-    return False
-
-
-def _extract_undo_target_title(text: str) -> str | None:
-    clean = text.strip()
-    m = re.search(r"(?:撤销|undo|恢复|回退)(?:创建|修改|删除)?(?:的)?(?:日程|会议)?\s*[:：]?\s*(.+)$", clean, re.IGNORECASE)
-    if m:
-        val = m.group(1).strip(" 　，。！!？?")
-        if val and val not in {"上一步", "操作", "日程", "会议", "创建", "修改", "删除"}:
-            return val
-    return None
-
-
-async def _do_undo(
-    session: Session,
-    ctx: ChannelContext,
-    text: str,
-    caldav: dict[str, Any],
-) -> list[tuple[str, int | None]]:
-    target: EventRecord | None = None
-
-    status_condition = or_(EventRecord.status == "success", EventRecord.operation == "delete")
-
-    # Platform message IDs must be resolved within their originating conversation.
-    scope = [
-        EventRecord.source == ctx.source,
-        EventRecord.conversation_id == ctx.conversation_id,
-    ]
-    if not ctx.conversation_id:
-        if not ctx.source_user_id:
-            return [("🤔 缺少会话信息，无法安全定位要撤销的日程。", None)]
-        scope.append(EventRecord.source_user_id == ctx.source_user_id)
-
-    if ctx.reply_to_message_id:
-        bound = resolve_bot_message(session, ctx.source, ctx.conversation_id, ctx.reply_to_message_id)
-        target_scope = [EventRecord.id == bound.id] if bound else scope
-        target = session.execute(
-            select(EventRecord).where(
-                *target_scope,
-                EventRecord.id == bound.id if bound else EventRecord.bot_message_id == ctx.reply_to_message_id,
-                status_condition,
-                EventRecord.operation.in_(["create", "update", "delete"]),
-            ).order_by(EventRecord.created_at.desc())
-        ).scalar()
-
-    if not target and ctx.quoted_text:
-        quoted_title, _ = _parse_title_and_start_from_quote(ctx.quoted_text)
-        if quoted_title:
-            base_q = [
-                *scope,
-                status_condition,
-                EventRecord.operation.in_(["create", "update", "delete"]),
-                EventRecord.title == quoted_title,
-            ]
-            if ctx.conversation_id:
-                base_q.append(EventRecord.conversation_id == ctx.conversation_id)
-            elif ctx.source_user_id:
-                base_q.append(EventRecord.source_user_id == ctx.source_user_id)
-            target = session.execute(
-                select(EventRecord).where(*base_q).order_by(EventRecord.created_at.desc())
-            ).scalar()
-
-    if not target and (ctx.reply_to_message_id or ctx.quoted_text or ctx.quote_reference_present):
-        return [("🤔 未在当前会话找到引用的日程，请回复当前会话中的日程消息后再撤销。", None)]
-
-    if not target:
-        query_title = _extract_undo_target_title(text)
-        if query_title:
-            base_q = [
-                EventRecord.source == ctx.source,
-                status_condition,
-                EventRecord.operation.in_(["create", "update", "delete"]),
-                EventRecord.title.contains(query_title),
-            ]
-            if ctx.conversation_id:
-                base_q.append(EventRecord.conversation_id == ctx.conversation_id)
-            elif ctx.source_user_id:
-                base_q.append(EventRecord.source_user_id == ctx.source_user_id)
-            target = session.execute(
-                select(EventRecord).where(*base_q).order_by(EventRecord.created_at.desc())
-            ).scalar()
-
-    if not target:
-        base_q = [
-            EventRecord.source == ctx.source,
-            status_condition,
-            EventRecord.operation.in_(["create", "update", "delete"]),
-        ]
-        if ctx.conversation_id:
-            base_q.append(EventRecord.conversation_id == ctx.conversation_id)
-        elif ctx.source_user_id:
-            base_q.append(
-                or_(
-                    EventRecord.source_user_id == ctx.source_user_id,
-                    EventRecord.telegram_user_id == ctx.source_user_id,
-                )
-            )
-
-        candidates = session.execute(
-            select(EventRecord).where(
-                *base_q,
-                or_(
-                    EventRecord.error_message.is_(None),
-                    ~EventRecord.error_message.like("[UNDO]%"),
-                ),
-            ).order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
-        ).scalars().all()
-
-        for cand in candidates:
-            if cand.event_id:
-                has_later = session.execute(
-                    select(EventRecord.id).where(
-                        EventRecord.event_id == cand.event_id,
-                        EventRecord.id > cand.id,
-                        status_condition,
-                        EventRecord.operation.in_(["create", "update", "delete"]),
-                    ).limit(1)
-                ).scalar()
-                if has_later:
-                    continue
-            target = cand
-            break
-
-    if not target:
-        return [("🤔 没有可撤销的最近操作（仅支持 10 分钟内的创建、修改或删除操作）。", None)]
-
-    now_utc = datetime.now(timezone.utc)
-    created_at = target.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    if (now_utc - created_at).total_seconds() > UNDO_TTL:
-        return [("⏰ 已超过 10 分钟撤销时效，无法自动撤销。请手动修改或删除日程。", None)]
-
-    if target.event_id:
-        later_op = session.execute(
-            select(EventRecord).where(
-                EventRecord.event_id == target.event_id,
-                EventRecord.id > target.id,
-                status_condition,
-                EventRecord.operation.in_(["create", "update", "delete"]),
-            )
-        ).scalar()
-        if later_op:
-            return [("🤔 目标日程在此之后已有更新的操作，无法直接撤销。", None)]
-
-    caldav_enabled = bool(caldav["url"] and caldav["user"])
-    cal = CalDAVService() if caldav_enabled else None
-    remote_event = None
-    if caldav_enabled and target.caldav_uid:
-        try:
-            remote_event = await cal.get_event(
-                caldav["url"], caldav["user"], caldav["pw"],
-                uid=target.caldav_uid, href=target.caldav_href,
-                ssl_verify=caldav["ssl"]
-            )
-        except Exception as exc:
-            logger.warning("Remote status check failed during undo: %s", exc)
-            return [(f"⚠️ 查询远端日历状态失败：{exc}，撤销已阻断以确保安全。", None)]
-
-    target_title = target.title or "日程"
-
-    if target.operation == "create":
-        if caldav_enabled:
-            if not remote_event:
-                return [(f"⚠️ 远端日历中未找到日程「{target_title}」（可能已在外部被删除），无需撤销。", None)]
-            if target.remote_etag and remote_event.get("etag"):
-                if remote_event["etag"] != target.remote_etag:
-                    logger.warning(
-                        "Undo blocked due to remote ETag mismatch for %s: local=%s, remote=%s",
-                        target.caldav_uid, target.remote_etag, remote_event["etag"]
-                    )
-                    return [(f"⚠️ 检测到日程「{target_title}」已在外部日历中被修改（ETag 不匹配），为防覆盖最新内容，撤销操作已阻断。", None)]
-            deleted = await cal.delete_event(
-                caldav["url"], caldav["user"], caldav["pw"],
-                target.caldav_uid, target.caldav_href, ssl_verify=caldav["ssl"]
-            )
-            if not deleted:
-                return [(f"⚠️ 远端删除日程「{target_title}」失败，请稍后重试。", None)]
-
-        rec_id = _record(
-            session, ctx, "delete", target_title, text, "success",
-            target.event_json or "",
-            cr={"uid": target.caldav_uid, "href": target.caldav_href, "etag": remote_event.get("etag") if remote_event else None},
-            start_time=target.start_time or "",
-            event_id=target.event_id,
-            err="[UNDO] 成功撤销创建日程",
-            snapshot_json=target.event_json,
-            remote_etag=remote_event.get("etag") if remote_event else target.remote_etag,
-        )
-        session.commit()
-        logger.info("UNDO AUDIT: Reverted create for event_id=%s uid=%s title=%s", target.event_id, target.caldav_uid, target_title)
-        return [(f"↩️ 已撤销创建：日程「{target_title}」已从日历中删除。", rec_id)]
-
-    elif target.operation == "update":
-        snapshot_str = target.snapshot_json
-        if not snapshot_str:
-            return [("🤔 未找到历史修改快照，无法恢复。", None)]
-        try:
-            old_snapshot = json.loads(snapshot_str)
-        except Exception:
-            return [("🤔 历史修改快照解析失败，无法恢复。", None)]
-
-        result = None
-        if caldav_enabled:
-            if not remote_event:
-                return [(f"⚠️ 远端日历中未找到日程「{target_title}」（可能已在外部被删除），无法恢复修改。", None)]
-            if target.remote_etag and remote_event.get("etag"):
-                if remote_event["etag"] != target.remote_etag:
-                    logger.warning(
-                        "Undo blocked due to remote ETag mismatch for %s: local=%s, remote=%s",
-                        target.caldav_uid, target.remote_etag, remote_event["etag"]
-                    )
-                    return [(f"⚠️ 检测到日程「{target_title}」已在外部日历中被修改（ETag 不匹配），为防覆盖最新内容，撤销操作已阻断。", None)]
-
-            result = await _write_caldav_dict(old_snapshot, caldav)
-            if not result:
-                return [(f"⚠️ 恢复日程「{target_title}」至原快照失败，请稍后重试。", None)]
-            deleted = await cal.delete_event(
-                caldav["url"], caldav["user"], caldav["pw"],
-                target.caldav_uid, target.caldav_href, ssl_verify=caldav["ssl"]
-            )
-            if not deleted:
-                # Compensate the new snapshot copy; never record an incomplete restore as success.
-                cleaned_up = await cal.delete_event(
-                    caldav["url"], caldav["user"], caldav["pw"],
-                    result.get("uid"), result.get("href"), ssl_verify=caldav["ssl"]
-                )
-                if cleaned_up:
-                    return [(f"⚠️ 原日程「{target_title}」删除失败，已清理恢复副本，本次撤销未完成，请检查日历后重试。", None)]
-                _record(
-                    session, ctx, "update", target_title, text, "failed",
-                    json.dumps(old_snapshot, ensure_ascii=False), cr=result,
-                    event_id=target.event_id,
-                    err="[UNDO] 原日程删除失败，恢复副本清理失败，需人工检查重复日程",
-                    snapshot_json=target.event_json,
-                )
-                session.commit()
-                return [(f"⚠️ 原日程「{target_title}」删除失败，恢复副本也未能清理。日历可能存在重复日程，请先手动核对，勿重复撤销。", None)]
-
-        restored_title = old_snapshot.get("title") or target_title
-        rec_id = _record(
-            session, ctx, "update", restored_title, text, "success",
-            json.dumps(old_snapshot, ensure_ascii=False),
-            cr={"uid": result.get("uid"), "href": result.get("href"), "etag": result.get("etag")} if result else {"uid": target.caldav_uid, "href": target.caldav_href},
-            start_time=old_snapshot.get("start_time") or target.start_time or "",
-            event_id=target.event_id,
-            err="[UNDO] 成功撤销修改，已恢复历史快照",
-            snapshot_json=target.event_json,
-            remote_etag=result.get("etag") if result else target.remote_etag,
-        )
-        session.commit()
-        logger.info("UNDO AUDIT: Reverted update for event_id=%s uid=%s title=%s", target.event_id, target.caldav_uid, target_title)
-        return [(f"↩️ 已撤销修改：日程「{restored_title}」已恢复至修改前状态。", rec_id)]
-
-    elif target.operation == "delete":
-        snapshot_str = target.snapshot_json or target.event_json
-        if not snapshot_str:
-            return [("🤔 未找到删除前的快照数据，无法恢复。", None)]
-        try:
-            snapshot = json.loads(snapshot_str)
-        except Exception:
-            return [("🤔 删除前快照数据解析失败，无法恢复。", None)]
-
-        result = None
-        if caldav_enabled:
-            if remote_event:
-                return [(f"⚠️ 远端日历中已存在该日程「{target_title}」，撤销删除已终止以防冲突。", None)]
-            result = await _write_caldav_dict(snapshot, caldav, uid=target.caldav_uid)
-            if not result:
-                return [(f"⚠️ 重新恢复日程「{target_title}」至 CalDAV 失败，请稍后重试。", None)]
-
-        restored_title = snapshot.get("title") or target_title
-        rec_id = _record(
-            session, ctx, "create", restored_title, text, "success",
-            json.dumps(snapshot, ensure_ascii=False),
-            cr={"uid": result.get("uid"), "href": result.get("href"), "etag": result.get("etag")} if result else {"uid": target.caldav_uid, "href": target.caldav_href},
-            start_time=snapshot.get("start_time") or target.start_time or "",
-            event_id=target.event_id,
-            err="[UNDO] 成功撤销删除，已重新创建日程",
-            snapshot_json=None,
-            remote_etag=result.get("etag") if result else None,
-        )
-        session.commit()
-        logger.info("UNDO AUDIT: Reverted delete for event_id=%s uid=%s title=%s", target.event_id, target.caldav_uid, target_title)
-        return [(f"↩️ 已撤销删除：已重新恢复日程「{restored_title}」。", rec_id)]
-
-    return [("🤔 无法识别该操作类型，无法自动撤销。", None)]
 
 
 async def _write_caldav_dict(event_dict: dict[str, Any], caldav: dict[str, Any], uid: str | None = None) -> dict[str, Any] | None:

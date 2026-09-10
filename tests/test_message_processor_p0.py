@@ -581,7 +581,7 @@ def test_route_with_quoted_message_id_deletes_exact_event_without_quote_body():
                 svc=svc,
             )
 
-        assert replies == [("🗑️ 已删除日程：测试（CalDAV 删除失败，但本地记录已标记）", None)]
+        assert replies == [("🗑️ 已删除日程：测试", None)]
         deleted = session.query(EventRecord).filter(EventRecord.operation == "delete").one()
         assert deleted.event_id == target.event_id
 

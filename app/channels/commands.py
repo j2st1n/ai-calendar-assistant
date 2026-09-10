@@ -192,7 +192,7 @@ def _current_records(session: Session, ctx: ChannelContext) -> list[EventRecord]
             EventRecord.operation.in_(["create", "update", "delete"]),
             EventRecord.status == "success",
         )
-        .order_by(EventRecord.created_at.desc())
+        .order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
     ).scalars().all()
     seen = set()
     active = []
@@ -213,7 +213,7 @@ def _global_current_records(session: Session) -> list[EventRecord]:
             EventRecord.operation.in_(["create", "update", "delete"]),
             EventRecord.status == "success",
         )
-        .order_by(EventRecord.created_at.desc())
+        .order_by(EventRecord.created_at.desc(), EventRecord.id.desc())
     ).scalars().all()
     seen = set()
     active = []
