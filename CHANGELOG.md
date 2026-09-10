@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.21.5] - 2026-09-10
+
+
+### Bug Fixes
+
+- guard calendar targets and retries and remove undo operations
+
+
 ## [v1.21.4] - 2026-09-07
 
 
@@ -12,6 +20,12 @@
 ### Documentation
 
 - record v1.21.3 deployment and P1 verification
+
+
+
+### Maintenance
+
+- release v1.21.4
 
 
 ## [v1.21.3] - 2026-09-06
