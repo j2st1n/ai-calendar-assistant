@@ -1,11 +1,25 @@
 # Changelog
 
+## [v1.22.0] - 2026-09-25
+
+
+### Features
+
+- add persistent calendar reminders to configured input channels
+
+
 ## [v1.21.5] - 2026-09-10
 
 
 ### Bug Fixes
 
 - guard calendar targets and retries and remove undo operations
+
+
+
+### Maintenance
+
+- release v1.21.5
 
 
 ## [v1.21.4] - 2026-09-07
