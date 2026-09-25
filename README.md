@@ -140,7 +140,7 @@ Please change this password in System Settings.
 - 实时与 CalDAV 服务端保持只读同步，在 Web 端以时间线卡片呈现近期的全部待办与会议。
 - 支持按「本周 / 本月 / 全部」范围切换，内置 30 秒短周期内存缓存机制，既保障信息新鲜度，又避免高频刷新打满远端 CalDAV 速率限制。
 
-### 日程渠道通知（开发版本，`/console/notifications`）
+### 日程渠道通知（v1.22.0 起，`/console/notifications`）
 
 在「消息渠道 → 日程通知设置」中，从已有微信、Telegram、Discord 输入会话选择接收目标。可以只选择微信，让三个渠道成功保存的日程统一提醒到微信；也可以选择多个目标。
 
