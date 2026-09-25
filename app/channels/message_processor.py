@@ -20,6 +20,7 @@ from app.db.models import EventRecord
 from app.services.ai_provider_service import AIProviderConfig
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
 from app.services.settings_service import SettingsService
+from app.services.notification_service import remember_target, retire_legacy_event, sync_record
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +58,15 @@ class MessageProcessor:
         self, session: Session, user_id: str, text: str, reply_to_message_id: str | None = None,
         source: str = "telegram", conversation_id: str | None = None, source_message_id: str | None = None,
         quoted_text: str | None = None, quote_reference_present: bool = False,
+        notification_thread_id: str = "",
     ) -> list[tuple[str, int | None]]:
         ctx = ChannelContext(
             source, user_id, conversation_id, source_message_id, reply_to_message_id,
             quoted_text, quote_reference_present,
         )
         svc = SettingsService(session)
+        remember_target(session, source, user_id, conversation_id or user_id, thread_id=notification_thread_id)
+        session.commit()
         config = AIProviderConfig(
             provider_type=svc.get("ai_provider_type") or "openai_compatible",
             base_url=svc.get("ai_base_url") or "https://api.openai.com/v1",
@@ -469,6 +473,8 @@ async def _do_delete_with(session: Session, ctx: ChannelContext, target: EventRe
                 failure_phase="write" if not deleted else None,
                 snapshot_json=target.event_json,
                 remote_etag=target.remote_etag)
+    if deleted:
+        retire_legacy_event(session, target)
     session.commit()
     if not deleted:
         return f"⚠️ CalDAV 删除失败：{title}。未标记为已删除，请核对日历后重试。"
@@ -513,6 +519,8 @@ async def _do_modify_with(session: Session, ctx: ChannelContext, text: str, targ
              failure_phase="write" if status == "failed" else None,
              snapshot_json=pre_snapshot_json,
              remote_etag=result.get("etag") if result else target.remote_etag)
+    if status == "success":
+        retire_legacy_event(session, target)
     return rec_id, warning
 
 
@@ -834,7 +842,7 @@ def _format_event_result(event: object, header: str) -> str:
 
 
 async def _write_one(session: Session, ctx: ChannelContext, text: str, event: CalendarEvent, caldav: dict[str, Any]) -> tuple[int, bool | None]:
-    if not getattr(event, 'reminders', None):
+    if event.reminders is None:
         from app.ai.schemas import Reminder
         event.reminders = [Reminder(minutes_before=caldav["rem"])]
     if not getattr(event, 'end_time', None) and getattr(event, 'start_time', None):
@@ -890,7 +898,7 @@ async def _write_batch_one(
     batch_index: int,
     uid: str,
 ) -> tuple[int, bool | None, str | None]:
-    if not getattr(event, 'reminders', None):
+    if event.reminders is None:
         from app.ai.schemas import Reminder
         event.reminders = [Reminder(minutes_before=caldav["rem"])]
     if not getattr(event, 'end_time', None) and getattr(event, 'start_time', None):
@@ -1085,6 +1093,7 @@ async def _handle_batch_retry(
                 single_rec.caldav_config_hash = svc.get_caldav_config_hash()
             except Exception:
                 pass
+            sync_record(session, single_rec)
             session.commit()
             return [(f"✅ 日程「{single_rec.title or '日程'}」重试写入成功！", single_rec.id)]
         else:
@@ -1176,6 +1185,7 @@ async def _handle_batch_retry(
                 r.caldav_config_hash = svc.get_caldav_config_hash()
             except Exception:
                 pass
+            sync_record(session, r)
         else:
             r.error_message = f"重试失败：{error_msg}"
             r.failure_phase = "write"
@@ -1242,7 +1252,7 @@ def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, t
         title=_redact_sensitive_text(title) if title else title, start_time=start_time, status=status,
         source_message_id=ctx.source_message_id,
         original_text=_redact_sensitive_text(text or "")[:2000],
-        event_json=_redact_sensitive_text(js or "")[:4000],
+        event_json=_redact_sensitive_text(js or ""),
         caldav_uid=cr.get("uid") if cr else None,
         caldav_href=cr.get("href") if cr else None,
         remote_etag=remote_etag or (cr.get("etag") if cr else None),
@@ -1258,6 +1268,7 @@ def _record(session: Session, ctx: ChannelContext, op: str, title: str | None, t
     )
     session.add(rec)
     session.flush()
+    sync_record(session, rec)
     return rec.id
 
 

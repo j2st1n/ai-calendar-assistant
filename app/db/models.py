@@ -1,7 +1,7 @@
 from datetime import datetime
 from datetime import timezone
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -93,3 +93,51 @@ class BotMessageBinding(Base):
     conversation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     message_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     record_id: Mapped[int] = mapped_column(Integer, index=True)
+
+
+class NotificationEvent(Base):
+    """Current assistant-managed state, independent of disposable audit records."""
+    __tablename__ = "notification_events"
+
+    event_key: Mapped[str] = mapped_column(String(320), primary_key=True)
+    record_id: Mapped[int] = mapped_column(Integer)
+    recorded_at: Mapped[float] = mapped_column(Float)
+    version: Mapped[str] = mapped_column(String(32))
+    event_json: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class NotificationTarget(Base):
+    __tablename__ = "notification_targets"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(20))
+    account_key: Mapped[str] = mapped_column(String(64))
+    conversation_id: Mapped[str] = mapped_column(String(128))
+    user_id: Mapped[str] = mapped_column(String(128))
+    thread_id: Mapped[str] = mapped_column(String(64), default="")
+    context_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    selected_at: Mapped[float] = mapped_column(Float, default=0)
+    last_seen_at: Mapped[float] = mapped_column(Float)
+    last_test_at: Mapped[float] = mapped_column(Float, default=0)
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_key: Mapped[str] = mapped_column(String(320), index=True)
+    event_version: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str] = mapped_column(String(64), index=True)
+    occurrence_at: Mapped[float] = mapped_column(Float)
+    due_at: Mapped[float] = mapped_column(Float, index=True)
+    expires_at: Mapped[float] = mapped_column(Float)
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[float] = mapped_column(Float)
+    claimed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sent_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

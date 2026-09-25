@@ -36,6 +36,7 @@ from app.ai.providers import PROVIDER_PRESETS
 from app.db.models import EventRecord, PasskeyCredential
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
+from app.services.notification_service import sync_record
 from app.web.event_presenter import event_feedback
 from app.web.connection_checks import revision, save_check, check_summary
 from app.web.security import (
@@ -3081,6 +3082,7 @@ async def retry_event(
             rec.caldav_config_hash = settings_service.get_caldav_config_hash()
         except Exception:
             pass
+        sync_record(session, rec)
         session.commit()
 
         return JSONResponse({
@@ -3261,6 +3263,7 @@ async def retry_batch_events(
                     r.caldav_config_hash = settings_service.get_caldav_config_hash()
                 except Exception:
                     pass
+                sync_record(session, r)
                 success_count += 1
                 item_results.append({
                     "id": r.id,

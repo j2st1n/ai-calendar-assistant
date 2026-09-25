@@ -391,6 +391,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_id,
                 conversation_id=str(update.effective_chat.id),
                 source_message_id=str(update.effective_message.message_id),
+                notification_thread_id=str(getattr(update.effective_message, "message_thread_id", None) or ""),
             )
             for response, record_id in replies:
                 sent = await _reply_text(update.effective_message, response)
@@ -481,6 +482,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             text,
             conversation_id=str(update.effective_chat.id),
             source_message_id=str(update.effective_message.message_id),
+            notification_thread_id=str(getattr(update.effective_message, "message_thread_id", None) or ""),
         )
         for response, record_id in replies:
             sent = await _reply_text(update.effective_message, response)

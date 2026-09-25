@@ -1,0 +1,233 @@
+"""Persisted reminder state and scheduling. No network calls or AI decisions here."""
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from dateutil.parser import isoparse
+from dateutil.rrule import rrulestr
+from sqlalchemy import select, update
+from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.orm import Session
+
+from app.calendar.recurrence import to_rrule
+from app.core.crypto import encrypt_secret
+from app.db.models import EventRecord, NotificationDelivery, NotificationEvent, NotificationTarget
+from app.services.settings_service import SettingsService
+
+CHANNELS = {"wechat": "微信", "telegram": "Telegram", "discord": "Discord"}
+GRACE_SECONDS = 300
+PENDING = ("pending", "retry")
+
+
+def digest(*values: object) -> str:
+    return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
+
+
+def account_key(session: Session, channel: str) -> str | None:
+    if channel not in CHANNELS:
+        return None
+    token = SettingsService(session).get(f"{channel}_bot_token")
+    return digest(channel, token) if token else None
+
+
+def remember_target(session: Session, channel: str, user_id: str, conversation_id: str,
+                    *, context_token: str | None = None, thread_id: str = "") -> None:
+    key = account_key(session, channel)
+    if not key or not user_id or not conversation_id:
+        return
+    ident = digest(channel, key, conversation_id, thread_id, user_id)
+    changes = {"last_seen_at": time.time()}
+    if channel == "wechat" and context_token:
+        changes["context_token"] = encrypt_secret(context_token)
+    # Multiple processes may observe the same new conversation simultaneously.
+    # Refresh its context atomically without resetting the user's selection.
+    statement = insert(NotificationTarget).values(
+        id=ident, channel=channel, account_key=key, conversation_id=conversation_id,
+        user_id=user_id, thread_id=thread_id, selected=False, selected_at=0, **changes)
+    session.execute(statement.on_conflict_do_update(
+        index_elements=[NotificationTarget.id], set_=changes))
+    session.flush()
+
+
+def sync_record(session: Session, record: EventRecord) -> None:
+    if record.status != "success" or record.operation not in {"create", "update", "delete"}:
+        return
+    key = (f"event:{record.event_id}" if record.event_id else
+           f"caldav:{record.caldav_uid}" if record.caldav_uid else f"record:{record.id}")
+    row = session.get(NotificationEvent, key)
+    created = record.created_at
+    recorded_at = (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).timestamp()
+    # SQLite may reuse audit IDs after history is cleared. Compare chronology too.
+    if row and (row.recorded_at, row.record_id) >= (recorded_at, record.id):
+        return
+    if row is None:
+        row = NotificationEvent(event_key=key)
+        session.add(row)
+    row.record_id = record.id
+    row.recorded_at = recorded_at
+    row.version = uuid.uuid4().hex
+    row.event_json = record.event_json or "{}"
+    row.active = record.operation != "delete"
+    row.error = None
+    session.execute(update(NotificationDelivery).where(
+        NotificationDelivery.event_key == key, NotificationDelivery.status.in_(PENDING),
+    ).values(status="cancelled", error="日程已变更"))
+    session.flush()
+
+
+def backfill_events(session: Session) -> None:
+    """Only surviving successful history; failed edits never replace known state."""
+    records = session.scalars(select(EventRecord).where(
+        EventRecord.status == "success", EventRecord.operation.in_(["create", "update", "delete"])
+    ).order_by(EventRecord.id)).all()
+    for record in records:
+        sync_record(session, record)
+
+
+def retire_legacy_event(session: Session, previous: EventRecord) -> None:
+    """A legacy edit acquires a new event ID; keep its old projection inactive."""
+    if previous.event_id:
+        return
+    sync_record(session, previous)
+    key = f"caldav:{previous.caldav_uid}" if previous.caldav_uid else f"record:{previous.id}"
+    row = session.get(NotificationEvent, key)
+    if row:
+        row.active = False
+        session.execute(update(NotificationDelivery).where(
+            NotificationDelivery.event_key == key, NotificationDelivery.status.in_(PENDING),
+        ).values(status="cancelled", error="历史日程已变更"))
+        session.flush()
+
+
+def selected_targets(session: Session) -> list[NotificationTarget]:
+    return [t for t in session.scalars(select(NotificationTarget).where(
+        NotificationTarget.selected.is_(True))).all()
+        if t.account_key == account_key(session, t.channel)]
+
+
+def configure(session: Session, enabled: bool, target_ids: list[str], now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    targets = session.scalars(select(NotificationTarget)).all()
+    valid = {t.id for t in targets if account_key(session, t.channel) == t.account_key}
+    if set(target_ids) - valid:
+        raise ValueError("接收会话无效或账号已变更，请先通过对应渠道发一条消息。")
+    if enabled and not target_ids:
+        raise ValueError("启用通知前请选择至少一个接收会话。")
+    addresses = [(t.channel, t.account_key, t.conversation_id, t.thread_id)
+                 for t in targets if t.id in target_ids]
+    if len(set(addresses)) != len(addresses):
+        raise ValueError("同一个接收会话只能选择一次，请取消重复的会话选项。")
+    svc = SettingsService(session)
+    was_enabled = svc.get("notifications_enabled") == "true"
+    for target in targets:
+        selected = target.id in target_ids
+        if selected and (not target.selected or not was_enabled):
+            target.selected_at = now
+        target.selected = selected
+    svc.set("notifications_enabled", "true" if enabled else "false")
+    if enabled and not was_enabled:
+        svc.set("notifications_enabled_at", str(now))
+    # Cancel obsolete targets immediately. Re-enabling does not replay old alerts.
+    query = update(NotificationDelivery).where(NotificationDelivery.status.in_(PENDING))
+    if enabled:
+        query = query.where(NotificationDelivery.target_id.not_in(target_ids))
+    session.execute(query.values(status="cancelled", error="通知设置已变更"))
+    session.commit()
+
+
+def _start(event: dict) -> datetime:
+    zone = ZoneInfo(event.get("timezone") or "Asia/Shanghai")
+    start = isoparse(event["start_time"])
+    if event.get("is_all_day"):
+        start = datetime.combine(start.date(), datetime.min.time(), zone)
+    elif start.tzinfo is None:
+        start = start.replace(tzinfo=zone)
+    return start.astimezone(zone)
+
+
+def reminder_instances(event: dict, now: float):
+    start = _start(event)
+    reminders = event.get("reminders")
+    if reminders is None:
+        reminders = [{"minutes_before": 30}]
+    offsets = sorted({int(r["minutes_before"]) for r in reminders})
+    if not offsets:
+        return
+    if any(offset < 0 or offset > 525600 for offset in offsets):
+        raise ValueError("提醒提前量超出支持范围（0 至 525600 分钟）")
+    recurrence = event.get("recurrence")
+    if recurrence and (recurrence.get("frequency") not in {"daily", "weekly", "monthly"}
+                       or int(recurrence.get("interval", 1)) < 1):
+        raise ValueError("无效的重复规则")
+    rule = rrulestr(to_rrule(recurrence), dtstart=start) if recurrence else None
+    for offset in offsets:
+        low = datetime.fromtimestamp(now - GRACE_SECONDS, timezone.utc) + timedelta(minutes=offset)
+        high = datetime.fromtimestamp(now + 86400, timezone.utc) + timedelta(minutes=offset)
+        occurrences = rule.between(low, high, inc=True) if rule else [start]
+        for occurrence in occurrences:
+            timestamp = occurrence.timestamp()
+            due = timestamp - offset * 60
+            if now - GRACE_SECONDS <= due <= now + 86400:
+                # At most five minutes late, never after this occurrence ends.
+                duration = 86400 if event.get("is_all_day") else 3600
+                if event.get("end_time") and not event.get("is_all_day"):
+                    end = isoparse(event["end_time"])
+                    if end.tzinfo is None:
+                        end = end.replace(tzinfo=start.tzinfo)
+                    duration = max(0, end.timestamp() - start.timestamp())
+                yield timestamp, offset, due, min(due + GRACE_SECONDS, timestamp + duration)
+
+
+def message_text(event: dict, occurrence: float, offset: int) -> str:
+    zone = ZoneInfo(event.get("timezone") or "Asia/Shanghai")
+    when = datetime.fromtimestamp(occurrence, zone)
+    time_text = when.strftime("%Y-%m-%d 全天" if event.get("is_all_day") else "%Y-%m-%d %H:%M")
+    lines = ["⏰ 日程提醒", str(event.get("title") or "日程")[:500], f"时间：{time_text}（{zone.key}）"]
+    if event.get("location"):
+        lines.append(f"地点：{str(event['location'])[:300]}")
+    lines.append("到点提醒" if offset == 0 else f"提前 {offset} 分钟提醒")
+    return "\n".join(lines)
+
+
+def plan_deliveries(session: Session, now: float) -> None:
+    svc = SettingsService(session)
+    # A process can die after the platform accepted a send. Never silently resend it.
+    session.execute(update(NotificationDelivery).where(
+        NotificationDelivery.status == "sending", NotificationDelivery.claimed_at < now - 120,
+    ).values(status="unknown", error="发送进程中断，投递结果待核对"))
+    session.execute(update(NotificationDelivery).where(
+        NotificationDelivery.status.in_(PENDING), NotificationDelivery.expires_at < now,
+    ).values(status="expired", error="已超过补发窗口"))
+    if svc.get("notifications_enabled") != "true":
+        session.commit()
+        return
+    enabled_at = float(svc.get("notifications_enabled_at") or now)
+    targets = selected_targets(session)
+    for row in session.scalars(select(NotificationEvent).where(NotificationEvent.active.is_(True))).all():
+        try:
+            event = json.loads(row.event_json)
+            instances = list(reminder_instances(event, now))
+            row.error = None
+        except (ValueError, TypeError, KeyError, OverflowError, AttributeError) as exc:
+            row.error = f"无法生成提醒：{type(exc).__name__}"
+            continue
+        for occurrence, offset, due, expires in instances:
+            for target in targets:
+                if due < max(enabled_at, target.selected_at) or expires < now:
+                    continue
+                ident = digest(row.event_key, occurrence, offset, target.id)
+                values = dict(id=ident, event_key=row.event_key, event_version=row.version,
+                              target_id=target.id, occurrence_at=occurrence, due_at=due,
+                              expires_at=expires, text=message_text(event, occurrence, offset),
+                              status="pending", attempts=0, next_attempt_at=due)
+                # Sent/unknown/failed tasks survive content edits without duplicate delivery.
+                statement = insert(NotificationDelivery).values(**values)
+                session.execute(statement.on_conflict_do_update(
+                    index_elements=[NotificationDelivery.id], set_=values,
+                    where=NotificationDelivery.status == "cancelled"))
+    session.commit()

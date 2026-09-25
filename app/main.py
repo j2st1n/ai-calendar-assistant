@@ -1,3 +1,6 @@
+import asyncio
+from contextlib import suppress
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +13,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.settings_service import SettingsService
 from app.web.routes import router as web_router
+from app.web.notifications import router as notification_router
 from app.web.security import SameOriginMiddleware, SecurityHeadersMiddleware
 
 
@@ -51,10 +55,25 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
     app.include_router(web_router)
+    app.include_router(notification_router)
 
     @app.on_event("startup")
     async def start_configured_bots() -> None:
+        from app.services.notification_service import backfill_events
+        from app.services.notification_worker import notification_loop
+        with SessionLocal() as session:
+            backfill_events(session)
+            session.commit()
         await auto_start_bots()
+        app.state.notification_task = asyncio.create_task(notification_loop())
+
+    @app.on_event("shutdown")
+    async def stop_notification_worker() -> None:
+        task = getattr(app.state, "notification_task", None)
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     return app
 

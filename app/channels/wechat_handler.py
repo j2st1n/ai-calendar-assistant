@@ -364,6 +364,11 @@ async def dispatch_wechat_message(message: dict[str, Any], session: Session, cli
     if not ctx.source_user_id or not context_token:
         return [{"error": "missing from_user_id or context_token"}]
 
+    from app.services.notification_service import remember_target
+    remember_target(session, "wechat", ctx.source_user_id, ctx.source_user_id,
+                    context_token=context_token)
+    session.commit()
+
     typing_ticket: str | None = None
     try:
         typing_ticket = await client.get_typing_ticket(ctx.source_user_id, context_token)
