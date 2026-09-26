@@ -1,11 +1,31 @@
 # Changelog
 
+## [v1.22.1] - 2026-09-26
+
+
+### Bug Fixes
+
+- configure calendar notifications within each input channel
+
+
+
+### Documentation
+
+- record v1.22.0 deployment and notification enablement
+
+
 ## [v1.22.0] - 2026-09-25
 
 
 ### Features
 
 - add persistent calendar reminders to configured input channels
+
+
+
+### Maintenance
+
+- release v1.22.0
 
 
 ## [v1.21.5] - 2026-09-10
