@@ -1,0 +1,50 @@
+<div class="card stack" id="notifications-{{ notification_channel }}">
+  <h3 style="margin:0;font-size:16px;">日程提醒</h3>
+  <form method="post" action="/console/channels/{{ notification_channel }}/notifications" class="stack">
+    <label class="inline-check"><input type="checkbox" name="enabled" value="true" {% if notification.enabled %}checked{% endif %}> 作为通知渠道</label>
+    <p class="muted" style="margin:0;">开启后，所有来源的日程都会按各自的提醒时间发送到{{ notification.label }}，无需逐条设置。</p>
+    {% if notification.available|length == 1 %}
+      {% set target = notification.available[0] %}
+      <input type="hidden" name="target_ids" value="{{ target.id }}">
+      <p class="event-count" style="overflow-wrap:anywhere;">接收会话：{{ target.conversation }}{% if target.thread %} · 话题 {{ target.thread }}{% endif %}</p>
+    {% elif notification.available %}
+      <fieldset class="stack" style="min-width:0;border:1px solid var(--input-border);border-radius:8px;padding:12px;">
+        <legend>接收会话</legend>
+        {% for target in notification.available %}
+        <label class="inline-check" style="overflow-wrap:anywhere;"><input type="checkbox" name="target_ids" value="{{ target.id }}" {% if target.selected %}checked{% endif %}>
+          {{ target.conversation }}{% if target.thread %} · 话题 {{ target.thread }}{% endif %}（用户 {{ target.user }}）
+        </label>
+        {% endfor %}
+      </fieldset>
+    {% else %}
+      <p class="alert warning">请先通过{{ notification.label }}给机器人发一条消息，再刷新本页启用通知。</p>
+    {% endif %}
+    <div><button type="submit">保存通知选项</button></div>
+  </form>
+  {% if notification.available %}
+  <form method="post" action="/console/channels/{{ notification_channel }}/notifications/test" class="stack">
+    {% if notification.available|length == 1 %}
+      <input type="hidden" name="target_id" value="{{ notification.available[0].id }}">
+    {% else %}
+      <label for="notification-test-{{ notification_channel }}">测试接收会话</label>
+      <select id="notification-test-{{ notification_channel }}" name="target_id" required>
+        {% for target in notification.available %}<option value="{{ target.id }}">{{ target.conversation }}{% if target.thread %} · 话题 {{ target.thread }}{% endif %}</option>{% endfor %}
+      </select>
+    {% endif %}
+    <div><button type="submit" class="secondary">发送测试通知</button></div>
+  </form>
+  {% endif %}
+  {% if notification_channel == 'wechat' %}<p class="event-count">微信使用最新会话上下文；投递失败时先给机器人发一条新消息，再测试接收。</p>{% endif %}
+  <details class="event-technical">
+    <summary>最近投递记录{% if notification.counts %} · {% for label, count in notification.counts.items() %}{{ label }} {{ count }} {% endfor %}{% endif %}</summary>
+    <p class="event-count">每 30 秒检查提醒，停机仅补发 5 分钟内的任务。结果待核对时不会自动重发。外部日历直接改动暂不同步。</p>
+    {% for issue in notification.schedule_errors %}<p class="alert error">{{ issue }}，请核对日程时间和重复规则。</p>{% endfor %}
+    {% for item in notification.deliveries %}
+    <div style="padding:12px 0;border-bottom:1px solid var(--input-border);overflow-wrap:anywhere;">
+      <strong>{{ item.status }}</strong> · {{ item.due }} · 尝试 {{ item.attempts }} 次
+      <div style="white-space:pre-wrap;">{{ item.text }}</div>
+      <small>{{ item.target }}{% if item.error %} · {{ item.error }}{% endif %}</small>
+    </div>
+    {% else %}<p class="event-count">暂无投递记录。</p>{% endfor %}
+  </details>
+</div>

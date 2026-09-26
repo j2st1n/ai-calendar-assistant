@@ -57,3 +57,12 @@
 | `app/web/notifications.py` | `c8c147e694258d3eaf09568cc64dd31aeb2cef7a65bfccd6feb08f723b09ba7a` |
 | `app/web/templates/notifications.html` | `d9e226fd5eec578e8769efc3ffed4f502b1b70c2dfb711ef1c76c01b6bc6e6ef` |
 | `tests/test_notifications.py` | `6bc2d8db90981f6c28c2d40ada425ff58cd615a735227186c01031d81a0cfd57` |
+
+
+## v1.22.1 渠道内配置复核（2026-09-26）
+
+用户要求取消独立设置页和总开关，各渠道直接勾选通知用途。新增 scoped configure_channel 与一次性旧配置迁移，worker 只依据有效已选目标调度；原会话鉴权、令牌加密及去重规则继续保留。
+
+完整回归 547 passed、69 warnings，通知专项 42 项；模拟浏览器完成三个渠道选项检查及微信关闭、Telegram 开启保存。TypeSafe jev-1.13.0：渠道独立性 Noul 0.95，无额外总开关 0.91，迁移保留意图 0.89；回归风险 Score 0.29（0/1/2 为无具体风险/需复查/阻断），覆盖 Score 0.09，动作 accept 概率 0.65。结合源码复查和运行测试准出，概率不等同于无缺陷保证。未向 TypeSafe 发送生产数据或凭证。
+
+请求载荷 SHA256：`14afd2d440aa417f2cdbf20d409e5e100ba132904c57e26784a20408468efe48`。生产发布及迁移状态另见开发计划和部署记录。

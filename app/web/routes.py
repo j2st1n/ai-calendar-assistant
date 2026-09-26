@@ -2221,6 +2221,8 @@ async def channels_settings(
     payload["error"] = get_error_flash(request) or request.query_params.get("error")
     payload["bind_link"] = request.query_params.get("bind_link")
     payload["bind_token"] = request.query_params.get("bind_token")
+    from app.web.notifications import channel_notification_panels
+    payload["notification_channels"] = channel_notification_panels(session)
     return templates.TemplateResponse(request, "channels.html", payload)
 
 

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.calendar.recurrence import to_rrule
 from app.core.crypto import encrypt_secret
-from app.db.models import EventRecord, NotificationDelivery, NotificationEvent, NotificationTarget
+from app.db.models import EventRecord, NotificationDelivery, NotificationEvent, NotificationTarget, Setting
 from app.services.settings_service import SettingsService
 
 CHANNELS = {"wechat": "微信", "telegram": "Telegram", "discord": "Discord"}
@@ -110,33 +110,49 @@ def selected_targets(session: Session) -> list[NotificationTarget]:
         if t.account_key == account_key(session, t.channel)]
 
 
-def configure(session: Session, enabled: bool, target_ids: list[str], now: float | None = None) -> None:
+def migrate_channel_notifications(session: Session) -> None:
+    """Preserve v1.22.0 active recipients; a disabled master switch stays disabled."""
+    marker = insert(Setting).values(key="notification_channel_settings_migrated", value="true", encrypted=False)
+    claimed = session.execute(marker.on_conflict_do_nothing(index_elements=[Setting.key]))
+    if claimed.rowcount == 1 and SettingsService(session).get("notifications_enabled") != "true":
+        session.execute(update(NotificationTarget).values(selected=False))
+        session.execute(update(NotificationDelivery).where(
+            NotificationDelivery.status.in_(PENDING)).values(status="cancelled", error="通知尚未启用"))
+    session.flush()
+
+
+def configure_channel(session: Session, channel: str, enabled: bool,
+                      target_ids: list[str], now: float | None = None) -> None:
+    if channel not in CHANNELS:
+        raise ValueError("不支持的通知渠道。")
     now = time.time() if now is None else now
-    targets = session.scalars(select(NotificationTarget)).all()
-    valid = {t.id for t in targets if account_key(session, t.channel) == t.account_key}
-    if set(target_ids) - valid:
-        raise ValueError("接收会话无效或账号已变更，请先通过对应渠道发一条消息。")
+    targets = session.scalars(select(NotificationTarget).where(NotificationTarget.channel == channel)).all()
+    key = account_key(session, channel)
+    valid = {t.id for t in targets if key and t.account_key == key}
     if enabled and not target_ids:
-        raise ValueError("启用通知前请选择至少一个接收会话。")
-    addresses = [(t.channel, t.account_key, t.conversation_id, t.thread_id)
-                 for t in targets if t.id in target_ids]
+        if len(valid) == 1:
+            target_ids = list(valid)
+        else:
+            raise ValueError("请先向该渠道的机器人发一条消息。" if not valid else "请选择该渠道的接收会话。")
+    if enabled and set(target_ids) - valid:
+        raise ValueError("接收会话无效或账号已变更，请先通过对应渠道发一条消息。")
+    selected_ids = set(target_ids) if enabled else set()
+    addresses = [(t.account_key, t.conversation_id, t.thread_id) for t in targets if t.id in selected_ids]
     if len(set(addresses)) != len(addresses):
         raise ValueError("同一个接收会话只能选择一次，请取消重复的会话选项。")
-    svc = SettingsService(session)
-    was_enabled = svc.get("notifications_enabled") == "true"
     for target in targets:
-        selected = target.id in target_ids
-        if selected and (not target.selected or not was_enabled):
+        selected = target.id in selected_ids
+        if selected and not target.selected:
             target.selected_at = now
         target.selected = selected
-    svc.set("notifications_enabled", "true" if enabled else "false")
-    if enabled and not was_enabled:
-        svc.set("notifications_enabled_at", str(now))
-    # Cancel obsolete targets immediately. Re-enabling does not replay old alerts.
-    query = update(NotificationDelivery).where(NotificationDelivery.status.in_(PENDING))
-    if enabled:
-        query = query.where(NotificationDelivery.target_id.not_in(target_ids))
-    session.execute(query.values(status="cancelled", error="通知设置已变更"))
+    # Changing one channel cannot cancel or reset another channel's reminders.
+    query = update(NotificationDelivery).where(
+        NotificationDelivery.status.in_(PENDING),
+        NotificationDelivery.target_id.in_([t.id for t in targets]),
+    )
+    if selected_ids:
+        query = query.where(NotificationDelivery.target_id.not_in(selected_ids))
+    session.execute(query.values(status="cancelled", error="该渠道通知设置已变更"))
     session.commit()
 
 
@@ -195,7 +211,6 @@ def message_text(event: dict, occurrence: float, offset: int) -> str:
 
 
 def plan_deliveries(session: Session, now: float) -> None:
-    svc = SettingsService(session)
     # A process can die after the platform accepted a send. Never silently resend it.
     session.execute(update(NotificationDelivery).where(
         NotificationDelivery.status == "sending", NotificationDelivery.claimed_at < now - 120,
@@ -203,11 +218,10 @@ def plan_deliveries(session: Session, now: float) -> None:
     session.execute(update(NotificationDelivery).where(
         NotificationDelivery.status.in_(PENDING), NotificationDelivery.expires_at < now,
     ).values(status="expired", error="已超过补发窗口"))
-    if svc.get("notifications_enabled") != "true":
+    targets = selected_targets(session)
+    if not targets:
         session.commit()
         return
-    enabled_at = float(svc.get("notifications_enabled_at") or now)
-    targets = selected_targets(session)
     for row in session.scalars(select(NotificationEvent).where(NotificationEvent.active.is_(True))).all():
         try:
             event = json.loads(row.event_json)
@@ -218,7 +232,7 @@ def plan_deliveries(session: Session, now: float) -> None:
             continue
         for occurrence, offset, due, expires in instances:
             for target in targets:
-                if due < max(enabled_at, target.selected_at) or expires < now:
+                if due < target.selected_at or expires < now:
                     continue
                 ident = digest(row.event_key, occurrence, offset, target.id)
                 values = dict(id=ident, event_key=row.event_key, event_version=row.version,

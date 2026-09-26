@@ -14,13 +14,21 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.core.config import settings
 from app.core.crypto import decrypt_secret
 from app.db.models import Base, EventRecord, NotificationDelivery, NotificationEvent, NotificationTarget, TelegramIdentity
-from app.services.notification_service import (backfill_events, configure, plan_deliveries, remember_target,
+from app.services.notification_service import (backfill_events, configure_channel, migrate_channel_notifications, plan_deliveries, remember_target,
                                               reminder_instances, sync_record)
 from app.services.notification_sender import DeliveryError, Destination, send_notification
 from app.services.notification_worker import run_once
 from app.services.settings_service import SettingsService
 
 NOW = datetime(2026, 9, 25, 4, 0, tzinfo=timezone.utc).timestamp()
+
+
+def configure(session, enabled, target_ids, now=None):
+    # Exercise the three independent channel controls in legacy scheduler scenarios.
+    for channel in ("wechat", "telegram", "discord"):
+        ids = list(session.scalars(select(NotificationTarget.id).where(
+            NotificationTarget.channel == channel, NotificationTarget.id.in_(target_ids))))
+        configure_channel(session, channel, enabled and bool(ids), ids, now=now)
 
 
 @pytest.fixture
@@ -451,10 +459,11 @@ def test_sender_error_mapping_does_not_expose_credentials(monkeypatch, channel, 
 
 def test_settings_page_validation_test_and_auth(factory, monkeypatch):
     from app.web.notifications import router
-    from app.web.routes import get_db, require_admin
+    from app.web.routes import get_db, require_admin, router as web_router
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-only")
     app.include_router(router)
+    app.include_router(web_router)
     def db():
         with factory() as session:
             yield session
@@ -469,15 +478,76 @@ def test_settings_page_validation_test_and_auth(factory, monkeypatch):
                 request.session["admin_authenticated"] = True
             app.dependency_overrides[require_admin] = authenticated
             response = await client.get("/console/notifications")
-            assert response.status_code == 200 and "日程通知" in response.text
+            assert response.status_code == 303 and response.headers["location"] == "/console/channels"
+            response = await client.get("/console/channels?tab=wechat")
+            assert response.status_code == 200 and response.text.count("作为通知渠道") == 3
+            assert "日程通知设置" not in response.text and "启用日程通知" not in response.text
             assert "first-context" not in response.text and "fake-wechat" not in response.text
-            response = await client.post("/console/notifications", data={"enabled": "true", "target_ids": "bogus"}, follow_redirects=True)
+            response = await client.post("/console/channels/wechat/notifications", data={"enabled": "true", "target_ids": "bogus"}, follow_redirects=True)
             assert "接收会话无效" in response.text
             with factory() as session:
                 target = session.scalar(select(NotificationTarget).where(NotificationTarget.channel == "wechat"))
                 ident = target.id
-            response = await client.post("/console/notifications/test", data={"target_id": ident}, follow_redirects=True)
+            response = await client.post("/console/channels/wechat/notifications/test", data={"target_id": ident}, follow_redirects=True)
             assert "渠道已接受测试消息" in response.text
-            await client.post("/console/notifications/test", data={"target_id": ident})
+            await client.post("/console/channels/wechat/notifications/test", data={"target_id": ident})
             sender.assert_awaited_once()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("legacy_enabled", [True, False])
+def test_channel_migration_preserves_legacy_intent_once(factory, legacy_enabled):
+    with factory() as session:
+        svc = SettingsService(session)
+        svc.set("notifications_enabled", "true" if legacy_enabled else "false")
+        session.commit()
+        migrate_channel_notifications(session)
+        session.commit()
+        target = session.scalar(select(NotificationTarget).where(NotificationTarget.channel == "wechat"))
+        assert target.selected is legacy_enabled
+        configure_channel(session, "wechat", True, [], now=NOW)
+        migrate_channel_notifications(session)
+        session.commit()
+        assert target.selected
+
+
+def test_channel_toggle_is_independent_and_has_no_master_gate(factory):
+    with factory() as session:
+        svc = SettingsService(session)
+        svc.set("notifications_enabled", "false")  # obsolete setting cannot block channel switches
+        session.commit()
+        configure_channel(session, "telegram", True, [], now=NOW - 60)
+        record(session, source="discord")
+        plan_deliveries(session, NOW)
+        wx = session.scalar(select(NotificationTarget).where(NotificationTarget.channel == "wechat"))
+        original_selected_at = wx.selected_at
+        configure_channel(session, "telegram", False, [], now=NOW)
+        assert wx.selected and wx.selected_at == original_selected_at
+    sender = AsyncMock()
+    asyncio.run(run_once(factory, sender, NOW))
+    assert sender.await_count == 1 and sender.call_args.args[0].channel == "wechat"
+    assert {j.status for j in jobs(factory)} == {"sent", "cancelled"}
+
+
+def test_channel_cannot_select_another_channel_or_guess_multiple_recipients(factory):
+    with factory() as session:
+        tg = session.scalar(select(NotificationTarget).where(NotificationTarget.channel == "telegram"))
+        with pytest.raises(ValueError, match="接收会话无效"):
+            configure_channel(session, "wechat", True, [tg.id], now=NOW)
+        remember_target(session, "wechat", "second", "second", context_token="fake")
+        session.commit()
+        with pytest.raises(ValueError, match="请选择"):
+            configure_channel(session, "wechat", True, [], now=NOW)
+        with pytest.raises(ValueError, match="请先向"):
+            configure_channel(session, "discord", True, [], now=NOW)
+
+
+def test_channel_controls_keep_delivery_history_scoped(factory):
+    from app.web.notifications import channel_notification_panels
+    with factory() as session:
+        record(session)
+        plan_deliveries(session, NOW)
+        panels = channel_notification_panels(session)
+        assert panels["wechat"]["enabled"] and len(panels["wechat"]["deliveries"]) == 1
+        assert not panels["telegram"]["enabled"] and panels["telegram"]["deliveries"] == []
+        assert "first-context" not in json.dumps(panels)

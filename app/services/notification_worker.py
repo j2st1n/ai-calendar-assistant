@@ -11,7 +11,6 @@ from app.db.models import NotificationDelivery, NotificationEvent, NotificationT
 from app.db.session import SessionLocal
 from app.services.notification_sender import DeliveryError, Destination, destination, send_notification
 from app.services.notification_service import PENDING, plan_deliveries
-from app.services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +22,6 @@ async def run_once(session_factory=SessionLocal,
     now = time.time() if fixed_now is None else fixed_now
     with session_factory() as session:
         plan_deliveries(session, now)
-        if SettingsService(session).get("notifications_enabled") != "true":
-            return
         ids = list(session.scalars(select(NotificationDelivery.id).where(
             NotificationDelivery.status.in_(PENDING), NotificationDelivery.next_attempt_at <= now,
             NotificationDelivery.expires_at >= now,
@@ -33,8 +30,6 @@ async def run_once(session_factory=SessionLocal,
         claim_time = time.time() if fixed_now is None else fixed_now
         # Commit the conditional claim before network I/O, so another worker cannot send it.
         with session_factory() as session:
-            if SettingsService(session).get("notifications_enabled") != "true":
-                return
             claimed = session.execute(update(NotificationDelivery).where(
                 NotificationDelivery.id == ident, NotificationDelivery.status.in_(PENDING),
                 NotificationDelivery.expires_at >= claim_time,

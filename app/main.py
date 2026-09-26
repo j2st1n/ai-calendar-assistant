@@ -59,9 +59,10 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def start_configured_bots() -> None:
-        from app.services.notification_service import backfill_events
+        from app.services.notification_service import backfill_events, migrate_channel_notifications
         from app.services.notification_worker import notification_loop
         with SessionLocal() as session:
+            migrate_channel_notifications(session)
             backfill_events(session)
             session.commit()
         await auto_start_bots()

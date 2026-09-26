@@ -2,7 +2,6 @@
 {% block content %}
 <h2 class="section-title">消息渠道设置</h2>
 <p class="section-sub">统一管理微信、Telegram 与 Discord 接入、运行状态与授权用户。</p>
-<p><a class="button-link" href="/console/notifications">日程通知设置</a> · 将所有输入渠道的日程提醒发送到指定会话。</p>
 
 {% if message %}<p class="alert success">{{ message }}</p>{% endif %}
 {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
@@ -44,6 +43,11 @@
   <div class="settings-layout">
     <!-- 左栏：微信配置与扫码接入 -->
     <div class="settings-main stack">
+      {% if notification_channels is defined %}
+      {% with notification=notification_channels["wechat"], notification_channel="wechat" %}
+      {% include "channel_notifications.html" %}
+      {% endwith %}
+      {% endif %}
       <div class="card stack" id="wechat-login">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
           <h3 style="margin:0;font-size:16px;">{{ "重新登录或更换账号" if wechat_configured else "扫码登录微信" }}</h3>
@@ -194,6 +198,11 @@
   <div class="settings-layout">
     <!-- 左栏：Telegram 配置与白名单管理 -->
     <div class="settings-main stack">
+      {% if notification_channels is defined %}
+      {% with notification=notification_channels["telegram"], notification_channel="telegram" %}
+      {% include "channel_notifications.html" %}
+      {% endwith %}
+      {% endif %}
       <div class="card stack">
         <h3 style="margin:0;font-size:16px;">Telegram Bot 配置</h3>
         <p class="muted" style="margin:0;font-size:13px;">配置 BotFather 提供的 Bot Token 与用户名。</p>
@@ -351,6 +360,11 @@
   <div class="settings-layout">
     <!-- 左栏：Discord 配置与授权用户管理 -->
     <div class="settings-main stack">
+      {% if notification_channels is defined %}
+      {% with notification=notification_channels["discord"], notification_channel="discord" %}
+      {% include "channel_notifications.html" %}
+      {% endwith %}
+      {% endif %}
       <div class="card stack">
         <h3 style="margin:0;font-size:16px;">Discord Bot 配置</h3>
         <p class="muted" style="margin:0;font-size:13px;">配置 Discord Developer 门户中的 Bot Token 与 Application ID。</p>
