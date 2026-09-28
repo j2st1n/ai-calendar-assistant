@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select, update
 
-from app.db.models import NotificationDelivery, NotificationEvent, NotificationTarget
+from app.db.models import NotificationDelivery, NotificationEvent, NotificationTarget, NotificationMessageBinding
 from app.db.session import SessionLocal
 from app.services.notification_sender import DeliveryError, Destination, destination, send_notification
 from app.services.notification_service import PENDING, plan_deliveries
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_once(session_factory=SessionLocal,
-                   sender: Callable[[Destination, str], Awaitable[None]] = send_notification,
+                   sender: Callable[[Destination, str], Awaitable[str | None]] = send_notification,
                    now: float | None = None) -> None:
     fixed_now = now
     now = time.time() if fixed_now is None else fixed_now
@@ -56,8 +56,9 @@ async def run_once(session_factory=SessionLocal,
                 continue
             text = job.text
         error = None
+        message_id = None
         try:
-            await sender(dest, text)
+            message_id = await sender(dest, text)
         except asyncio.CancelledError:
             # Leave a durable sending marker. Recovery marks it unknown without resending.
             raise
@@ -72,6 +73,10 @@ async def run_once(session_factory=SessionLocal,
                 job.status = "sent"
                 job.sent_at = completed
                 job.error = None
+                if isinstance(message_id, str) and message_id:
+                    session.merge(NotificationMessageBinding(
+                        source=dest.channel, conversation_id=dest.conversation_id,
+                        message_id=message_id, delivery_id=ident))
             else:
                 job.error = str(error)
                 delay = max(error.retry_after, 30 * (2 ** (job.attempts - 1)))

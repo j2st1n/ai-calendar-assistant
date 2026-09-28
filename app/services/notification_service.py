@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.calendar.recurrence import to_rrule
 from app.core.crypto import encrypt_secret
-from app.db.models import EventRecord, NotificationDelivery, NotificationEvent, NotificationTarget, Setting
+from app.db.models import EventRecord, NotificationDelivery, NotificationEvent, NotificationTarget, Setting, NotificationMessageBinding
 from app.services.settings_service import SettingsService
 
 CHANNELS = {"wechat": "微信", "telegram": "Telegram", "discord": "Discord"}
@@ -202,12 +202,65 @@ def reminder_instances(event: dict, now: float):
 def message_text(event: dict, occurrence: float, offset: int) -> str:
     zone = ZoneInfo(event.get("timezone") or "Asia/Shanghai")
     when = datetime.fromtimestamp(occurrence, zone)
-    time_text = when.strftime("%Y-%m-%d 全天" if event.get("is_all_day") else "%Y-%m-%d %H:%M")
-    lines = ["⏰ 日程提醒", str(event.get("title") or "日程")[:500], f"时间：{time_text}（{zone.key}）"]
+    weekday = "一二三四五六日"[when.weekday()]
+    time_text = f"{when:%Y-%m-%d} 周{weekday} " + ("全天" if event.get("is_all_day") else f"{when:%H:%M}")
+    zone_label = "北京时间" if zone.key == "Asia/Shanghai" else zone.key
+    title = " ".join(str(event.get("title") or "日程").split())[:500]
+    header = "⏰ 日程提醒" if offset == 0 else f"⏰ 日程提醒 · 提前 {offset} 分钟提醒你"
+    lines = [header, "", f"📌 {title}", f"🕒 {time_text}（{zone_label}）"]
     if event.get("location"):
-        lines.append(f"地点：{str(event['location'])[:300]}")
-    lines.append("到点提醒" if offset == 0 else f"提前 {offset} 分钟提醒")
+        location = " ".join(str(event['location']).split())[:300]
+        lines.append(f"📍 {location}")
+    if event.get("recurrence"):
+        lines.append("🔁 重复日程（引用修改将应用于整个日程）")
     return "\n".join(lines)
+
+
+def resolve_reminder_reply(session: Session, source: str, conversation_id: str | None,
+                           message_id: str | None, quoted_text: str | None) -> tuple[bool, EventRecord | None]:
+    """Recognize reminders before generic quote matching, scoped to actual recipients.
+
+    The boolean prevents a rejected/ambiguous reminder from falling through to a
+    title-only lookup or an unrelated recent event. Old reminder text stays usable.
+    """
+    normalized = " ".join((quoted_text or "").split())
+    is_reminder = normalized.startswith("⏰ 日程提醒")
+    if not conversation_id:
+        return is_reminder, None
+    binding = session.get(NotificationMessageBinding, (source, conversation_id, message_id)) if message_id else None
+    if not binding and not is_reminder:
+        return False, None
+    key = account_key(session, source)
+    if not key:
+        return True, None
+    query = select(NotificationDelivery).join(
+        NotificationTarget, NotificationTarget.id == NotificationDelivery.target_id,
+    ).where(NotificationTarget.channel == source,
+            NotificationTarget.conversation_id == conversation_id,
+            NotificationTarget.account_key == key,
+            NotificationDelivery.status.in_(["sent", "unknown"]))
+    if binding:
+        query = query.where(NotificationDelivery.id == binding.delivery_id)
+    deliveries = session.scalars(query).all()
+    matches = [d for d in deliveries if binding or " ".join(d.text.split()) == normalized]
+    event_keys = {d.event_key for d in matches}
+    if len(event_keys) != 1:
+        return True, None
+    event_key = event_keys.pop()
+    event = session.get(NotificationEvent, event_key)
+    if not event or not event.active:
+        return True, None
+    record = session.get(EventRecord, event.record_id)
+    if not record or record.status != "success" or record.operation not in {"create", "update"}:
+        return True, None
+    # Retention can remove audit records and SQLite can reuse their integer IDs.
+    record_key = (f"event:{record.event_id}" if record.event_id else
+                  f"caldav:{record.caldav_uid}" if record.caldav_uid else f"record:{record.id}")
+    created = record.created_at
+    recorded_at = (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).timestamp()
+    if record_key != event_key or recorded_at != event.recorded_at:
+        return True, None
+    return True, record
 
 
 def plan_deliveries(session: Session, now: float) -> None:
@@ -244,4 +297,11 @@ def plan_deliveries(session: Session, now: float) -> None:
                 session.execute(statement.on_conflict_do_update(
                     index_elements=[NotificationDelivery.id], set_=values,
                     where=NotificationDelivery.status == "cancelled"))
+                # Apply wording updates to queued reminders, but preserve sent text
+                # for quote matching and keep retry counts/backoff unchanged.
+                session.execute(update(NotificationDelivery).where(
+                    NotificationDelivery.id == ident,
+                    NotificationDelivery.event_version == row.version,
+                    NotificationDelivery.status.in_(PENDING),
+                ).values(text=values["text"]))
     session.commit()

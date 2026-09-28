@@ -20,7 +20,7 @@ from app.db.models import EventRecord
 from app.services.ai_provider_service import AIProviderConfig
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
 from app.services.settings_service import SettingsService
-from app.services.notification_service import remember_target, retire_legacy_event, sync_record
+from app.services.notification_service import remember_target, retire_legacy_event, sync_record, resolve_reminder_reply
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +237,10 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
 
 
 async def _find_target(session: Session, ctx: ChannelContext) -> EventRecord | None:
+    reminder, record = resolve_reminder_reply(
+        session, ctx.source, ctx.conversation_id, ctx.reply_to_message_id, ctx.quoted_text)
+    if reminder:
+        return record
     base_filter = [
         EventRecord.source == ctx.source,
         EventRecord.conversation_id == ctx.conversation_id,

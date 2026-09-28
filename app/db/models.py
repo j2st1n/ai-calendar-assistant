@@ -95,6 +95,16 @@ class BotMessageBinding(Base):
     record_id: Mapped[int] = mapped_column(Integer, index=True)
 
 
+class NotificationMessageBinding(Base):
+    """Link a platform message to a durable delivery, not a disposable audit ID."""
+    __tablename__ = "notification_message_bindings"
+
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    message_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    delivery_id: Mapped[str] = mapped_column(String(64), index=True)
+
+
 class NotificationEvent(Base):
     """Current assistant-managed state, independent of disposable audit records."""
     __tablename__ = "notification_events"

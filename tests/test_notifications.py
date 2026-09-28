@@ -551,3 +551,224 @@ def test_channel_controls_keep_delivery_history_scoped(factory):
         assert panels["wechat"]["enabled"] and len(panels["wechat"]["deliveries"]) == 1
         assert not panels["telegram"]["enabled"] and panels["telegram"]["deliveries"] == []
         assert "first-context" not in json.dumps(panels)
+
+
+@pytest.mark.parametrize('channel,body,expected', [
+    ('telegram', {'ok': True, 'result': {'message_id': 123}}, '123'),
+    ('discord', {'id': '456'}, '456'),
+    ('telegram', {'ok': True}, None),
+])
+def test_sender_returns_server_message_id(monkeypatch, channel, body, expected):
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.post.return_value = httpx.Response(200, json=body)
+    monkeypatch.setattr('httpx.AsyncClient', lambda **kw: client)
+    assert asyncio.run(send_notification(Destination(channel, 'test', '123', '', None), '提醒')) == expected
+
+
+@pytest.mark.parametrize('body,expected', [
+    ({'ret': 0, 'msg': {'message_id': 123}}, '123'),
+    ({'ret': 0, 'client_id': 'local-client-id'}, None),
+])
+def test_wechat_sender_returns_only_server_id(monkeypatch, body, expected):
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.send_message.return_value = body
+    monkeypatch.setattr('app.integrations.ilink.ILinkClient', lambda token: client)
+    assert asyncio.run(send_notification(Destination('wechat', 'test', 'wx', '', 'context'), '提醒')) == expected
+
+
+def test_friendly_reminder_format():
+    from app.services.notification_service import message_text
+    event = {'title': '带耳机', 'timezone': 'Asia/Shanghai', 'location': '门口'}
+    text = message_text(event, NOW, 0)
+    assert text == ('⏰ 日程提醒\n\n📌 带耳机\n'
+                    '🕒 2026-09-25 周五 12:00（北京时间）\n📍 门口')
+    event.update(is_all_day=True, timezone='America/New_York', recurrence={'frequency': 'daily'})
+    text = message_text(event, NOW, 30)
+    assert '提前 30 分钟' in text and '全天（America/New_York）' in text
+    assert '整个日程' in text and '📍 门口' in text
+
+
+def reminder_context(**changes):
+    from app.channels.message_processor import ChannelContext
+    values = dict(source='wechat', source_user_id='wx-user', conversation_id='wx-user',
+                  reply_to_message_id='reminder-id')
+    values.update(changes)
+    return ChannelContext(**values)
+
+
+@pytest.mark.parametrize('source', ['wechat', 'telegram', 'discord'])
+def test_sent_reminder_id_resolves_across_origins_and_after_restart(factory, source):
+    from app.channels.message_processor import _find_target
+    with factory() as session:
+        original = record(session, source=source)
+        original_id = original.id
+    asyncio.run(run_once(factory, AsyncMock(return_value='reminder-id'), NOW))
+    with factory() as session:
+        target = asyncio.run(_find_target(session, reminder_context()))
+        assert target.id == original_id
+        assert asyncio.run(_find_target(session, reminder_context(conversation_id='other'))) is None
+
+
+@pytest.mark.parametrize('legacy', [True, False])
+@pytest.mark.parametrize('reply_id', [None, 'unavailable-server-id'])
+def test_wechat_text_fallback_matches_only_delivered_text(factory, legacy, reply_id):
+    from app.channels.message_processor import _find_target
+    with factory() as session:
+        original_id = record(session, source='telegram').id
+        plan_deliveries(session, NOW)
+    asyncio.run(run_once(factory, AsyncMock(return_value=None), NOW))
+    with factory() as session:
+        if legacy:
+            job = session.scalar(select(NotificationDelivery))
+            job.text = '⏰ 日程提醒\n项目会议\n时间：2026-09-25 12:30（Asia/Shanghai）\n提前 30 分钟提醒'
+            session.commit()
+    quote = '  '.join(jobs(factory)[0].text.split())
+    ctx = reminder_context(reply_to_message_id=reply_id, quoted_text=quote)
+    with factory() as session:
+        assert asyncio.run(_find_target(session, ctx)).id == original_id
+        assert asyncio.run(_find_target(session, reminder_context(quoted_text=quote, conversation_id='other'))) is None
+        assert asyncio.run(_find_target(session, reminder_context(quoted_text=quote + '伪造'))) is None
+
+
+@pytest.mark.parametrize('condition', ['deleted', 'cleared', 'reused', 'account_changed'])
+@pytest.mark.parametrize('by_id', [True, False])
+def test_reminder_cannot_resolve_invalid_or_reused_history(factory, condition, by_id):
+    from app.channels.message_processor import _find_target
+    with factory() as session:
+        record(session)
+    asyncio.run(run_once(factory, AsyncMock(return_value='reminder-id'), NOW))
+    quote = jobs(factory)[0].text
+    with factory() as session:
+        if condition == 'deleted':
+            record(session, operation='delete')
+        elif condition in ('cleared', 'reused'):
+            session.execute(delete(EventRecord)); session.commit()
+            if condition == 'reused':
+                record(session, key='different', title='无关日程')
+        else:
+            SettingsService(session).set('wechat_bot_token', 'changed-account', encrypted=True)
+            session.commit()
+        ctx = reminder_context(reply_to_message_id='reminder-id' if by_id else None, quoted_text=quote)
+        assert asyncio.run(_find_target(session, ctx)) is None
+
+
+def test_identical_delivered_reminders_are_ambiguous_without_id(factory):
+    from app.channels.message_processor import _find_target
+    with factory() as session:
+        record(session, key='one'); record(session, key='two')
+    asyncio.run(run_once(factory, AsyncMock(side_effect=['first', 'second']), NOW))
+    quote = jobs(factory)[0].text
+    with factory() as session:
+        assert asyncio.run(_find_target(session, reminder_context(quoted_text=quote))) is None
+        assert asyncio.run(_find_target(session, reminder_context(reply_to_message_id='first'))) is not None
+
+
+@pytest.mark.parametrize('status', ['pending', 'failed', 'cancelled', 'expired'])
+def test_unsent_reminder_text_is_not_authorization(factory, status):
+    from app.channels.message_processor import _find_target
+    with factory() as session:
+        record(session)
+        plan_deliveries(session, NOW)
+        job = session.scalar(select(NotificationDelivery)); job.status = status; session.commit()
+        assert asyncio.run(_find_target(session, reminder_context(quoted_text=job.text))) is None
+
+
+def test_old_reminder_follows_successful_update_and_ignores_failed_update(factory):
+    from app.channels.message_processor import _find_target
+    with factory() as session:
+        record(session, recurrence={'frequency': 'daily'})
+    asyncio.run(run_once(factory, AsyncMock(return_value='reminder-id'), NOW))
+    quote = jobs(factory)[0].text
+    with factory() as session:
+        latest = record(session, source='discord', operation='update', title='最新标题')
+        record(session, operation='update', status='failed', title='失败标题')
+        assert asyncio.run(_find_target(session, reminder_context())) is latest
+        assert asyncio.run(_find_target(session, reminder_context(reply_to_message_id=None, quoted_text=quote))) is latest
+
+
+def test_reply_to_reminder_reschedules_and_plans_new_delivery(factory):
+    from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
+    from app.channels.message_processor import _route
+    with factory() as session:
+        record(session, source='telegram', start_time='2026-09-25T12:00:00+08:00', reminders=[{'minutes_before': 0}])
+    asyncio.run(run_once(factory, AsyncMock(return_value=None), NOW))
+    quote = jobs(factory)[0].text
+    updated = CalendarEvent(title='项目会议', start_time='2026-09-25T21:30:00+08:00',
+                            end_time='2026-09-25T22:30:00+08:00', reminders=[{'minutes_before': 0}])
+    extractor = AsyncMock()
+    extractor.modify.return_value = ExtractionResult(intent=Intent.update_event, event=updated)
+    cfg = {'url': '', 'user': '', 'pw': '', 'cal': '', 'rem': 30, 'dur': 60, 'ssl': True}
+    with factory() as session:
+        replies = asyncio.run(_route(session, reminder_context(quoted_text=quote), '21:30提醒', extractor, cfg, SettingsService(session)))
+        assert replies[0][1] is not None and '21:30' in replies[0][0]
+        extractor.modify.assert_awaited_once()
+        projection = session.scalar(select(NotificationEvent))
+        assert json.loads(projection.event_json)['start_time'] == updated.start_time
+        plan_deliveries(session, NOW)
+    pending = [j for j in jobs(factory) if j.status == 'pending']
+    assert len(pending) == 1
+    assert pending[0].due_at == datetime.fromisoformat(updated.start_time).timestamp()
+
+
+def test_existing_database_adds_reminder_binding_table(factory, monkeypatch):
+    from sqlalchemy import inspect
+    from app.db.models import NotificationMessageBinding
+    from app.db import session as database
+    with factory() as session:
+        original_id = record(session).id
+        engine = session.get_bind()
+    NotificationMessageBinding.__table__.drop(engine)
+    monkeypatch.setattr(database, 'engine', engine)
+    database.init_db()
+    database.init_db()
+    assert 'notification_message_bindings' in inspect(engine).get_table_names()
+    with factory() as session:
+        assert session.get(EventRecord, original_id).title == '项目会议'
+
+
+def test_recurring_later_occurrence_quote_resolves_series(factory):
+    from app.channels.message_processor import _find_target
+    with factory() as session:
+        original_id = record(session, start_time='2026-09-24T12:30:00+08:00',
+                             recurrence={'frequency': 'daily'}).id
+    asyncio.run(run_once(factory, AsyncMock(return_value=None), NOW))
+    quote = next(j.text for j in jobs(factory) if j.status == 'sent')
+    assert '2026-09-25' in quote
+    with factory() as session:
+        assert asyncio.run(_find_target(session, reminder_context(quoted_text=quote))).id == original_id
+
+
+def test_quote_can_delete_delivered_event(factory):
+    from app.channels.message_processor import _route
+    with factory() as session:
+        record(session, source='discord')
+    asyncio.run(run_once(factory, AsyncMock(return_value='reminder-id'), NOW))
+    cfg = {'url': '', 'user': '', 'pw': '', 'cal': '', 'rem': 30, 'dur': 60, 'ssl': True}
+    with factory() as session:
+        replies = asyncio.run(_route(session, reminder_context(), '取消日程', AsyncMock(), cfg, SettingsService(session)))
+        assert '已删除' in replies[0][0]
+        assert not session.scalar(select(NotificationEvent)).active
+
+
+@pytest.mark.parametrize('status', ['pending', 'retry', 'sent', 'unknown', 'sending'])
+def test_wording_refresh_preserves_sent_quotes_and_retry_state(factory, status):
+    with factory() as session:
+        record(session)
+        plan_deliveries(session, NOW)
+        job = session.scalar(select(NotificationDelivery))
+        job.text = 'old reminder text'
+        job.status = status
+        job.attempts = 2
+        job.next_attempt_at = NOW + 60
+        job.claimed_at = NOW
+        session.commit()
+        plan_deliveries(session, NOW)
+        session.refresh(job)
+        assert (job.status, job.attempts, job.next_attempt_at) == (status, 2, NOW + 60)
+        if status in ('pending', 'retry'):
+            assert job.text.startswith('⏰ 日程提醒') and 'old reminder text' not in job.text
+            assert '需要调整' not in job.text and '到时间啦' not in job.text
+        else:
+            assert job.text == 'old reminder text'

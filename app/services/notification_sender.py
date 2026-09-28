@@ -48,7 +48,7 @@ def destination(session: Session, target: NotificationTarget) -> Destination:
                        decrypt_secret(target.context_token) if target.context_token else None)
 
 
-async def send_notification(target: Destination, text: str) -> None:
+async def send_notification(target: Destination, text: str) -> str | None:
     import httpx
     from app.integrations.ilink import ILinkClient, ILinkHttpError, ILinkProtocolError, ILinkTransportError
 
@@ -60,7 +60,9 @@ async def send_notification(target: Destination, text: str) -> None:
                 result = await client.send_message(target.conversation_id, text, target.context_token)
             if result.get("ret") != 0:
                 raise DeliveryError("微信未返回明确成功状态，实际投递结果待核对", uncertain=True)
-            return
+            # Reuse the channel's validated server-ID extraction; client_id is not a reply ID.
+            from app.channels.wechat_handler import _bot_message_id
+            return _bot_message_id(result)
         async with httpx.AsyncClient(timeout=15) as client:
             if target.channel == "telegram":
                 payload: dict = {"chat_id": target.conversation_id, "text": text}
@@ -90,6 +92,9 @@ async def send_notification(target: Destination, text: str) -> None:
         accepted = body.get("ok") is True if target.channel == "telegram" else bool(body.get("id"))
         if not accepted:
             raise DeliveryError("渠道未确认发送成功，投递结果待核对", uncertain=True)
+        message = body.get("result") if target.channel == "telegram" else body
+        value = message.get("message_id" if target.channel == "telegram" else "id") if isinstance(message, dict) else None
+        return str(value) if isinstance(value, (str, int)) and not isinstance(value, bool) and value else None
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
         raise DeliveryError("无法连接消息渠道，稍后重试", retry=True) from None
     except (httpx.HTTPError, ValueError, TypeError, AttributeError):
