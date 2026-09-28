@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.22.2] - 2026-09-28
+
+
+### Bug Fixes
+
+- resolve quoted reminders and simplify notification format
+
+
+
+### Documentation
+
+- record channel notification control deployment
+
+
 ## [v1.22.1] - 2026-09-26
 
 
@@ -12,6 +26,12 @@
 ### Documentation
 
 - record v1.22.0 deployment and notification enablement
+
+
+
+### Maintenance
+
+- release v1.22.1
 
 
 ## [v1.22.0] - 2026-09-25
