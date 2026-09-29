@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.22.3] - 2026-09-29
+
+
+### Bug Fixes
+
+- support WeChat server-ID-only reminder quotes
+
+
 ## [v1.22.2] - 2026-09-28
 
 
@@ -12,6 +20,12 @@
 ### Documentation
 
 - record channel notification control deployment
+
+
+
+### Maintenance
+
+- release v1.22.2
 
 
 ## [v1.22.1] - 2026-09-26
