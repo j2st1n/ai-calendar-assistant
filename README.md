@@ -3,7 +3,7 @@
 自部署的私人 AI 日程管理助手。通过 Telegram / Discord / WeChat 对话自然语言与图片输入，AI 自动提取、智能修改并写入 CalDAV 日历。提供现代 Web 控制台、初次配置向导、多渠道集中管理、服务监控仪表盘与只读日历时间轴。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version: v1.21.0](https://img.shields.io/badge/version-v1.21.0-blue)](https://github.com/j2st1n/ai-calendar-assistant/releases/tag/v1.21.0)
+[![Version: v1.22.3](https://img.shields.io/badge/version-v1.22.3-blue)](https://github.com/j2st1n/ai-calendar-assistant/releases/tag/v1.22.3)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/j2st1n/ai-calendar-assistant/pkgs/container/ai-calendar-assistant)
 
 ---
@@ -53,7 +53,7 @@
 services:
   app:
     network_mode: host
-    image: ghcr.io/j2st1n/ai-calendar-assistant:v1.21.0
+    image: ghcr.io/j2st1n/ai-calendar-assistant:v1.22.3
     environment:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
@@ -226,7 +226,7 @@ Bot ：📦 批量日程处理完成 (共 3 项，成功 3 项)：
 创建 `.env` 文件：
 
 ```env
-APP_VERSION=v1.21.0
+APP_VERSION=v1.22.3
 PUBLIC_ORIGIN=https://calendar.example.com
 WEBAUTHN_RP_ID=calendar.example.com
 TRUSTED_HOSTS=calendar.example.com,127.0.0.1,localhost
@@ -238,7 +238,7 @@ SECURE_COOKIES=true
 
 | 变量 | 示例 | 说明 |
 |---|---|---|
-| `APP_VERSION` | `v1.21.0` | 指定镜像版本标签，生产环境建议固定版本 |
+| `APP_VERSION` | `v1.22.3` | 指定镜像版本标签，生产环境建议固定版本 |
 | `PUBLIC_ORIGIN` | `https://calendar.example.com` | 控制台公网完整 Origin，末尾切勿加 `/` |
 | `WEBAUTHN_RP_ID` | `calendar.example.com` | 通行密钥 RP ID，仅填域名，无协议/端口/路径 |
 | `TRUSTED_HOSTS` | `calendar.example.com,127.0.0.1,localhost` | 允许的主机头白名单 |
@@ -270,8 +270,8 @@ docker compose up -d
 docker compose pull && docker compose up -d
 
 # 或指定版本升级 / 回滚
-APP_VERSION=v1.21.0 docker compose pull app
-APP_VERSION=v1.21.0 docker compose up -d --force-recreate app
+APP_VERSION=v1.22.3 docker compose pull app
+APP_VERSION=v1.22.3 docker compose up -d --force-recreate app
 ```
 
 ### 备份与恢复
