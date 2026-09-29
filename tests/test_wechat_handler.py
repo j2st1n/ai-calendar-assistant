@@ -577,3 +577,21 @@ def test_wechat_context_sets_quoted_text_when_ref_msg_present():
 def test_wechat_context_quoted_text_none_when_no_ref_msg():
     ctx = wechat_context_from_message(_message("hello"))
     assert ctx.quoted_text is None
+
+
+@pytest.mark.parametrize('parent_id', [0, 'unrelated-parent'])
+def test_id_only_quote_prefers_server_reference_id(parent_id):
+    msg = _message('改到21:30')
+    msg['parent_id'] = parent_id
+    msg['item_list'][0]['ref_msg'] = {'svr_id': '18446744073709551610', 'title': '引用消息'}
+    ctx = wechat_context_from_message(msg)
+    assert ctx.reply_to_message_id == '18446744073709551610'
+    assert ctx.quoted_text is None
+    assert ctx.quote_reference_present
+
+
+@pytest.mark.parametrize('value', [0, '0', False, 123.5, '１２３', '-1', 'x' * 5000])
+def test_invalid_server_quote_id_is_not_used(value):
+    msg = _message('修改')
+    msg['item_list'][0]['ref_msg'] = {'svr_id': value}
+    assert wechat_context_from_message(msg).reply_to_message_id is None

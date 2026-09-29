@@ -149,6 +149,8 @@ async def _route(session: Session, ctx: ChannelContext, text: str, extractor: Ev
     target = await _find_target(session, ctx)
     if ctx.reply_to_message_id and target is None:
         _record_quote_failure(session, ctx, "reply_target_not_found")
+        if ctx.source == "wechat" and not ctx.quoted_text:
+            return [("🤔 微信这次只提供了引用消息的编号，但没有找到已保存的日程关联。请引用新收到的日程确认或提醒消息，或直接告诉我要修改的日程名称和新时间。", None)]
         return [("🤔 没有找到这条回复对应的日程。请回复我发送的某条日程消息，或重新描述要修改的日程。", None)]
     if ctx.quoted_text and target is None:
         _record_quote_failure(session, ctx, "quoted_target_not_found")

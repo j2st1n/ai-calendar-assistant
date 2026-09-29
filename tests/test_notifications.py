@@ -772,3 +772,80 @@ def test_wording_refresh_preserves_sent_quotes_and_retry_state(factory, status):
             assert '需要调整' not in job.text and '到时间啦' not in job.text
         else:
             assert job.text == 'old reminder text'
+
+
+def test_wechat_id_only_quote_roundtrip_without_ret(factory, monkeypatch):
+    from app.channels.wechat_handler import wechat_context_from_message
+    from app.channels.message_processor import _route
+    from app.db.models import NotificationMessageBinding
+    # Exercise real ILinkClient decoding: uint64 ID, no optional ret field.
+    client = AsyncMock()
+    client.request.return_value = httpx.Response(200, content=b'{"message_id":18446744073709551610}')
+    monkeypatch.setattr('httpx.AsyncClient', lambda **kw: client)
+    with factory() as session:
+        original = record(session, source='telegram')
+        event_id = original.event_id
+    asyncio.run(run_once(factory, send_notification, NOW))
+    assert jobs(factory)[0].status == 'sent'
+    ctx = wechat_context_from_message({'from_user_id': 'wx-user', 'message_id': 123,
+          'item_list': [{'type': 1, 'text_item': {'text': '改到21:30'},
+                         'ref_msg': {'svr_id': '18446744073709551610'}}]})
+    assert ctx.quoted_text is None
+    cfg = {'url': '', 'user': '', 'pw': '', 'cal': '', 'rem': 30, 'dur': 60, 'ssl': True}
+    with factory() as session:
+        assert session.get(NotificationMessageBinding, ('wechat', 'wx-user', '18446744073709551610'))
+        replies = asyncio.run(_route(session, ctx, '改到21:30', AsyncMock(), cfg, SettingsService(session)))
+        assert replies[0][1] is not None and '21:30' in replies[0][0]
+        changed = session.get(EventRecord, replies[0][1])
+        assert changed.event_id == event_id
+        assert json.loads(changed.event_json)['start_time'].endswith('21:30:00+08:00')
+
+
+@pytest.mark.parametrize('body,expected', [
+    ({'message_id': '18446744073709551610'}, '18446744073709551610'),
+    ({'ret': '0', 'message_id': 123}, '123'),
+    ({'ret': 0}, None),
+    ({'ret': '0'}, None),
+])
+def test_wechat_acknowledgement_accepts_documented_success(monkeypatch, body, expected):
+    client = AsyncMock()
+    client.request.return_value = httpx.Response(200, json=body)
+    monkeypatch.setattr('httpx.AsyncClient', lambda **kw: client)
+    assert asyncio.run(send_notification(Destination('wechat', 'token', 'wx', '', 'ctx'), '测试')) == expected
+
+
+@pytest.mark.parametrize('body', [{}, {'client_id': 'local'}, {'message_id': 0},
+                                  {'message_id': '123.0'}, {'ret': False, 'message_id': '123'},
+                                  {'ret': 'invalid', 'message_id': '123'}])
+def test_wechat_malformed_ack_remains_uncertain(monkeypatch, body):
+    client = AsyncMock()
+    client.request.return_value = httpx.Response(200, json=body)
+    monkeypatch.setattr('httpx.AsyncClient', lambda **kw: client)
+    with pytest.raises(DeliveryError) as failure:
+        asyncio.run(send_notification(Destination('wechat', 'token', 'wx', '', 'ctx'), '测试'))
+    assert failure.value.uncertain and not failure.value.retry
+
+
+@pytest.mark.parametrize('code', ['ret', 'errcode'])
+def test_wechat_server_error_cannot_bind_message_id(monkeypatch, code):
+    client = AsyncMock()
+    client.request.return_value = httpx.Response(200, json={code: -2, 'message_id': '123'})
+    monkeypatch.setattr('httpx.AsyncClient', lambda **kw: client)
+    with pytest.raises(DeliveryError) as failure:
+        asyncio.run(send_notification(Destination('wechat', 'token', 'wx', '', 'ctx'), '测试'))
+    assert not failure.value.uncertain
+
+
+def test_old_id_only_reminder_is_not_guessed_from_recent_delivery(factory):
+    from app.channels.wechat_handler import wechat_context_from_message
+    from app.channels.message_processor import _route
+    with factory() as session:
+        record(session)
+    asyncio.run(run_once(factory, AsyncMock(return_value=None), NOW))
+    ctx = wechat_context_from_message({'from_user_id': 'wx-user', 'item_list': [
+        {'type': 1, 'text_item': {'text': '改到21:30'}, 'ref_msg': {'svr_id': '12345'}}]})
+    with factory() as session:
+        replies = asyncio.run(_route(session, ctx, '改到21:30', AsyncMock(), {'dur': 60}, SettingsService(session)))
+        assert '只提供了引用消息的编号' in replies[0][0]
+        assert session.scalar(select(NotificationEvent)).record_id == 1
+        assert session.scalar(select(EventRecord).where(EventRecord.operation == 'update')) is None

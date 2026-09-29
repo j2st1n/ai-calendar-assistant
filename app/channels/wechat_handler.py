@@ -74,6 +74,12 @@ def quoted_message_id_from_message(message: dict[str, Any]) -> str | None:
         if isinstance(value, dict):
             ref_msg = value.get("ref_msg")
             if isinstance(ref_msg, dict):
+                # New clients may omit the quoted body and return only this uint64 ID.
+                server_id = ref_msg.get("svr_id")
+                if isinstance(server_id, (str, int)) and not isinstance(server_id, bool):
+                    candidate = str(server_id)
+                    if len(candidate) <= 20 and candidate.isascii() and candidate.isdigit() and candidate.strip("0"):
+                        return candidate
                 message_item = ref_msg.get("message_item")
                 if isinstance(message_item, dict):
                     for key in ("msg_id", "message_id", "id"):
@@ -120,10 +126,10 @@ def wechat_context_from_message(message: dict[str, Any]) -> ChannelContext:
     from_user_id = str(message.get("from_user_id") or "")
     message_id = message.get("message_id")
     parent_id = message.get("parent_id")
-    reply_to = (
+    reply_to = quoted_message_id_from_message(message) or (
         str(parent_id)
         if parent_id not in (None, 0, "0", "")
-        else quoted_message_id_from_message(message)
+        else None
     )
     return ChannelContext(
         source="wechat",
@@ -243,7 +249,7 @@ def _bot_message_id(response: dict[str, Any]) -> str | None:
         value = response.get(key)
         if value not in (None, ""):
             candidate = str(value)
-            if candidate.isdigit():
+            if len(candidate) <= 20 and candidate.isascii() and candidate.isdigit() and candidate.strip("0"):
                 return candidate
     msg = response.get("msg")
     if isinstance(msg, dict):

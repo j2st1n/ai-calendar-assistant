@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from app.db.models import DiscordIdentity, NotificationTarget, TelegramIdentity
 from app.services.notification_service import account_key
 from app.services.settings_service import SettingsService
 
+logger = logging.getLogger(__name__)
 
 class DeliveryError(Exception):
     def __init__(self, message: str, *, retry: bool = False, uncertain: bool = False,
@@ -58,11 +60,20 @@ async def send_notification(target: Destination, text: str) -> str | None:
                 raise DeliveryError("微信缺少会话上下文，请向机器人发一条消息后重试")
             async with ILinkClient(target.token) as client:
                 result = await client.send_message(target.conversation_id, text, target.context_token)
-            if result.get("ret") != 0:
-                raise DeliveryError("微信未返回明确成功状态，实际投递结果待核对", uncertain=True)
             # Reuse the channel's validated server-ID extraction; client_id is not a reply ID.
             from app.channels.wechat_handler import _bot_message_id
-            return _bot_message_id(result)
+            message_id = _bot_message_id(result)
+            # SendMessageResp.ret is optional. A server ID is also positive evidence
+            # after ILinkClient has rejected HTTP and protocol errors. Keep empty or
+            # malformed acknowledgements uncertain, rather than assuming delivery.
+            ret = result.get("ret")
+            explicit_success = type(ret) in (int, str) and ret in (0, "0")
+            if not explicit_success and not (ret is None and message_id):
+                logger.warning("WeChat reminder acknowledgement uncertain: response_keys=%s", sorted(result))
+                raise DeliveryError("微信未返回明确成功状态，实际投递结果待核对", uncertain=True)
+            if not message_id:
+                logger.warning("WeChat reminder message ID missing: response_keys=%s", sorted(result))
+            return message_id
         async with httpx.AsyncClient(timeout=15) as client:
             if target.channel == "telegram":
                 payload: dict = {"chat_id": target.conversation_id, "text": text}
