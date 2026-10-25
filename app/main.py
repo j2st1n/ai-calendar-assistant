@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import suppress
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse
@@ -15,6 +16,8 @@ from app.services.settings_service import SettingsService
 from app.web.routes import router as web_router
 from app.web.notifications import router as notification_router
 from app.web.security import SameOriginMiddleware, SecurityHeadersMiddleware
+
+STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 
 
 async def auto_start_bots() -> None:
@@ -53,7 +56,7 @@ def create_app() -> FastAPI:
         https_only=settings.secure_cookies,
     )
     app.add_middleware(SecurityHeadersMiddleware)
-    app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(web_router)
     app.include_router(notification_router)
 

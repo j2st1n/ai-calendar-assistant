@@ -54,7 +54,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/console")
-templates = Jinja2Templates(directory="app/web/templates")
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 template_globals = cast(MutableMapping[str, object], templates.env.globals)
 template_globals["app_version"] = read_version
 
@@ -3347,7 +3348,7 @@ async def retry_event_batch_wrapper(
 
 @router.get("/system/backup")
 async def download_backup(_request: Request, _: None = Depends(require_admin)):
-    buf = BytesIO(_create_backup_archive(Path("data")))
+    buf = BytesIO(_create_backup_archive(Path(settings.data_dir)))
     from datetime import date
     from starlette.responses import StreamingResponse
     return StreamingResponse(buf, media_type="application/zip",

@@ -25,6 +25,14 @@ def bootstrap_application() -> None:
 
 
 def ensure_data_dir(data_dir: Path) -> None:
+    from app.core.config import BASE_DIR
+    resolved_dir = data_dir.resolve()
+    workspace_root = BASE_DIR.parent.parent
+    if (workspace_root / "apps").is_dir() and resolved_dir == (workspace_root / "data").resolve():
+        raise RuntimeError(
+            f"Safety guard: data_dir cannot be placed directly at workspace root '{resolved_dir}'. "
+            f"It must reside within the application directory ({BASE_DIR}) or an explicit isolated path."
+        )
     data_dir.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(data_dir, 0o700)
@@ -98,16 +106,30 @@ def ensure_default_settings(settings_service: SettingsService) -> None:
 
 
 def read_version() -> str:
-    try:
-        return Path("VERSION").read_text().strip()
-    except Exception:
-        return "dev"
+    from app.core.config import BASE_DIR
+    candidates = [BASE_DIR / "VERSION", Path("VERSION")]
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate.read_text().strip()
+        except Exception:
+            continue
+    return "dev"
 
 
 def read_changes() -> dict[str, Any]:
-    try:
-        lines = Path("CHANGELOG.md").read_text().splitlines()
-    except Exception:
+    from app.core.config import BASE_DIR
+    candidates = [BASE_DIR / "CHANGELOG.md", Path("CHANGELOG.md")]
+    lines: list[str] = []
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                lines = candidate.read_text().splitlines()
+                break
+        except Exception:
+            continue
+
+    if not lines:
         return {"version": "", "sections": []}
 
     version = ""
