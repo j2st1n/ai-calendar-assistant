@@ -24,11 +24,21 @@ def bootstrap_application() -> None:
         ensure_default_settings(settings_service)
 
 
+def enclosing_workspace_root(base_dir: Path) -> Path | None:
+    """Return the enclosing workspace root (the directory owning ``apps/``), if any.
+
+    The application normally lives at ``<workspace>/apps/<app>``; a checkout that
+    is not nested that way has no workspace root to protect.
+    """
+    candidate = base_dir.resolve().parent.parent
+    return candidate if (candidate / "apps").is_dir() else None
+
+
 def ensure_data_dir(data_dir: Path) -> None:
     from app.core.config import BASE_DIR
     resolved_dir = data_dir.resolve()
-    workspace_root = BASE_DIR.parent.parent
-    if (workspace_root / "apps").is_dir() and resolved_dir == (workspace_root / "data").resolve():
+    workspace_root = enclosing_workspace_root(BASE_DIR)
+    if workspace_root is not None and resolved_dir == (workspace_root / "data").resolve():
         raise RuntimeError(
             f"Safety guard: data_dir cannot be placed directly at workspace root '{resolved_dir}'. "
             f"It must reside within the application directory ({BASE_DIR}) or an explicit isolated path."

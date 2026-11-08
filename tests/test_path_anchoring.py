@@ -39,12 +39,34 @@ def test_memory_database_url_preserved() -> None:
     assert mem.database_url == "sqlite:///:memory:"
 
 
-def test_ensure_data_dir_blocks_workspace_root_pollution() -> None:
-    workspace_root = BASE_DIR.parent.parent
+def test_ensure_data_dir_blocks_workspace_root_pollution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core import bootstrap, config
+
+    workspace_root = tmp_path / "workspace"
+    app_dir = workspace_root / "apps" / "demo-app"
+    app_dir.mkdir(parents=True)
     polluting_dir = workspace_root / "data"
 
+    monkeypatch.setattr(config, "BASE_DIR", app_dir)
     with pytest.raises(RuntimeError, match="Safety guard: data_dir cannot be placed directly at workspace root"):
-        ensure_data_dir(polluting_dir)
+        bootstrap.ensure_data_dir(polluting_dir)
+    assert not polluting_dir.exists()
+
+
+def test_ensure_data_dir_has_no_guard_outside_workspace_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core import bootstrap, config
+
+    app_dir = tmp_path / "standalone" / "demo-app"
+    app_dir.mkdir(parents=True)
+    target = tmp_path / "standalone" / "data"
+
+    monkeypatch.setattr(config, "BASE_DIR", app_dir)
+    bootstrap.ensure_data_dir(target)
+    assert target.is_dir()
 
 
 def test_ensure_data_dir_allows_legitimate_dir(tmp_path: Path) -> None:
