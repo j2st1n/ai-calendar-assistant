@@ -1,11 +1,32 @@
 # Changelog
 
-## Unreleased
+## [v1.22.4] - 2026-11-08
+
 
 ### Bug Fixes
 
-- Send opaque, conversation-scoped session headers to official OpenCode endpoints for AI calls and connection probes.
-- Show safe HTTP error categories when rechecking saved AI settings, without storing provider error payloads.
+- send scoped OpenCode session headers and sanitize AI probe errors
+
+- anchor paths to application base dir to prevent workspace pollution
+
+
+
+### Documentation
+
+- update version references to v1.22.3 in README
+
+
+
+### Maintenance
+
+- ignore .venv, .uv-python and .pytest_cache in gitignore
+
+
+
+### Other
+
+- make workspace-root data-dir guard independent of checkout layout
+
 
 ## [v1.22.3] - 2026-09-29
 
@@ -13,6 +34,12 @@
 ### Bug Fixes
 
 - support WeChat server-ID-only reminder quotes
+
+
+
+### Maintenance
+
+- release v1.22.3
 
 
 ## [v1.22.2] - 2026-09-28
