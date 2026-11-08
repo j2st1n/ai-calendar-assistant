@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -13,6 +14,7 @@ from app.web.routes import (
     _normalize_url,
     _probe_api_key,
     _validated_provider_type,
+    ai_settings,
     pull_ai_models,
     update_ai_settings,
 )
@@ -205,3 +207,126 @@ def test_known_provider_protocol_cannot_be_overridden_by_form_data() -> None:
     assert _validated_provider_type("anthropic", "OpenAI") == "openai_compatible"
     assert _validated_provider_type("openai_compatible", "Anthropic") == "anthropic"
     assert _validated_provider_type("anthropic", "Custom") == "anthropic"
+
+
+APP_DIR = Path(__file__).parents[1]
+TEMPLATES_DIR = APP_DIR / "app/web/templates"
+STYLES_PATH = APP_DIR / "app/web/static/styles.css"
+
+
+def _render_ai_page(settings_values: dict[str, str]) -> str:
+    """通过真实路由渲染 /console/ai，用于断言服务端下发的初始 DOM 状态。"""
+
+    async def run() -> str:
+        session = _session()
+        service = SettingsService(session)
+        for key, value in settings_values.items():
+            service.set(key, value)
+        service.commit()
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/console/ai",
+                "headers": [],
+                "query_string": b"",
+                "session": {"admin_authenticated": True},
+            }
+        )
+        response = await ai_settings(request, session=session, _=None)
+        return response.body.decode()
+
+    return asyncio.run(run())
+
+
+def _tag_with_id(markup: str, tag: str, element_id: str) -> str:
+    match = re.search(rf'<{tag}\b[^>]*\bid="{re.escape(element_id)}"[^>]*>', markup)
+    assert match is not None, f'缺少 <{tag} id="{element_id}">'
+    return match.group(0)
+
+
+def _has_hidden_attribute(tag: str) -> bool:
+    return re.search(r"\shidden(?=[\s>])", tag) is not None
+
+
+def _display_none_hidden_rules(css: str) -> list[tuple[int, str, str]]:
+    """返回针对 [hidden] 且声明 display:none 的规则：(样式表位置, 选择器, 声明)。"""
+    normalized = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    rules: list[tuple[int, str, str]] = []
+    for match in re.finditer(r"(?P<selectors>[^{}]+)\{(?P<declarations>[^}]*)\}", normalized):
+        declarations = match.group("declarations")
+        if not re.search(r"display\s*:\s*none\b", declarations):
+            continue
+        for selector in match.group("selectors").split(","):
+            selector = selector.strip()
+            if "[hidden]" in selector:
+                rules.append((match.start(), selector, declarations))
+    return rules
+
+
+def _targets_vision_card(selector: str) -> bool:
+    if "#vision-card" in selector:
+        return True
+    return re.fullmatch(r"(?:\*|html|body|:root)?\s*\[hidden\]", selector) is not None
+
+
+def test_stylesheet_keeps_hidden_attribute_authoritative_over_stack_grid() -> None:
+    """回归：.stack{display:grid} 曾覆盖浏览器默认 [hidden]，导致 #vision-card 始终显示。"""
+    css_text = STYLES_PATH.read_text(encoding="utf-8")
+
+    stack_rules = [
+        match
+        for match in re.finditer(r"\.stack\s*\{[^}]*\}", re.sub(r"/\*.*?\*/", "", css_text, flags=re.S))
+        if re.search(r"display\s*:\s*grid", match.group(0))
+    ]
+    assert stack_rules, ".stack 的 grid 布局定义应保留"
+    stack_position = max(match.start() for match in stack_rules)
+
+    candidates = [
+        (position, selector, declarations)
+        for position, selector, declarations in _display_none_hidden_rules(css_text)
+        if _targets_vision_card(selector)
+    ]
+    assert candidates, "样式表中缺少让 [hidden] 生效的 display:none 规则"
+
+    effective = [
+        (position, selector, declarations)
+        for position, selector, declarations in candidates
+        # 以下任一情况都能压过 .stack{display:grid}：
+        # 1) #vision-card[hidden] 的 id 选择器优先级更高；
+        # 2) 全局 [hidden] 规则带 !important；
+        # 3) 全局 [hidden] 与 .stack 同优先级，但声明在样式表中更靠后。
+        if "#vision-card" in selector
+        or re.search(r"!\s*important", declarations)
+        or position > stack_position
+    ]
+    assert effective, (
+        "缺少可压过 .stack{display:grid} 的 [hidden] 规则："
+        "应使用全局 [hidden]{display:none !important} 或 #vision-card[hidden]{display:none}"
+    )
+
+
+def test_vision_card_visibility_follows_vision_use_main_toggle() -> None:
+    """回归：勾选「用于图片识别」时卡片由 hidden 隐藏，取消勾选后由 toggleVision() 重新显示。"""
+    template = (TEMPLATES_DIR / "ai.html").read_text(encoding="utf-8")
+
+    card_tag = _tag_with_id(template, "section", "vision-card")
+    assert "card stack" in card_tag
+    assert _has_hidden_attribute(card_tag), "#vision-card 应保留服务端渲染的 hidden 属性"
+    assert re.search(r"function toggleVision\(\)[\s\S]*?card\.hidden = useMain", template)
+    assert re.search(r"toggleVision\(\);", template), "初始化时应同步一次卡片可见性"
+
+    checkbox_tag = _tag_with_id(template, "input", "vision-use-main")
+    assert 'onchange="toggleVision()"' in checkbox_tag
+
+    enabled_page = _render_ai_page({"ai_vision_use_main": "1"})
+    assert _has_hidden_attribute(_tag_with_id(enabled_page, "section", "vision-card"))
+    assert "checked" in _tag_with_id(enabled_page, "input", "vision-use-main")
+
+    disabled_page = _render_ai_page({"ai_vision_use_main": "false"})
+    assert _has_hidden_attribute(_tag_with_id(disabled_page, "section", "vision-card"))
+    assert "checked" not in _tag_with_id(disabled_page, "input", "vision-use-main")
+    # 未勾选时 toggleVision() 将 card.hidden 置为 false，卡片显示且表单可提交到原保存路由
+    assert 'action="/console/ai/vision"' in disabled_page
+    assert "保存识图模型" in disabled_page
+    assert re.search(r"Boolean\(checkbox && checkbox\.checked\)", template)

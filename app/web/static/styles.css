@@ -434,6 +434,11 @@ button:disabled { cursor: wait; opacity: 0.6; }
 .muted { color: var(--text-secondary); }
 .muted-secondary { color: var(--text-muted); }
 .hidden { display: none !important; }
+/* Author display rules (e.g. `.stack { display: grid }`) otherwise override the
+   browser's built-in `[hidden] { display: none }`, leaving elements visible even
+   though the HTML hidden attribute (or JS `element.hidden = true`) is set. Keep
+   the attribute authoritative; inline `display` styles cannot beat it either. */
+[hidden] { display: none !important; }
 .inline-check { display: flex; align-items: center; gap: 8px; width: fit-content; }
 .inline-check input { margin: 0; }
 .form-status { margin: 0; font-size: 12px; }
@@ -519,7 +524,6 @@ button:disabled { cursor: wait; opacity: 0.6; }
   scrollbar-width: thin;
   scrollbar-color: #3f4248 transparent;
 }
-.model-picker-list[hidden] { display: none; }
 .model-picker-list::-webkit-scrollbar { width: 8px; }
 .model-picker-list::-webkit-scrollbar-track { background: transparent; }
 .model-picker-list::-webkit-scrollbar-thumb {
@@ -941,7 +945,6 @@ a:hover { color: var(--link-hover); }
 .settings-disclosure > summary { cursor:pointer; font-size:16px; font-weight:550; margin-bottom:16px; color: var(--text-primary); }
 .settings-disclosure:not([open]) > summary { margin-bottom:0; }
 .settings-disclosure > summary:focus-visible { outline:2px solid #aeb5ff; outline-offset:4px; }
-#wechat-recovery[hidden] { display:none; }
 @media(max-width:768px) {
   .system-settings #security .grid { grid-template-columns:minmax(0,1fr) !important; }
   .event-filters input[type=date] { min-width:0; width:100%; }
