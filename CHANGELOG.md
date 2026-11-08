@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.22.5] - 2026-11-08
+
+
+### Bug Fixes
+
+- hide independent vision model card when main model handles images
+
+
+
+### Documentation
+
+- update version references to v1.22.4 in README
+
+
 ## [v1.22.4] - 2026-11-08
 
 
@@ -18,6 +32,8 @@
 
 
 ### Maintenance
+
+- release v1.22.4
 
 - ignore .venv, .uv-python and .pytest_cache in gitignore
 
