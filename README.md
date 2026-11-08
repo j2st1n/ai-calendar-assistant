@@ -105,6 +105,7 @@ Please change this password in System Settings.
 ### 1. AI 设置 (`/console/ai`)
 采用双栏响应式架构：
 - **主模型配置**：输入 Base URL（如 `https://api.deepseek.com/v1` 或 `https://api.openai.com/v1`）和 API Key。点击「拉取模型列表」一键同步可用模型并选择。
+- **OpenCode 接口**：自动附带官方要求的会话标头，同一聊天保持稳定，用户和聊天之间相互隔离。Go 定位为编程代理订阅，请先确认日历用途符合供应商适用范围；连接测试通过不代表日程解析已验收。
 - **识图模型**：支持配置独立的 Vision 模型（如 `gpt-4o`、`gemini-1.5-pro`），专门负责图片 OCR 与会议通知图片解析。
 - **右栏实时状态与探针**：
   - **基础连通性测试**：探测 API 连通性与鉴权有效性。

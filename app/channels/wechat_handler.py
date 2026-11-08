@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import quote
 
@@ -18,7 +18,7 @@ from app.channels.commands import handle_command
 from app.channels.message_bindings import bind_bot_message
 from app.channels.message_processor import ChannelContext, MessageProcessor
 from app.integrations.ilink import ILinkClient
-from app.services.ai_provider_service import AIProviderConfig, AIProviderService
+from app.services.ai_provider_service import AIProviderConfig, AIProviderService, conversation_session_id
 from app.services.settings_service import SettingsService
 
 
@@ -324,6 +324,8 @@ async def _image_texts_from_message(message: dict[str, Any], session: Session) -
     config = _vision_config(session)
     if isinstance(config, str):
         return texts, [config]
+    ctx = wechat_context_from_message(message)
+    config = replace(config, session_id=conversation_session_id("wechat", ctx.source_user_id, ctx.conversation_id))
 
     service = AIProviderService()
     for source in sources:

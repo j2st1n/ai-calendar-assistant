@@ -17,7 +17,7 @@ from app.ai.extractor import EventExtractor
 from datetime import datetime, timedelta, timezone
 from app.ai.schemas import CalendarEvent, ExtractionResult, Intent
 from app.db.models import EventRecord
-from app.services.ai_provider_service import AIProviderConfig
+from app.services.ai_provider_service import AIProviderConfig, conversation_session_id
 from app.services.caldav_service import CalDAVService, CalDAVServiceError
 from app.services.settings_service import SettingsService
 from app.services.notification_service import remember_target, retire_legacy_event, sync_record, resolve_reminder_reply
@@ -72,6 +72,7 @@ class MessageProcessor:
             base_url=svc.get("ai_base_url") or "https://api.openai.com/v1",
             api_key=svc.get("ai_api_key"),
             model=svc.get("ai_model"),
+            session_id=conversation_session_id(source, user_id, conversation_id),
         )
         tz = svc.get("caldav_timezone") or "Asia/Shanghai"
         extractor = EventExtractor(config, tz)

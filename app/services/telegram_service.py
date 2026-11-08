@@ -444,6 +444,8 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         settings_service = SettingsService(session)
         use_main = settings_service.get("ai_vision_use_main") or "true"
+        from app.services.ai_provider_service import conversation_session_id
+        vision_session_id = conversation_session_id("telegram", user_id, str(update.effective_chat.id))
         if use_main != "false":
             from app.services.ai_provider_service import AIProviderConfig, AIProviderService as AISvc
             config = AIProviderConfig(
@@ -451,6 +453,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 base_url=settings_service.get("ai_base_url") or "https://api.openai.com/v1",
                 api_key=settings_service.get("ai_api_key"),
                 model=settings_service.get("ai_model"),
+                session_id=vision_session_id,
             )
         else:
             if not settings_service.get("ai_vision_model"):
@@ -465,6 +468,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 base_url=settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1",
                 api_key=settings_service.get("ai_vision_api_key"),
                 model=settings_service.get("ai_vision_model"),
+                session_id=vision_session_id,
             )
 
         import base64

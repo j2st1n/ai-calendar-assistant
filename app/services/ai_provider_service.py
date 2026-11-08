@@ -1,12 +1,19 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import base64 as base64_module
+import hashlib
+import hmac
 import importlib
+import json
+import secrets
 from typing import Any
+from urllib.parse import urlsplit
+import uuid
 
 OPENAI_COMPATIBLE_USER_AGENT = "ai-calendar-assistant"
 PROBE_TIMEOUT_SECONDS = 20.0
 COMPLETION_TIMEOUT_SECONDS = 60.0
 CLIENT_MAX_RETRIES = 1
+_EPHEMERAL_SESSION_KEY = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True)
@@ -15,6 +22,67 @@ class AIProviderConfig:
     base_url: str
     api_key: str | None
     model: str | None = None
+    # Probes are independent conversations; callers with a chat context override this.
+    session_id: str = field(default_factory=lambda: "cal-" + uuid.uuid4().hex)
+
+
+def conversation_session_id(source: str, user_id: str, conversation_id: str | None = None) -> str:
+    """An opaque, stable conversation identifier, without exposing channel/user IDs."""
+    from app.core.config import settings
+
+    key = settings.app_secret_key.encode() if settings.app_secret_key else _EPHEMERAL_SESSION_KEY
+    scope = json.dumps(
+        ["ai-calendar/opencode/session/v1", source, user_id, conversation_id or user_id],
+        ensure_ascii=True, separators=(",", ":"),
+    ).encode()
+    return "cal-" + hmac.new(key, scope, hashlib.sha256).hexdigest()
+
+
+def _opencode_headers(config: AIProviderConfig) -> dict[str, str]:
+    try:
+        url = urlsplit(config.base_url)
+        official = url.scheme == "https" and url.hostname == "opencode.ai" and url.port in (None, 443)
+    except ValueError:
+        official = False
+    if not official:
+        return {}
+    return {"User-Agent": OPENAI_COMPATIBLE_USER_AGENT, "x-opencode-session": config.session_id}
+
+
+def safe_ai_connection_error(exc: Exception) -> str:
+    """Expose actionable categories, never provider payloads, URLs or credentials."""
+    chain: list[BaseException] = [exc]
+    for _ in range(4):
+        cause = chain[-1].__cause__
+        if cause is None or cause in chain:
+            break
+        chain.append(cause)
+    current = next((item for item in chain if isinstance(getattr(item, "status_code", None), int)), chain[-1])
+    status = getattr(current, "status_code", None)
+    prefix = f"AI 连接测试失败（HTTP {status}）：" if isinstance(status, int) and 100 <= status <= 599 else "AI 连接测试失败："
+    # Inspect locally only; none of this untrusted text is copied into the response.
+    text = str(getattr(current, "body", "")).lower() + " " + str(current).lower()
+    if "x-opencode-session" in text and any(word in text for word in ("missing", "required", "provide", "include", "缺少")):
+        reason = "OpenCode 要求 x-opencode-session 会话标头。"
+    elif status == 401:
+        reason = "API Key 无效或已失效，请检查供应商凭据。"
+    elif status == 403:
+        reason = "供应商拒绝访问，请检查账号权限、隐私设置或订阅适用范围。"
+    elif status == 404:
+        reason = "接口或模型不存在，请检查 Base URL 和模型名称。"
+    elif status == 429:
+        reason = "达到供应商速率或用量限制，请稍后重试或检查额度。"
+    elif isinstance(status, int) and 500 <= status <= 599:
+        reason = "供应商服务暂时异常，请稍后重试。"
+    elif status == 400:
+        reason = "请求不被供应商接受，请检查协议、模型及供应商设置。"
+    elif any(type(item).__name__ in {"APITimeoutError", "ReadTimeout", "ConnectTimeout", "TimeoutError"} for item in chain):
+        reason = "AI 请求超时，请稍后重试。"
+    elif any(type(item).__name__ in {"APIConnectionError", "ConnectError"} for item in chain):
+        reason = "无法连接 AI 接口，请检查网络和 Base URL。"
+    else:
+        reason = "请检查 Base URL、API Key 和模型配置。"
+    return prefix + reason
 
 
 class AIProviderService:
@@ -271,7 +339,7 @@ class AIProviderService:
         }
 
     async def _test_openai_compatible(self, config: AIProviderConfig) -> None:
-        AsyncOpenAI, OpenAIAPIError = _openai_sdk()
+        AsyncOpenAI, _ = _openai_sdk()
         try:
             async with AsyncOpenAI(
                 **_openai_client_kwargs(config, timeout=PROBE_TIMEOUT_SECONDS)
@@ -283,14 +351,12 @@ class AIProviderService:
                     temperature=0,
                 )
         except Exception as exc:
-            if isinstance(exc, OpenAIAPIError):
-                raise AIProviderError(f"连接测试失败：{_api_error_message(exc)}") from exc
-            raise AIProviderError(f"连接测试失败：{exc}") from exc
+            raise AIProviderError(safe_ai_connection_error(exc)) from exc
 
     async def _test_anthropic(self, config: AIProviderConfig) -> None:
         if not config.api_key:
             raise AIProviderError("Anthropic Provider 需要 API Key。")
-        AsyncAnthropic, AnthropicAPIError = _anthropic_sdk()
+        AsyncAnthropic, _ = _anthropic_sdk()
         try:
             async with AsyncAnthropic(
                 **_anthropic_client_kwargs(config, timeout=PROBE_TIMEOUT_SECONDS)
@@ -302,9 +368,7 @@ class AIProviderService:
                     temperature=0,
                 )
         except Exception as exc:
-            if isinstance(exc, AnthropicAPIError):
-                raise AIProviderError(f"连接测试失败：{_api_error_message(exc)}") from exc
-            raise AIProviderError(f"连接测试失败：{exc}") from exc
+            raise AIProviderError(safe_ai_connection_error(exc)) from exc
 
 
 class AIProviderError(Exception):
@@ -323,7 +387,7 @@ def _openai_client_kwargs(config: AIProviderConfig, *, timeout: float) -> dict[s
     return {
         "api_key": config.api_key or "local",
         "base_url": config.base_url,
-        "default_headers": {"User-Agent": OPENAI_COMPATIBLE_USER_AGENT},
+        "default_headers": {"User-Agent": OPENAI_COMPATIBLE_USER_AGENT, **_opencode_headers(config)},
         "timeout": timeout,
         "max_retries": CLIENT_MAX_RETRIES,
     }
@@ -342,6 +406,8 @@ def _anthropic_client_kwargs(config: AIProviderConfig, *, timeout: float) -> dic
     }
     if config.base_url:
         kwargs["base_url"] = config.base_url
+    if headers := _opencode_headers(config):
+        kwargs["default_headers"] = headers
     return kwargs
 
 

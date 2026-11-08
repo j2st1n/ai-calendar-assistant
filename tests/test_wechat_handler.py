@@ -249,6 +249,8 @@ def test_dispatch_handles_image_with_main_model():
         assert MockAISvc.return_value.vision_completion.await_args is not None
         config = MockAISvc.return_value.vision_completion.await_args.args[0]
         assert config.model == "main-model"
+        from app.services.ai_provider_service import conversation_session_id
+        assert config.session_id == conversation_session_id("wechat", "u@im.wechat", "u@im.wechat")
         MockProcessor.return_value.process.assert_awaited_once()
         assert MockProcessor.return_value.process.await_args is not None
         assert MockProcessor.return_value.process.await_args.args[2] == "明天三点开会"
@@ -305,6 +307,8 @@ def test_dispatch_handles_image_with_separate_vision_model():
         config = MockAISvc.return_value.vision_completion.await_args.args[0]
         assert config.base_url == "https://vision.example/v1"
         assert config.model == "vision-model"
+        from app.services.ai_provider_service import conversation_session_id
+        assert config.session_id == conversation_session_id("wechat", "u@im.wechat", "u@im.wechat")
 
     asyncio.run(run())
 

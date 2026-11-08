@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- Send opaque, conversation-scoped session headers to official OpenCode endpoints for AI calls and connection probes.
+- Show safe HTTP error categories when rechecking saved AI settings, without storing provider error payloads.
+
 ## [v1.22.3] - 2026-09-29
 
 

@@ -278,7 +278,8 @@ async def _handle_attachments(message: DiscordMessageProtocol, text: str, sessio
             continue
 
         img_b64 = base64.b64encode(img_bytes).decode()
-        from app.services.ai_provider_service import AIProviderConfig, AIProviderService as AISvc
+        from app.services.ai_provider_service import AIProviderConfig, AIProviderService as AISvc, conversation_session_id
+        vision_session_id = conversation_session_id("discord", str(message.author.id), str(message.channel.id))
 
         if use_main != "false":
             config = AIProviderConfig(
@@ -286,6 +287,7 @@ async def _handle_attachments(message: DiscordMessageProtocol, text: str, sessio
                 base_url=settings_service.get("ai_base_url") or "https://api.openai.com/v1",
                 api_key=settings_service.get("ai_api_key"),
                 model=settings_service.get("ai_model"),
+                session_id=vision_session_id,
             )
         else:
             if not settings_service.get("ai_vision_model"):
@@ -296,6 +298,7 @@ async def _handle_attachments(message: DiscordMessageProtocol, text: str, sessio
                 base_url=settings_service.get("ai_vision_base_url") or "https://api.openai.com/v1",
                 api_key=settings_service.get("ai_vision_api_key"),
                 model=settings_service.get("ai_vision_model"),
+                session_id=vision_session_id,
             )
         try:
             result = await AISvc().vision_completion(config, img_b64)

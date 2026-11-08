@@ -886,6 +886,7 @@ async def test_saved_connection(
         raise HTTPException(status_code=404)
     service = SettingsService(session)
     signature = revision(session, kind)
+    error_message = None
     if kind == "ai":
         Config, ProviderError, Provider = _ai_components()
         model = service.get("ai_model") or ""
@@ -897,8 +898,11 @@ async def test_saved_connection(
         try:
             await Provider().test_connection(config)
             ok = True
-        except ProviderError:
+        except ProviderError as exc:
+            from app.services.ai_provider_service import safe_ai_connection_error
+
             ok = False
+            error_message = safe_ai_connection_error(exc)
     else:
         Provider, ProviderError = _caldav_components()
         url = service.get("caldav_url") or ""
@@ -917,7 +921,10 @@ async def test_saved_connection(
     summary["time"] = _record_time(summary.pop("at"), _calendar_timezone(service))
     dot_class = "dot-success" if ok else "dot-error"
     state_label = "已验证" if ok else ("连接失败" if kind == "caldav" else "测试失败")
-    return JSONResponse({"ok": ok, "check": summary, "state_label": state_label, "dot_class": dot_class})
+    payload = {"ok": ok, "check": summary, "state_label": state_label, "dot_class": dot_class}
+    if error_message:
+        payload["error"] = error_message
+    return JSONResponse(payload)
 
 
 @router.get("/login", response_class=HTMLResponse)
