@@ -15,9 +15,9 @@ jobs:
         run: |
           set -euo pipefail
           # 本机/开发机专属路径：外接卷、用户目录、Homebrew、macOS 临时目录、Windows 盘符。
-          # 容器内路径请用 /app 这类通用前缀；确需豁免时在 git grep 后追加 ':!<path>'。
+          # 容器内路径请用 /app 这类通用前缀；本文件自身的规则文本需要排除，否则会自匹配。
           pattern='(/Volumes/|/Users/|/home/[A-Za-z0-9._-]+/|/opt/homebrew/|/private/var/|C:\\)'
-          matches="$(git grep -nIE "$pattern" -- . ':!*.lock' | head -50 || true)"
+          matches="$(git grep -nIE "$pattern" -- . ':!*.lock' ':!.github/workflows/local-path-check.yml' | head -50 || true)"
           if [ -n "$matches" ]; then
             echo "$matches"
             echo "::error::发现本机绝对路径，请改为仓库相对路径或占位符"
