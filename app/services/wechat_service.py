@@ -30,6 +30,7 @@ _LAZY_COMPONENTS = {
     "ILinkClient": ("app.integrations.ilink", "ILinkClient"),
     "ILinkError": ("app.integrations.ilink", "ILinkError"),
     "ILinkStaleTokenError": ("app.integrations.ilink", "ILinkStaleTokenError"),
+    "ILINK_BASE": ("app.integrations.ilink", "ILINK_BASE"),
 }
 
 
@@ -162,7 +163,7 @@ class WechatBotRuntime:
             last_error=asdict(self.last_error_info) if self.last_error_info else None,
         )
 
-    async def reload(self, token: str) -> str:
+    async def reload(self, token: str, *, base_url: str = "") -> str:
         async with self._lifecycle_lock:
             await self._stop_locked()
             self.consecutive_failures = 0
@@ -174,7 +175,7 @@ class WechatBotRuntime:
             self.last_error_info = None
             self.running = True
             self.state = WechatRuntimeState.STARTING
-            self._task = asyncio.create_task(self._poll_loop(token))
+            self._task = asyncio.create_task(self._poll_loop(token, base_url=base_url))
         return "started"
 
     async def stop(self) -> None:
@@ -206,18 +207,27 @@ class WechatBotRuntime:
         finally:
             self.next_retry_at = None
 
-    async def _poll_loop(self, token: str) -> None:
+    async def _poll_loop(self, token: str, *, base_url: str = "") -> None:
         ILinkClient = _load_component("ILinkClient")
         ILinkError = _load_component("ILinkError")
         ILinkStaleTokenError = _load_component("ILinkStaleTokenError")
+        ILINK_BASE = _load_component("ILINK_BASE")
         dispatch_wechat_message = _load_component("dispatch_wechat_message")
 
-        client = ILinkClient(token)
+        # Login may return a per-account baseurl; fall back to the persisted
+        # value (startup path) and finally to the official default host.
         next_timeout_ms = WECHAT_DEFAULT_LONG_POLL_TIMEOUT_MS
         cursor = ""
+        client: Any | None = None
         try:
             with SessionLocal() as session:
-                cursor = SettingsService(session).get("wechat_updates_buf") or ""
+                settings_service = SettingsService(session)
+                cursor = settings_service.get("wechat_updates_buf") or ""
+                if not base_url:
+                    saved_base_url = settings_service.get("wechat_bot_baseurl")
+                    if isinstance(saved_base_url, str):
+                        base_url = saved_base_url.strip()
+            client = ILinkClient(token, base_url=base_url or ILINK_BASE)
             self.state = WechatRuntimeState.POLLING
 
             while self.running:
@@ -291,8 +301,9 @@ class WechatBotRuntime:
             self.state = WechatRuntimeState.CRASHED
             logger.exception("WeChat bot runtime crashed")
         finally:
-            with contextlib.suppress(Exception):
-                await client.aclose()
+            if client is not None:
+                with contextlib.suppress(Exception):
+                    await client.aclose()
             if self.state not in (WechatRuntimeState.CRASHED, WechatRuntimeState.STOPPING):
                 self.state = WechatRuntimeState.STOPPED
             self.running = False
@@ -365,16 +376,27 @@ class WechatService:
             "wechat_cursor_length": len(cursor),
         }
 
-    def save_token(self, session: Session, token: str) -> None:
+    def save_token(
+        self,
+        session: Session,
+        token: str,
+        *,
+        base_url: str = "",
+        ilink_bot_id: str = "",
+        ilink_user_id: str = "",
+    ) -> None:
         settings_service = SettingsService(session)
         settings_service.set("wechat_bot_token", token, encrypted=True)
+        settings_service.set("wechat_bot_baseurl", base_url or None)
+        settings_service.set("wechat_ilink_bot_id", ilink_bot_id or None)
+        settings_service.set("wechat_ilink_user_id", ilink_user_id or None)
         settings_service.commit()
 
-    async def reload_bot(self, token: str) -> str:
+    async def reload_bot(self, token: str, *, base_url: str = "") -> str:
         global _wechat_runtime
         if _wechat_runtime is None:
             _wechat_runtime = WechatBotRuntime()
-        return await _wechat_runtime.reload(token)
+        return await _wechat_runtime.reload(token, base_url=base_url)
 
     async def stop_bot(self) -> None:
         global _wechat_runtime

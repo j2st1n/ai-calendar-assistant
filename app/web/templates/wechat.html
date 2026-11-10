@@ -107,6 +107,13 @@
     <div id="qr-status">
       <span class="status-badge"><span class="dot dot-warning"></span>等待扫码...</span>
     </div>
+    <div id="qr-verifycode" style="display:none;margin-top:10px;">
+      <p class="muted" style="margin:0 0 6px 0;font-size:12px;">手机微信显示了数字验证码时，请在此输入后提交。</p>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+        <input id="qr-verifycode-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="数字验证码" style="max-width:180px;" onkeydown="if(event.key==='Enter'){event.preventDefault();submitQrVerifyCode();}">
+        <button type="button" id="btn-qr-verifycode" onclick="submitQrVerifyCode()">提交验证码</button>
+      </div>
+    </div>
   </div>
 
   <div id="qr-step-3" style="display:none;margin-top:16px;">
@@ -130,7 +137,11 @@
 
 <script>
 (function(){
-  var pollTimer = null;
+  // 官方 get_qrcode_status 约 35 秒长轮询：串行发送，上一轮返回后才发下一轮。
+  var QR_STATUS_URL = '/console/wechat/qr/status';
+  var QR_RETRY_DELAY_MS = 800;
+  var QR_WAIT_LIMIT = 30;
+  var qrPoll = null;
 
   function formatTime(value) {
     if (!value) return '';
@@ -196,7 +207,7 @@
     btn.disabled = true;
     btn.textContent = '获取中...';
     hideError();
-    clearInterval(pollTimer);
+    stopPolling();
 
     fetch('/console/wechat/qr', { method: 'POST' })
       .then(function(r){ return r.json(); })
@@ -233,29 +244,172 @@
   };
 
   function startPolling(qrcode) {
-    var count = 0;
-    pollTimer = setInterval(function(){
-      count++;
-      fetch('/console/wechat/qr/status?qrcode=' + encodeURIComponent(qrcode))
-        .then(function(r){ return r.json(); })
-        .then(function(d){
-          var el = document.getElementById('qr-status');
-          if (!el) return;
-          if (d.status === 'confirmed' || d.status === 'scanned' || d.status === 'success') {
-            if (d.has_token) {
-              el.innerHTML = '<span class="status-badge"><span class="dot dot-success"></span>登录成功！正在保存 Token...</span>';
-              saveToken(d.qrcode);
-              clearInterval(pollTimer);
-            } else {
-              el.innerHTML = '<span class="status-badge"><span class="dot dot-warning"></span>已扫码，等待授权...</span>';
-            }
-          } else if (d.status === 'expired' || d.status === 'timeout' || count > 60) {
-            el.innerHTML = '<span class="status-badge"><span class="dot dot-error"></span>二维码已过期，请重新获取。</span>';
-            clearInterval(pollTimer);
-            document.getElementById('qr-step-1').style.display = '';
-          }
-        });
-    }, 3000);
+    if (!qrcode) return;
+    stopPolling();
+    qrPoll = { qrcode: qrcode, verifyCode: '', redirectHost: '', waits: 0, seenScan: false, stopped: false, paused: false, timer: null };
+    setQrStatus('<span class="dot dot-warning"></span>等待扫码...');
+    schedulePoll(0);
+  }
+
+  function stopPolling() {
+    if (qrPoll) {
+      qrPoll.stopped = true;
+      if (qrPoll.timer) {
+        clearTimeout(qrPoll.timer);
+        qrPoll.timer = null;
+      }
+    }
+    qrPoll = null;
+    resetVerifyCode();
+  }
+
+  function schedulePoll(delay) {
+    var state = qrPoll;
+    if (!state || state.stopped || state.paused) return;
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(pollStatus, delay || 0);
+  }
+
+  function setQrStatus(html) {
+    var el = document.getElementById('qr-status');
+    if (el) el.innerHTML = '<span class="status-badge">' + html + '</span>';
+  }
+
+  function pollStatus() {
+    var state = qrPoll;
+    if (!state || state.stopped) return;
+    state.timer = null;
+    var url = QR_STATUS_URL + '?qrcode=' + encodeURIComponent(state.qrcode);
+    if (state.redirectHost) url += '&redirect_host=' + encodeURIComponent(state.redirectHost);
+    if (state.verifyCode) url += '&verify_code=' + encodeURIComponent(state.verifyCode);
+    fetch(url)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!qrPoll || qrPoll !== state) return;
+        handleStatus(d || {});
+      })
+      .catch(function(){
+        if (!qrPoll || qrPoll !== state) return;
+        state.waits += 1;
+        setQrStatus('<span class="dot dot-warning"></span>等待扫码...（网络波动，自动重试中）');
+        maybeGiveUp();
+      })
+      .finally(function(){
+        if (!qrPoll || qrPoll !== state || state.stopped || state.paused) return;
+        schedulePoll(QR_RETRY_DELAY_MS);
+      });
+  }
+
+  function handleStatus(d) {
+    var state = qrPoll;
+    if (!state) return;
+    var status = d.status || 'wait';
+    if (status === 'scaned') {
+      state.seenScan = true;
+      state.waits = 0;
+      state.verifyCode = '';
+      hideVerifyCode();
+      hideError();
+      setQrStatus('<span class="dot dot-warning"></span>已扫码，请在手机上确认登录');
+      return;
+    }
+    if (status === 'confirmed') {
+      state.stopped = true;
+      setQrStatus('<span class="dot dot-success"></span>登录成功，正在保存登录凭证...');
+      saveToken(state.qrcode);
+      return;
+    }
+    if (status === 'need_verifycode' || status === 'confirmed_but_need_verifycode') {
+      state.paused = true;
+      state.verifyCode = '';
+      showVerifyCode();
+      setQrStatus('<span class="dot dot-warning"></span>需要验证码：请输入手机微信上显示的数字');
+      return;
+    }
+    if (status === 'scaned_but_redirect') {
+      state.seenScan = true;
+      if (typeof d.redirect_host === 'string' && d.redirect_host) state.redirectHost = d.redirect_host;
+      setQrStatus('<span class="dot dot-warning"></span>已扫码，正在切换登录节点...');
+      return;
+    }
+    if (status === 'binded_redirect') {
+      stopPolling();
+      document.getElementById('qr-step-2').style.display = 'none';
+      document.getElementById('qr-step-1').style.display = '';
+      hideError();
+      setQrStatus('<span class="dot dot-success"></span>该微信号已绑定到此服务，无需再次扫码');
+      return;
+    }
+    if (status === 'expired') {
+      stopPolling();
+      showError('二维码已过期，请重新获取。');
+      return;
+    }
+    if (status === 'verify_code_blocked') {
+      stopPolling();
+      showError('验证码错误次数过多，请重新获取二维码后再试。');
+      return;
+    }
+    state.waits += 1;
+    hideError();
+    setQrStatus(state.seenScan
+      ? '<span class="dot dot-warning"></span>已扫码，正在等待手机确认...'
+      : '<span class="dot dot-warning"></span>等待扫码...');
+    maybeGiveUp();
+  }
+
+  function maybeGiveUp() {
+    var state = qrPoll;
+    if (!state) return;
+    if (state.waits >= QR_WAIT_LIMIT) {
+      stopPolling();
+      showError('二维码长时间未确认，可能已过期，请重新获取。');
+    }
+  }
+
+  window.submitQrVerifyCode = function() {
+    var input = document.getElementById('qr-verifycode-input');
+    if (!input || !qrPoll) return;
+    var code = String(input.value || '').replace(/[^0-9]/g, '');
+    if (!code) {
+      showQrHint('请输入手机微信上显示的数字验证码。');
+      return;
+    }
+    qrPoll.verifyCode = code;
+    qrPoll.paused = false;
+    input.value = '';
+    hideVerifyCode();
+    hideError();
+    setQrStatus('<span class="dot dot-warning"></span>验证码已提交，等待手机确认...');
+    schedulePoll(0);
+  };
+
+  function showVerifyCode() {
+    var box = document.getElementById('qr-verifycode');
+    var input = document.getElementById('qr-verifycode-input');
+    if (box) box.style.display = '';
+    if (input) input.focus();
+  }
+
+  function hideVerifyCode() {
+    var box = document.getElementById('qr-verifycode');
+    if (box) box.style.display = 'none';
+  }
+
+  function resetVerifyCode() {
+    var input = document.getElementById('qr-verifycode-input');
+    if (input) input.value = '';
+    hideVerifyCode();
+    if (qrPoll) qrPoll.verifyCode = '';
+  }
+
+  function showQrHint(msg) {
+    var el = document.getElementById('qr-error');
+    var msgEl = document.getElementById('qr-error-msg');
+    if (el && msgEl) {
+      msgEl.textContent = msg;
+      el.style.display = '';
+    }
   }
 
   function saveToken(qrcode) {
@@ -266,15 +420,17 @@
     })
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if (d.ok) {
+      if (d && d.ok) {
+        stopPolling();
         document.getElementById('qr-step-2').style.display = 'none';
         document.getElementById('qr-step-3').style.display = '';
-        setTimeout(function(){ location.reload(); }, 2000);
+        hideError();
+        setTimeout(function(){ location.reload(); }, 1200);
       } else {
-        showError(d.error || '保存失败');
+        showQrHint((d && d.error) || '保存登录凭证失败，请重试。');
       }
     })
-    .catch(function(){ showError('保存 Token 时网络错误。'); });
+    .catch(function(){ showQrHint('保存登录凭证时网络错误，请重试。'); });
   }
 
   window.probeMessages = function() {

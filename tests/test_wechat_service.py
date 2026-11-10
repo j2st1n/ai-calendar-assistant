@@ -112,7 +112,7 @@ def test_reload_and_stop_cancel_inflight_task():
         rt = WechatBotRuntime()
         started = asyncio.Event()
 
-        async def fake_loop(_token):
+        async def fake_loop(_token, *, base_url=""):
             started.set()
             await asyncio.Event().wait()
 
@@ -134,7 +134,7 @@ def test_reload_never_overlaps_two_pollers():
         active = 0
         max_active = 0
 
-        async def fake_loop(_token):
+        async def fake_loop(_token, *, base_url=""):
             nonlocal active, max_active
             active += 1
             max_active = max(max_active, active)
@@ -344,7 +344,7 @@ def test_reload_bot_creates_runtime_and_stop_awaits_it():
                 runtime.stop = AsyncMock()
                 service = WechatService()
                 assert await service.reload_bot("tok") == "started"
-                runtime.reload.assert_awaited_once_with("tok")
+                runtime.reload.assert_awaited_once_with("tok", base_url="")
                 assert get_wechat_bot_runtime() is runtime
                 await service.stop_bot()
                 runtime.stop.assert_awaited_once()

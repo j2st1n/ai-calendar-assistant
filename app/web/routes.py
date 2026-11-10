@@ -74,6 +74,8 @@ _LAZY_COMPONENTS = {
     "CalDAVServiceError": ("app.services.caldav_service", "CalDAVServiceError"),
     "ILinkClient": ("app.integrations.ilink", "ILinkClient"),
     "ILinkError": ("app.integrations.ilink", "ILinkError"),
+    "get_qrcode_credentials": ("app.integrations.ilink", "get_qrcode_credentials"),
+    "remember_qrcode_credentials": ("app.integrations.ilink", "remember_qrcode_credentials"),
 }
 
 
@@ -129,6 +131,36 @@ def _wechat_probe_is_blocked() -> bool:
     if runtime is None:
         return False
     return bool(getattr(runtime, "task_alive", getattr(runtime, "running", False)))
+
+
+# Official QR login statuses (see Tencent openclaw-weixin protocol docs). Older
+# spellings are folded onto the official ones so the console never sees two
+# names for one state.
+_WECHAT_QR_STATUS_ALIASES = {"scanned": "scaned", "success": "confirmed"}
+_WECHAT_QR_CREDENTIAL_KEYS = ("bot_token", "ilink_bot_id", "baseurl", "ilink_user_id")
+
+
+def _wechat_base_url(settings_service: Any) -> str:
+    value = settings_service.get("wechat_bot_baseurl")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _wechat_qr_status(detail: dict[str, Any]) -> str:
+    raw = detail.get("status") or detail.get("qrcode_status") or detail.get("state")
+    if not isinstance(raw, str) or not raw.strip():
+        # A response without a status is a silent long-poll read, not an error.
+        return "wait"
+    status = raw.strip()
+    return _WECHAT_QR_STATUS_ALIASES.get(status, status)
+
+
+def _wechat_credentials_from_detail(detail: dict[str, Any]) -> dict[str, str]:
+    credentials: dict[str, str] = {}
+    for key in _WECHAT_QR_CREDENTIAL_KEYS:
+        value = detail.get(key)
+        if isinstance(value, str) and value:
+            credentials[key] = value
+    return credentials
 
 
 def _ai_components() -> tuple[Any, type[Exception], Any]:
@@ -2433,8 +2465,9 @@ async def start_wechat_runtime(
     if not token:
         set_error_flash(request, "WeChat Bot Token 未配置，请先扫码登录。")
         return redirect("/console/channels?tab=wechat")
+    # Saved login may carry a per-account baseurl; the poller must use it.
     service = _wechat_service()
-    __ = await service.reload_bot(token)
+    __ = await service.reload_bot(token, base_url=_wechat_base_url(settings_service))
     set_flash(request, "WeChat Bot 已启动。")
     return redirect("/console/channels?tab=wechat")
 
@@ -2475,28 +2508,51 @@ async def fetch_wechat_qr(
 @router.get("/wechat/qr/status")
 async def wechat_qr_status(
     qrcode: str = "",
+    verify_code: str = "",
+    redirect_host: str = "",
     _: None = Depends(require_admin),
 ) -> dict[str, object]:
+    """Long-poll one iLink QR login status.
+
+    The upstream call waits ~35 seconds. Transport timeouts are reported as
+    ``wait`` (never ``unknown``) and the bot token is never echoed to the
+    browser; only ``has_token`` is exposed.
+    """
     if not qrcode:
-        return {"status": "expired"}
+        return {"status": "expired", "qrcode": qrcode, "has_token": False}
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
+    remember_credentials = _load_component("remember_qrcode_credentials")
     client = ILinkClient()
     try:
-        detail = await client.get_qrcode_status_detail(qrcode)
-        status = detail.get("status") or detail.get("qrcode_status") or detail.get("state") or "unknown"
-        if isinstance(status, str):
-            status_str = status
-        elif status is not None:
-            status_str = str(status)
-        else:
-            status_str = "unknown"
-        has_token = bool(detail.get("bot_token") or detail.get("token"))
-        return {"status": status_str, "has_token": has_token, "qrcode": qrcode}
-    except ILinkError:
-        return {"status": "unknown", "qrcode": qrcode}
+        detail = await client.get_qrcode_status_detail(
+            qrcode, verify_code=verify_code, redirect_host=redirect_host
+        )
+    except ILinkError as exc:
+        logger.warning("WeChat QR status poll failed: %s", exc)
+        return {
+            "status": "wait",
+            "qrcode": qrcode,
+            "has_token": False,
+            "transient_error": str(exc),
+        }
     finally:
         await _close_ilink_client(client)
+
+    status = _wechat_qr_status(detail)
+    if status == "confirmed":
+        remember_credentials(qrcode, detail)
+    payload: dict[str, object] = {
+        "status": status,
+        "qrcode": qrcode,
+        "has_token": bool(detail.get("bot_token") or detail.get("token")),
+    }
+    redirect = detail.get("redirect_host")
+    if status == "scaned_but_redirect" and isinstance(redirect, str) and redirect:
+        payload["redirect_host"] = redirect
+    if "need_verifycode" in status:
+        payload["need_verifycode"] = True
+    return payload
 
 
 @router.post("/wechat/save")
@@ -2509,27 +2565,42 @@ async def save_wechat_token(
         body = await request.json()
     except Exception:
         return {"error": "无效的请求"}
+    if not isinstance(body, dict):
+        return {"error": "无效的请求"}
     qrcode = body.get("qrcode", "")
-    if not qrcode:
+    if not isinstance(qrcode, str) or not qrcode:
         return {"error": "缺少 qrcode 参数"}
-    ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
-    client = ILinkClient()
-    try:
-        detail = await client.get_qrcode_status_detail(qrcode)
-        token = detail.get("bot_token") or detail.get("token") or ""
-        if not token:
-            return {"error": "未获取到 Bot Token"}
-        settings_service = SettingsService(session)
-        settings_service.set("wechat_bot_token", token, encrypted=True)
-        settings_service.set("wechat_updates_buf", None)
-        settings_service.commit()
-        __ = await _wechat_service().reload_bot(token)
-        return {"ok": True}
-    except ILinkError as exc:
-        return {"error": str(exc)}
-    finally:
-        await _close_ilink_client(client)
+    get_credentials = _load_component("get_qrcode_credentials")
+    credentials = get_credentials(qrcode) or {}
+    if not credentials.get("bot_token"):
+        # Fall back to a fresh status poll when the short-lived cache missed
+        # (e.g. an operator saved after a page reload). A confirmed payload is
+        # cached by /wechat/qr/status, so the normal flow never reaches here.
+        ILinkClient = _load_component("ILinkClient")
+        client = ILinkClient()
+        try:
+            detail = await client.get_qrcode_status_detail(qrcode)
+        except ILinkError as exc:
+            return {"error": str(exc)}
+        finally:
+            await _close_ilink_client(client)
+        credentials = _wechat_credentials_from_detail(detail)
+    token = credentials.get("bot_token", "")
+    if not token:
+        return {"error": "未获取到 Bot Token"}
+    base_url = credentials.get("baseurl", "")
+    settings_service = SettingsService(session)
+    settings_service.set("wechat_bot_token", token, encrypted=True)
+    # Only persist per-account routing when the login payload provided it.
+    # Saving None for a re-login without baseurl avoids reusing a stale host.
+    settings_service.set("wechat_bot_baseurl", base_url or None)
+    settings_service.set("wechat_ilink_bot_id", credentials.get("ilink_bot_id") or None)
+    settings_service.set("wechat_ilink_user_id", credentials.get("ilink_user_id") or None)
+    settings_service.set("wechat_updates_buf", None)
+    settings_service.commit()
+    __ = await _wechat_service().reload_bot(token, base_url=base_url)
+    return {"ok": True, "base_url_saved": bool(base_url)}
 
 
 @router.post("/wechat/clear")
@@ -2541,6 +2612,9 @@ async def clear_wechat_token(
     await _wechat_service().stop_bot()
     settings_service = SettingsService(session)
     settings_service.set("wechat_bot_token", None)
+    settings_service.set("wechat_bot_baseurl", None)
+    settings_service.set("wechat_ilink_bot_id", None)
+    settings_service.set("wechat_ilink_user_id", None)
     settings_service.set("wechat_updates_buf", None)
     settings_service.commit()
     set_flash(request, "WeChat Bot Token 已清除。")
@@ -2561,7 +2635,7 @@ async def probe_wechat_messages(
     cursor = settings_service.get("wechat_updates_buf") or ""
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
-    client = ILinkClient(token)
+    client = ILinkClient(token, base_url=_wechat_base_url(settings_service))
     try:
         result = await client.get_updates(cursor)
         messages, new_cursor = _unpack_ilink_updates(result)
@@ -2593,7 +2667,7 @@ async def probe_and_process_wechat_messages(
     ILinkClient = _load_component("ILinkClient")
     ILinkError = _load_component("ILinkError")
     dispatch_wechat_message = _load_component("dispatch_wechat_message")
-    client = ILinkClient(token)
+    client = ILinkClient(token, base_url=_wechat_base_url(settings_service))
     try:
         result = await client.get_updates(cursor)
         messages, new_cursor = _unpack_ilink_updates(result)

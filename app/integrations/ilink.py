@@ -4,8 +4,10 @@ import base64
 import hashlib
 import logging
 import random
+import threading
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -16,12 +18,103 @@ CHANNEL_VERSION = "1.17.0"
 BOT_AGENT = "ai-calendar-assistant/1.17.0"
 DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000
 DEFAULT_API_TIMEOUT_SECONDS = 15.0
+# Official iLink QR login status polling is a long poll: one call waits about
+# 35 seconds server side before answering ``wait``. Keep the client margin above
+# that figure so a normal long poll is never truncated into a transport error.
+DEFAULT_QR_STATUS_TIMEOUT_SECONDS = 40.0
+# Login credentials are cached briefly so ``/console/wechat/save`` can persist
+# them without racing a second long poll (which may answer ``binded_redirect``).
+QRCODE_CREDENTIAL_TTL_SECONDS = 300.0
+QRCODE_CREDENTIAL_CACHE_LIMIT = 32
+_QRCODE_CREDENTIAL_FIELDS = ("bot_token", "ilink_bot_id", "baseurl", "ilink_user_id")
 STALE_TOKEN_ERRCODE = -14
 SESSION_PAUSE_SECONDS = 60 * 60
 
 logger = logging.getLogger(__name__)
 
 _pause_until_by_session: dict[str, float] = {}
+
+# qrcode -> (expires_at, credentials). Guarded by a plain thread lock because
+# console requests and the runtime poller may touch it from different loops.
+_qrcode_credentials: dict[str, tuple[float, dict[str, str]]] = {}
+_qrcode_credentials_lock = threading.Lock()
+
+
+def normalize_base_url(base_url: str | None) -> str:
+    """Return a usable iLink base URL, defaulting to the official endpoint."""
+    value = (base_url or "").strip()
+    if not value:
+        return ILINK_BASE
+    if value.rstrip("/") in ("http:", "https:"):
+        return ILINK_BASE
+    if not value.lower().startswith(("http://", "https://")):
+        value = f"https://{value}"
+    return value.rstrip("/")
+
+
+def qrcode_redirect_base_url(redirect_host: str | None) -> str:
+    """Map an official ``redirect_host`` value onto a polling base URL."""
+    value = (redirect_host or "").strip()
+    if not value:
+        return ""
+    return normalize_base_url(value)
+
+
+def remember_qrcode_credentials(qrcode: str, detail: Mapping[str, Any]) -> bool:
+    """Cache the confirmed login payload for a short while.
+
+    Returns ``True`` only when a ``bot_token`` was present. The cache lets the
+    save route reuse the exact ``confirmed`` payload instead of repeating the
+    long poll, which could otherwise answer ``binded_redirect`` and lose the
+    token.
+    """
+    if not qrcode or not isinstance(detail, Mapping):
+        return False
+    credentials: dict[str, str] = {}
+    for field in _QRCODE_CREDENTIAL_FIELDS:
+        value = detail.get(field)
+        if isinstance(value, str) and value:
+            credentials[field] = value
+    if not credentials.get("bot_token"):
+        return False
+
+    now = time.time()
+    expires_at = now + QRCODE_CREDENTIAL_TTL_SECONDS
+    with _qrcode_credentials_lock:
+        for key, (expiry, _creds) in list(_qrcode_credentials.items()):
+            if expiry <= now:
+                del _qrcode_credentials[key]
+        while len(_qrcode_credentials) >= QRCODE_CREDENTIAL_CACHE_LIMIT:
+            oldest = min(_qrcode_credentials, key=lambda key: _qrcode_credentials[key][0])
+            del _qrcode_credentials[oldest]
+        _qrcode_credentials[qrcode] = (expires_at, credentials)
+    return True
+
+
+def get_qrcode_credentials(qrcode: str) -> dict[str, str] | None:
+    """Return a copy of the cached credentials, or ``None`` when absent/expired."""
+    if not qrcode:
+        return None
+    now = time.time()
+    with _qrcode_credentials_lock:
+        entry = _qrcode_credentials.get(qrcode)
+        if entry is None:
+            return None
+        expires_at, credentials = entry
+        if expires_at <= now:
+            del _qrcode_credentials[qrcode]
+            return None
+        return dict(credentials)
+
+
+def forget_qrcode_credentials(qrcode: str) -> None:
+    with _qrcode_credentials_lock:
+        _qrcode_credentials.pop(qrcode, None)
+
+
+def _reset_qrcode_credentials_for_test() -> None:
+    with _qrcode_credentials_lock:
+        _qrcode_credentials.clear()
 
 
 class ILinkError(Exception):
@@ -108,7 +201,10 @@ def _classify_transport_error(exc: httpx.HTTPError) -> tuple[TransportCategory, 
 class ILinkClient:
     def __init__(self, bot_token: str = "", base_url: str = ILINK_BASE) -> None:
         self.bot_token = bot_token
-        self.base_url = base_url.rstrip("/")
+        self.base_url = normalize_base_url(base_url)
+        # Set when the official API answers ``scaned_but_redirect``; later QR
+        # status polls follow the redirect host until replaced.
+        self.qr_redirect_base_url = ""
         self._client: httpx.AsyncClient | None = None
         self._session_key = hashlib.sha256(bot_token.encode()).hexdigest() if bot_token else ""
 
@@ -171,25 +267,63 @@ class ILinkClient:
             return value
         raise ILinkProtocolError("iLink response did not include a qrcode value")
 
-    async def get_qrcode_status(self, qrcode: str) -> str:
-        if not qrcode:
-            raise ILinkProtocolError("qrcode is required")
-        data = await self._request(
-            "GET", "/ilink/bot/get_qrcode_status", params={"qrcode": qrcode}, requires_token=False
+    async def get_qrcode_status(
+        self,
+        qrcode: str,
+        *,
+        verify_code: str = "",
+        redirect_host: str = "",
+    ) -> str:
+        data = await self.get_qrcode_status_detail(
+            qrcode, verify_code=verify_code, redirect_host=redirect_host
         )
         status = data.get("status") or data.get("qrcode_status") or data.get("state")
         if isinstance(status, str):
             return status
         if status is not None:
             return str(status)
-        return "unknown"
+        return "wait"
 
-    async def get_qrcode_status_detail(self, qrcode: str) -> dict[str, Any]:
+    async def get_qrcode_status_detail(
+        self,
+        qrcode: str,
+        *,
+        verify_code: str = "",
+        redirect_host: str = "",
+    ) -> dict[str, Any]:
+        """Long poll ``get_qrcode_status`` for one QR login attempt.
+
+        The official protocol uses a ~35 second long poll here. Timeouts and
+        network failures are therefore *normal* and are reported as
+        ``status=wait`` so the caller simply polls again; only HTTP/business
+        errors and caller cancellation propagate. ``verify_code`` is appended
+        for the round following a ``need_verifycode`` answer, and
+        ``redirect_host`` (``scaned_but_redirect``) redirects later polls.
+        """
         if not qrcode:
             raise ILinkProtocolError("qrcode is required")
-        return await self._request(
-            "GET", "/ilink/bot/get_qrcode_status", params={"qrcode": qrcode}, requires_token=False
-        )
+        redirect_base = qrcode_redirect_base_url(redirect_host)
+        if redirect_base:
+            self.qr_redirect_base_url = redirect_base
+        params = {"qrcode": qrcode}
+        verify_code = (verify_code or "").strip()
+        if verify_code:
+            params["verify_code"] = verify_code
+        try:
+            data = await self._request(
+                "GET",
+                "/ilink/bot/get_qrcode_status",
+                params=params,
+                requires_token=False,
+                timeout=DEFAULT_QR_STATUS_TIMEOUT_SECONDS,
+                base_url=self.qr_redirect_base_url or None,
+            )
+        except ILinkTransportError as exc:
+            logger.debug(
+                "iLink QR status long poll ended without a status category=%s", exc.category
+            )
+            return {"ret": 0, "status": "wait", "transient_error": exc.category}
+        return data
 
     async def get_updates(
         self,
@@ -291,13 +425,14 @@ class ILinkClient:
         json: dict[str, Any] | None = None,
         timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
         normal_read_timeout: bool = False,
+        base_url: str | None = None,
     ) -> dict[str, Any]:
         if requires_token:
             self._require_token(path)
             self._assert_session_active()
         if self._client is None:
             self._client = httpx.AsyncClient()
-        url = f"{self.base_url}{path}"
+        url = f"{normalize_base_url(base_url or self.base_url)}{path}"
         try:
             response = await self._client.request(
                 method,

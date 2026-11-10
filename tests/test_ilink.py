@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from unittest.mock import AsyncMock
 
 import httpx
@@ -7,15 +8,25 @@ import pytest
 from app.integrations.ilink import (
     BOT_AGENT,
     CHANNEL_VERSION,
+    DEFAULT_QR_STATUS_TIMEOUT_SECONDS,
     GetUpdatesResult,
+    ILINK_BASE,
     ILinkAuthError,
     ILinkClient,
     ILinkError,
     ILinkHttpError,
     ILinkStaleTokenError,
     ILinkTransportError,
+    QRCODE_CREDENTIAL_CACHE_LIMIT,
+    QRCODE_CREDENTIAL_TTL_SECONDS,
     STALE_TOKEN_ERRCODE,
+    _reset_qrcode_credentials_for_test,
     _reset_session_pauses_for_test,
+    forget_qrcode_credentials,
+    get_qrcode_credentials,
+    normalize_base_url,
+    qrcode_redirect_base_url,
+    remember_qrcode_credentials,
 )
 
 
@@ -25,8 +36,20 @@ BASE_INFO = {"channel_version": CHANNEL_VERSION, "bot_agent": BOT_AGENT}
 @pytest.fixture(autouse=True)
 def reset_session_pauses():
     _reset_session_pauses_for_test()
+    _reset_qrcode_credentials_for_test()
     yield
     _reset_session_pauses_for_test()
+    _reset_qrcode_credentials_for_test()
+
+
+def _confirmed_payload() -> dict:
+    return {
+        "status": "confirmed",
+        "bot_token": "tok-synthetic",
+        "ilink_bot_id": "bot-synthetic",
+        "baseurl": "https://redirect.example.test",
+        "ilink_user_id": "user-synthetic",
+    }
 
 
 class FakeAsyncClient:
@@ -426,3 +449,184 @@ def test_headers_include_authorization_when_token_set():
     client = ILinkClient("my-token", base_url="https://example.test")
     headers = client._headers()
     assert headers["Authorization"] == "Bearer my-token"
+
+
+# ---------------------------------------------------------------------------
+# QR login long poll (official iLink protocol)
+# ---------------------------------------------------------------------------
+
+def test_qr_status_is_a_long_poll_of_at_least_35_seconds(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"ret": 0, "status": "wait"}))
+        await ILinkClient(base_url="https://example.test").get_qrcode_status_detail("qr-1")
+        req = FakeAsyncClient.requests[0]
+        assert req["method"] == "GET"
+        assert req["url"] == "https://example.test/ilink/bot/get_qrcode_status"
+        assert req["kwargs"]["params"] == {"qrcode": "qr-1"}
+        assert req["kwargs"]["timeout"] >= 35.0
+        assert req["kwargs"]["timeout"] == DEFAULT_QR_STATUS_TIMEOUT_SECONDS
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout("long poll read timeout"),
+        httpx.ConnectError("network unreachable"),
+        httpx.RemoteProtocolError("server disconnected"),
+    ],
+)
+def test_qr_status_transport_failure_is_wait(monkeypatch, error):
+    async def run():
+        _patch_client(monkeypatch, error)
+        detail = await ILinkClient(base_url="https://example.test").get_qrcode_status_detail("qr-1")
+        assert detail["status"] == "wait"
+        assert detail["ret"] == 0
+        assert detail["transient_error"]
+
+    asyncio.run(run())
+
+
+def test_qr_status_does_not_swallow_http_errors(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(503, json={"error": "busy"}))
+        with pytest.raises(ILinkHttpError):
+            await ILinkClient(base_url="https://example.test").get_qrcode_status_detail("qr-1")
+
+    asyncio.run(run())
+
+
+def test_qr_status_passes_verify_code_only_when_present(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"status": "wait"}))
+        client = ILinkClient(base_url="https://example.test")
+        await client.get_qrcode_status_detail("qr-1", verify_code="1234")
+        assert FakeAsyncClient.requests[0]["kwargs"]["params"] == {
+            "qrcode": "qr-1",
+            "verify_code": "1234",
+        }
+        await client.get_qrcode_status_detail("qr-1", verify_code="  ")
+        assert FakeAsyncClient.requests[1]["kwargs"]["params"] == {"qrcode": "qr-1"}
+
+    asyncio.run(run())
+
+
+def test_qr_status_redirect_host_switches_and_persists(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"status": "scaned_but_redirect", "redirect_host": "redirect.example.test"}))
+        client = ILinkClient(base_url="https://example.test")
+        await client.get_qrcode_status_detail("qr-1", redirect_host="redirect.example.test")
+        assert FakeAsyncClient.requests[0]["url"] == "https://redirect.example.test/ilink/bot/get_qrcode_status"
+        # Later polls follow the redirect host without repeating the argument.
+        await client.get_qrcode_status_detail("qr-1")
+        assert FakeAsyncClient.requests[1]["url"] == "https://redirect.example.test/ilink/bot/get_qrcode_status"
+
+    asyncio.run(run())
+
+
+def test_qr_status_redirect_host_accepts_full_url(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"status": "wait"}))
+        client = ILinkClient(base_url="https://example.test")
+        await client.get_qrcode_status_detail("qr-1", redirect_host="https://redirect.example.test/")
+        assert FakeAsyncClient.requests[0]["url"] == "https://redirect.example.test/ilink/bot/get_qrcode_status"
+        assert qrcode_redirect_base_url("") == ""
+        assert qrcode_redirect_base_url("redirect.example.test") == "https://redirect.example.test"
+
+    asyncio.run(run())
+
+
+def test_qr_status_confirmed_keeps_full_login_payload(monkeypatch):
+    async def run():
+        payload = _confirmed_payload()
+        _patch_client(monkeypatch, httpx.Response(200, json=payload))
+        detail = await ILinkClient(base_url="https://example.test").get_qrcode_status_detail("qr-1")
+        assert detail == payload
+
+    asyncio.run(run())
+
+
+def test_qr_status_without_status_field_reads_as_wait(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"ret": 0}))
+        status = await ILinkClient(base_url="https://example.test").get_qrcode_status("qr-1")
+        assert status == "wait"
+
+    asyncio.run(run())
+
+
+def test_normalize_base_url_keeps_default_and_adds_scheme():
+    assert normalize_base_url("") == ILINK_BASE
+    assert normalize_base_url(None) == ILINK_BASE
+    assert normalize_base_url("https://example.test/") == "https://example.test"
+    assert normalize_base_url("example.test") == "https://example.test"
+    assert ILinkClient(base_url="").base_url == ILINK_BASE
+
+
+# ---------------------------------------------------------------------------
+# Confirmed credential cache (avoids a second long poll on /console/wechat/save)
+# ---------------------------------------------------------------------------
+
+def test_credentials_cache_round_trip_and_whitelist():
+    assert remember_qrcode_credentials("qr-1", _confirmed_payload()) is True
+    cached = get_qrcode_credentials("qr-1")
+    assert cached == {
+        "bot_token": "tok-synthetic",
+        "ilink_bot_id": "bot-synthetic",
+        "baseurl": "https://redirect.example.test",
+        "ilink_user_id": "user-synthetic",
+    }
+    # Returned copy: mutating it must not corrupt the cache.
+    assert cached is not None
+    cached["bot_token"] = "tampered"
+    assert get_qrcode_credentials("qr-1")["bot_token"] == "tok-synthetic"  # type: ignore[index]
+
+
+def test_credentials_cache_requires_bot_token():
+    assert remember_qrcode_credentials("qr-no-token", {"status": "confirmed"}) is False
+    assert get_qrcode_credentials("qr-no-token") is None
+    assert get_qrcode_credentials("") is None
+
+
+def test_credentials_cache_expires(monkeypatch):
+    now = [1_000_000.0]
+    monkeypatch.setattr("app.integrations.ilink.time.time", lambda: now[0])
+    assert remember_qrcode_credentials("qr-1", _confirmed_payload()) is True
+    now[0] += QRCODE_CREDENTIAL_TTL_SECONDS - 1
+    assert get_qrcode_credentials("qr-1") is not None
+    now[0] += 2
+    assert get_qrcode_credentials("qr-1") is None
+
+
+def test_credentials_cache_forget_and_limit():
+    for index in range(QRCODE_CREDENTIAL_CACHE_LIMIT + 5):
+        assert remember_qrcode_credentials(f"qr-{index}", _confirmed_payload()) is True
+    # The oldest entries are evicted once the cap is reached.
+    assert get_qrcode_credentials("qr-0") is None
+    assert get_qrcode_credentials(f"qr-{QRCODE_CREDENTIAL_CACHE_LIMIT + 4}") is not None
+    forget_qrcode_credentials(f"qr-{QRCODE_CREDENTIAL_CACHE_LIMIT + 4}")
+    assert get_qrcode_credentials(f"qr-{QRCODE_CREDENTIAL_CACHE_LIMIT + 4}") is None
+
+
+def test_credentials_cache_concurrent_access_is_consistent():
+    errors: list[BaseException] = []
+
+    def worker(index: int) -> None:
+        try:
+            for round_index in range(20):
+                qrcode = f"qr-{index}-{round_index}"
+                assert remember_qrcode_credentials(qrcode, _confirmed_payload()) is True
+                cached = get_qrcode_credentials(qrcode)
+                assert cached is not None
+                assert cached["bot_token"] == "tok-synthetic"
+                forget_qrcode_credentials(qrcode)
+        except BaseException as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
