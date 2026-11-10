@@ -533,6 +533,20 @@ def test_qr_status_redirect_host_accepts_full_url(monkeypatch):
         assert FakeAsyncClient.requests[0]["url"] == "https://redirect.example.test/ilink/bot/get_qrcode_status"
         assert qrcode_redirect_base_url("") == ""
         assert qrcode_redirect_base_url("redirect.example.test") == "https://redirect.example.test"
+        # Only https hosts are accepted; other schemes/hosts are ignored.
+        assert qrcode_redirect_base_url("http://redirect.example.test") == ""
+        assert qrcode_redirect_base_url("file:///etc/passwd") == ""
+        assert qrcode_redirect_base_url("https:///no-host") == ""
+
+    asyncio.run(run())
+
+
+def test_qr_status_ignores_invalid_redirect_host(monkeypatch):
+    async def run():
+        _patch_client(monkeypatch, httpx.Response(200, json={"status": "wait"}))
+        client = ILinkClient(base_url="https://example.test")
+        await client.get_qrcode_status_detail("qr-1", redirect_host="http://redirect.example.test")
+        assert FakeAsyncClient.requests[0]["url"] == "https://example.test/ilink/bot/get_qrcode_status"
 
     asyncio.run(run())
 

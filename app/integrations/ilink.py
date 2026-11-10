@@ -4,12 +4,14 @@ import base64
 import hashlib
 import logging
 import random
+import re
 import threading
 import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -38,6 +40,8 @@ _pause_until_by_session: dict[str, float] = {}
 # console requests and the runtime poller may touch it from different loops.
 _qrcode_credentials: dict[str, tuple[float, dict[str, str]]] = {}
 _qrcode_credentials_lock = threading.Lock()
+# Official redirect_host is a bare host (optionally with a port).
+_REDIRECT_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?$")
 
 
 def normalize_base_url(base_url: str | None) -> str:
@@ -53,11 +57,26 @@ def normalize_base_url(base_url: str | None) -> str:
 
 
 def qrcode_redirect_base_url(redirect_host: str | None) -> str:
-    """Map an official ``redirect_host`` value onto a polling base URL."""
+    """Map an official ``redirect_host`` value onto a polling base URL.
+
+    The protocol only ever redirects QR polling to ``https://<host>``. Anything
+    that is not a plain https host (extra scheme, path, credentials, query) is
+    ignored so the console cannot become an arbitrary outbound-request proxy.
+    """
     value = (redirect_host or "").strip()
     if not value:
         return ""
-    return normalize_base_url(value)
+    if "://" in value:
+        parsed = urlsplit(value)
+        if parsed.scheme != "https":
+            return ""
+        host = parsed.netloc
+    else:
+        host = value
+    host = host.strip().strip("/")
+    if not host or not _REDIRECT_HOST_RE.match(host):
+        return ""
+    return f"https://{host}"
 
 
 def remember_qrcode_credentials(qrcode: str, detail: Mapping[str, Any]) -> bool:

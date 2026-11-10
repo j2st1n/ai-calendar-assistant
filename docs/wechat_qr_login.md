@@ -29,7 +29,7 @@ openclaw-weixin 官方协议文档的「二维码登录」一节。
 | `expired` | 原样返回 | 提示二维码已过期，回到「获取二维码」 |
 | `need_verifycode` / `confirmed_but_need_verifycode` | 原样返回并附带 `need_verifycode: true` | 显示数字输入框；提交后下一轮轮询携带 `verify_code` |
 | `verify_code_blocked` | 原样返回 | 提示错误次数过多，要求重新取码 |
-| `scaned_but_redirect` | 返回 `redirect_host` | 后续轮询携带 `redirect_host`，改到 `https://<redirect_host>` |
+| `scaned_but_redirect` | 返回 `redirect_host`（仅接受 https 裸主机名/端口，非法值忽略） | 后续轮询携带 `redirect_host`，改到 `https://<redirect_host>` |
 | `binded_redirect` | 原样返回 | 提示该微信号已绑定、无需重复扫码，停止轮询 |
 
 凭证缓存（`app/integrations/ilink.py`，TTL 300 秒、带线程锁、最多 32 条）让
