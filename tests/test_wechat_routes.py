@@ -1,5 +1,6 @@
 import asyncio
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from app.integrations.ilink import (
 from app.web.routes import _qr_image_data_url, router, require_admin
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "app" / "web" / "templates"
+REPO_ROOT = TEMPLATES_DIR.parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -904,3 +906,103 @@ def test_poll_loop_builds_client_with_saved_baseurl(monkeypatch):
     asyncio.run(run(""))
     assert created == {"token": "tok", "base_url": "https://saved.example.test"}
     _FakeSettingsService.saved = {}
+
+
+# ---------------------------------------------------------------------------
+# Repair round 2:终态提示的可见性（binded_redirect 不得写入被隐藏的 step2）
+# ---------------------------------------------------------------------------
+
+class _DivAncestors(HTMLParser):
+    """Map every ``id`` on a ``<div>`` to its ancestor div ids."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._stack: list[str | None] = []
+        self.ancestors: dict[str, tuple[str, ...]] = {}
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        attributes = dict(attrs)
+        element_id = attributes.get("id")
+        if element_id:
+            self.ancestors[element_id] = tuple(item for item in self._stack if item)
+        if tag == "div":
+            self._stack.append(element_id)
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        return None
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self._stack:
+            self._stack.pop()
+
+
+def _div_ancestors(template: str) -> dict[str, tuple[str, ...]]:
+    parser = _DivAncestors()
+    parser.feed(template)
+    parser.close()
+    return parser.ancestors
+
+
+def _js_status_branch(template: str, condition: str) -> str:
+    """Return one ``if (status === ...)`` block body, up to the next branch."""
+    start = template.index(condition)
+    remainder = template[start:]
+    for stop in (
+        "\n    if (status === ",
+        "\n    state.waits += 1;",
+        "\n    // wait",
+    ):
+        index = remainder.find(stop)
+        if index != -1:
+            remainder = remainder[:index]
+    return remainder
+
+
+def test_notice_region_lives_outside_the_hidden_qr_step2():
+    # #qr-status is inside #qr-step-2, which the terminal branches hide; the
+    # binded_redirect hint must therefore live in a separate visible region.
+    for name in ("channels.html", "wechat.html"):
+        template = _template_text(name)
+        ancestors = _div_ancestors(template)
+        assert "qr-status" in ancestors, name
+        assert "qr-step-2" in ancestors["qr-status"], name
+        assert "qr-notice" in ancestors, name
+        assert "qr-step-2" not in ancestors["qr-notice"], name
+        assert "qr-notice-msg" in ancestors, name
+        assert "qr-step-2" not in ancestors["qr-notice-msg"], name
+
+
+def test_binded_redirect_hint_is_written_to_the_visible_notice():
+    for name in ("channels.html", "wechat.html"):
+        template = _template_text(name)
+        branch = _js_status_branch(template, "if (status === 'binded_redirect')")
+        assert "showQrNotice(" in branch, name
+        assert "该微信号已绑定到此服务" in branch, name
+        # Writing into the hidden status area would make the hint invisible.
+        assert "setQrStatus(" not in branch, name
+
+
+def test_expired_and_blocked_return_to_fetch_qr_button():
+    for name in ("channels.html", "wechat.html"):
+        template = _template_text(name)
+        for status in ("expired", "verify_code_blocked"):
+            branch = _js_status_branch(template, f"if (status === '{status}')")
+            assert "showQrStepsIdle(" in branch, (name, status)
+        match = re.search(r"function showQrStepsIdle\(\) \{(.*?)\n  \}", template, re.S)
+        assert match is not None, name
+        body = match.group(1)
+        assert "step1.style.display = ''" in body, name
+        assert "step2.style.display = 'none'" in body, name
+
+
+def test_docs_document_manual_recode_for_expired_and_blocked():
+    doc = (REPO_ROOT / "docs" / "wechat_qr_login.md").read_text(encoding="utf-8")
+    assert "手动重新取码" in doc
+    assert "不实现" in doc
+    assert "bot_spam_ticket" in doc
+    assert "60 秒" in doc
+    for status in ("`expired`", "`verify_code_blocked`"):
+        row = next(
+            line for line in doc.splitlines() if line.startswith(f"| {status} ")
+        )
+        assert "手动重新取码" in row, status

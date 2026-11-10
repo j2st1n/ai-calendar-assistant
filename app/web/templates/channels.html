@@ -61,6 +61,12 @@
           <button type="button" id="btn-fetch-qr" onclick="fetchQR()">获取二维码</button>
         </div>
 
+        {# 可见提示区：必须位于 #qr-step-2 之外，扫码流程结束时 #qr-step-2 会被隐藏，
+           写入其中的状态文本用户看不到（binded_redirect 等终态提示）。 #}
+        <div id="qr-notice" class="alert success" style="display:none;margin:12px 0 0 0;" role="status" aria-live="polite">
+          <p id="qr-notice-msg" style="margin:0;"></p>
+        </div>
+
         <div id="qr-step-2" style="display:none;margin-top:12px;">
           <div style="margin-bottom:12px;">
             <span class="muted" style="font-size:12px;">QR 码有效期内请尽快扫码</span>
@@ -677,6 +683,7 @@
     btn.textContent = '获取中...';
     hideError();
     hideQrRetry();
+    hideQrNotice();
     stopQrPolling();
 
     fetch('/console/wechat/qr', { method: 'POST' })
@@ -731,6 +738,7 @@
     lastQrCode = qrcode;
     qrPoll = { qrcode: qrcode, verifyCode: '', redirectHost: '', waits: 0, seenScan: false, stopped: false, paused: false, timer: null };
     hideQrRetry();
+    hideQrNotice();
     setQrStatus('<span class="dot dot-warning"></span>等待扫码...');
     scheduleQrPoll(0);
   }
@@ -745,6 +753,23 @@
   function setQrStatus(html) {
     var el = document.getElementById('qr-status');
     if (el) el.innerHTML = '<span class="status-badge">' + html + '</span>';
+  }
+
+  // 终态提示写在 #qr-step-2 之外的可见区域：binded_redirect 等状态会隐藏
+  // 二维码步骤，写入 #qr-status 的文本用户看不到。
+  function showQrNotice(msg) {
+    var box = document.getElementById('qr-notice');
+    var text = document.getElementById('qr-notice-msg');
+    if (!box || !text) return;
+    text.textContent = msg;
+    box.style.display = '';
+  }
+
+  function hideQrNotice() {
+    var box = document.getElementById('qr-notice');
+    var text = document.getElementById('qr-notice-msg');
+    if (box) box.style.display = 'none';
+    if (text) text.textContent = '';
   }
 
   function qrStatusUrl(state) {
@@ -785,6 +810,7 @@
     var state = qrPoll;
     if (!state) return;
     var status = d.status || 'wait';
+    hideQrNotice();
     if (status === 'scaned') {
       state.seenScan = true;
       state.waits = 0;
@@ -817,10 +843,11 @@
     }
     if (status === 'binded_redirect') {
       // 官方语义：该 Bot 已绑定，不再签发新凭证；不是错误状态。
+      // 提示必须写到 step2 之外的可见区，二维码步骤会被隐藏。
       stopQrPolling();
       showQrStepsIdle();
       hideError();
-      setQrStatus('<span class="dot dot-success"></span>该微信号已绑定到此服务，无需再次扫码，可直接点击「启动 Bot」');
+      showQrNotice('该微信号已绑定到此服务，无需再次扫码，可直接点击「启动 Bot」。');
       return;
     }
     if (status === 'expired') {
@@ -923,6 +950,7 @@
           document.getElementById('qr-step-3').style.display = '';
           hideError();
           hideQrRetry();
+          hideQrNotice();
           setTimeout(function() {
             window.location.href = '/console/channels?tab=wechat&message=' + encodeURIComponent('微信登录成功，Bot Token 已保存。');
           }, 800);

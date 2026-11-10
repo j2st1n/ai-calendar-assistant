@@ -26,11 +26,21 @@ openclaw-weixin 官方协议文档的「二维码登录」一节。
 | `wait` | 原样返回 | 继续等待；超过 30 轮（约 20 分钟）提示重新取码 |
 | `scaned` | 原样返回 | 「已扫码，请在手机上确认登录」，清空并停止携带 verify_code |
 | `confirmed` | 把 `bot_token` / `ilink_bot_id` / `baseurl` / `ilink_user_id` 写入 5 分钟内存缓存，响应只给 `has_token` 布尔 | 立即 `POST /console/wechat/save`，成功后展示已保存并刷新页面 |
-| `expired` | 原样返回 | 提示二维码已过期，回到「获取二维码」 |
+| `expired` | 原样返回 | 提示二维码已过期，回到「获取二维码」手动重新取码（见下） |
 | `need_verifycode` / `confirmed_but_need_verifycode` | 原样返回并附带 `need_verifycode: true` | 显示数字输入框；提交后下一轮轮询携带 `verify_code` |
-| `verify_code_blocked` | 原样返回 | 提示错误次数过多，要求重新取码 |
+| `verify_code_blocked` | 原样返回 | 提示错误次数过多，要求手动重新取码（见下） |
 | `scaned_but_redirect` | 返回 `redirect_host`（仅接受 https 裸主机名/端口，非法值忽略） | 后续轮询携带 `redirect_host`，改到 `https://<redirect_host>` |
-| `binded_redirect` | 原样返回 | 提示该微信号已绑定、无需重复扫码，停止轮询 |
+| `binded_redirect` | 原样返回 | 提示该微信号已绑定、无需重复扫码，停止轮询；提示写在校验码步骤之外的可见区 |
+
+### expired / verify_code_blocked：本控制台手动重新取码
+
+官方客户端在 `expired` / `verify_code_blocked` 时会自动重新 `POST get_bot_qrcode`，
+并带一套「刷新计数从 1 开始、大于 3 停止」与「`bot_spam_ticket` 距 `expire_time`
+不足 60 秒则不再换码」的规则。本控制台**不实现**这两条规则，改为提示操作者点击
+「获取二维码」手动重新取码：本次范围外，且本应用的取码请求只有
+`local_token_list`（无 `bot_spam_ticket`），也不支持他人绑定/实名授权流程，
+这些自动换码规则没有适用对象。扫码页回到 `#qr-step-1` 并把提示显示在
+`#qr-step-2` 之外的可见区域。
 
 凭证缓存（`app/integrations/ilink.py`，TTL 300 秒、带线程锁、最多 32 条）让
 `/console/wechat/save` 复用 `confirmed` 的原始载荷，避免二次长轮询在

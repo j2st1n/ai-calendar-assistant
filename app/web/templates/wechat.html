@@ -95,6 +95,11 @@
     <button type="button" id="btn-fetch-qr" onclick="fetchQR()">获取二维码</button>
   </div>
 
+  {# 可见提示区：位于 #qr-step-2 之外，终态提示不会因二维码步骤隐藏而消失。 #}
+  <div id="qr-notice" class="alert success" style="display:none;margin:16px 0 0 0;" role="status" aria-live="polite">
+    <p id="qr-notice-msg" style="margin:0;"></p>
+  </div>
+
   <div id="qr-step-2" style="display:none;margin-top:16px;">
     <div style="margin-bottom:12px;">
       <span class="muted" style="font-size:12px;">QR 码有效期内请尽快扫码</span>
@@ -207,6 +212,7 @@
     btn.disabled = true;
     btn.textContent = '获取中...';
     hideError();
+    hideQrNotice();
     stopPolling();
 
     fetch('/console/wechat/qr', { method: 'POST' })
@@ -247,6 +253,7 @@
     if (!qrcode) return;
     stopPolling();
     qrPoll = { qrcode: qrcode, verifyCode: '', redirectHost: '', waits: 0, seenScan: false, stopped: false, paused: false, timer: null };
+    hideQrNotice();
     setQrStatus('<span class="dot dot-warning"></span>等待扫码...');
     schedulePoll(0);
   }
@@ -273,6 +280,30 @@
   function setQrStatus(html) {
     var el = document.getElementById('qr-status');
     if (el) el.innerHTML = '<span class="status-badge">' + html + '</span>';
+  }
+
+  // 终态提示写在 #qr-step-2 之外的可见区域（该步骤会被隐藏）。
+  function showQrNotice(msg) {
+    var box = document.getElementById('qr-notice');
+    var text = document.getElementById('qr-notice-msg');
+    if (!box || !text) return;
+    text.textContent = msg;
+    box.style.display = '';
+  }
+
+  function hideQrNotice() {
+    var box = document.getElementById('qr-notice');
+    var text = document.getElementById('qr-notice-msg');
+    if (box) box.style.display = 'none';
+    if (text) text.textContent = '';
+  }
+
+  function showQrStepsIdle() {
+    var step1 = document.getElementById('qr-step-1');
+    var step2 = document.getElementById('qr-step-2');
+    if (step1) step1.style.display = '';
+    if (step2) step2.style.display = 'none';
+    hideVerifyCode();
   }
 
   function pollStatus() {
@@ -304,6 +335,7 @@
     var state = qrPoll;
     if (!state) return;
     var status = d.status || 'wait';
+    hideQrNotice();
     if (status === 'scaned') {
       state.seenScan = true;
       state.waits = 0;
@@ -333,20 +365,22 @@
       return;
     }
     if (status === 'binded_redirect') {
+      // 终态提示写入 step2 之外的可见区；二维码步骤会被隐藏。
       stopPolling();
-      document.getElementById('qr-step-2').style.display = 'none';
-      document.getElementById('qr-step-1').style.display = '';
+      showQrStepsIdle();
       hideError();
-      setQrStatus('<span class="dot dot-success"></span>该微信号已绑定到此服务，无需再次扫码');
+      showQrNotice('该微信号已绑定到此服务，无需再次扫码，可直接点击「启动 Bot」。');
       return;
     }
     if (status === 'expired') {
       stopPolling();
+      showQrStepsIdle();
       showError('二维码已过期，请重新获取。');
       return;
     }
     if (status === 'verify_code_blocked') {
       stopPolling();
+      showQrStepsIdle();
       showError('验证码错误次数过多，请重新获取二维码后再试。');
       return;
     }
@@ -363,6 +397,7 @@
     if (!state) return;
     if (state.waits >= QR_WAIT_LIMIT) {
       stopPolling();
+      showQrStepsIdle();
       showError('二维码长时间未确认，可能已过期，请重新获取。');
     }
   }
@@ -425,6 +460,7 @@
         document.getElementById('qr-step-2').style.display = 'none';
         document.getElementById('qr-step-3').style.display = '';
         hideError();
+        hideQrNotice();
         setTimeout(function(){ location.reload(); }, 1200);
       } else {
         showQrHint((d && d.error) || '保存登录凭证失败，请重试。');
