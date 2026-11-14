@@ -2,6 +2,9 @@
 
 :root {
   --color-scheme: dark;
+  color-scheme: var(--color-scheme);
+  --brand-logo-brightness: 1.18;
+  --brand-logo-saturation: 0.9;
   --bg-app: #08090a;
   --bg-surface: #0f1011;
   --bg-card: rgba(255, 255, 255, 0.02);
@@ -36,6 +39,8 @@
 
 html[data-theme="light"] {
   --color-scheme: light;
+  --brand-logo-brightness: 0.94;
+  --brand-logo-saturation: 1.06;
   --bg-app: #f4f5f7;
   --bg-surface: #ffffff;
   --bg-card: #ffffff;
@@ -71,6 +76,8 @@ html[data-theme="light"] {
 @media (prefers-color-scheme: light) {
   html[data-theme="auto"] {
     --color-scheme: light;
+    --brand-logo-brightness: 0.94;
+    --brand-logo-saturation: 1.06;
     --bg-app: #f4f5f7;
     --bg-surface: #ffffff;
     --bg-card: #ffffff;
@@ -131,6 +138,10 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.brand-logo {
+  object-fit: contain;
+  filter: brightness(var(--brand-logo-brightness)) saturate(var(--brand-logo-saturation));
 }
 .topbar-brand strong {
   color: var(--text-primary);

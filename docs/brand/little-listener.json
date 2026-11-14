@@ -32,5 +32,22 @@
       "format": "ICO"
     }
   },
-  "export_method": "Resampling and format conversion only; selected artwork unchanged."
+  "export_method": "Resampling and format conversion only; selected artwork unchanged.",
+  "theme_adaptation": {
+    "method": "Original PNG with runtime CSS brightness and saturation; favicon is rendered locally in the browser using the same theme values.",
+    "light": {
+      "brightness": 0.94,
+      "saturation": 1.06
+    },
+    "dark": {
+      "brightness": 1.18,
+      "saturation": 0.9
+    },
+    "modes": [
+      "auto",
+      "light",
+      "dark"
+    ],
+    "fallback": "Original ICO when canvas export is unavailable."
+  }
 }

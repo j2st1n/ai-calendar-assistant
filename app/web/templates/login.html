@@ -6,9 +6,9 @@
 {% endblock %}
 {% block content_login %}
 <section class="card narrow">
-  <h1 style="font-size: 20px; font-weight: 590; letter-spacing: -0.24px; color: #f7f8f8;">登录后台</h1>
+  <h1 style="font-size: 20px; font-weight: 590; letter-spacing: -0.24px; color: var(--text-primary);">登录后台</h1>
   <details style="margin-bottom: 20px; font-size: 13px;">
-    <summary style="cursor: pointer; color: #8a8f98; user-select: none;">首次部署帮助</summary>
+    <summary style="cursor: pointer; color: var(--text-secondary); user-select: none;">首次部署帮助</summary>
     <p class="muted" style="margin-top: 8px; margin-bottom: 0; font-size: 12px; line-height: 1.5;">首次启动生成的管理员密码可在 Docker 日志中查看。</p>
   </details>
   {% if error %}<p class="alert error">{{ error }}</p>{% endif %}
@@ -26,9 +26,9 @@
   </div>
 
   <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
-    <span style="flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08);"></span>
-    <span style="font-size: 12px; color: #62666d;">或使用账号密码</span>
-    <span style="flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08);"></span>
+    <span style="flex: 1; height: 1px; background: var(--border-base);"></span>
+    <span style="font-size: 12px; color: var(--text-secondary);">或使用账号密码</span>
+    <span style="flex: 1; height: 1px; background: var(--border-base);"></span>
   </div>
 
   <form method="post" action="/console/login" class="stack">

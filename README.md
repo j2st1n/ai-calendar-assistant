@@ -5,7 +5,7 @@
 自部署的私人 AI 日程管理助手。通过 Telegram / Discord / WeChat 对话自然语言与图片输入，AI 自动提取、智能修改并写入 CalDAV 日历。提供现代 Web 控制台、初次配置向导、多渠道集中管理、服务监控仪表盘与只读日历时间轴。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version: v1.22.6](https://img.shields.io/badge/version-v1.22.6-blue)](https://github.com/j2st1n/ai-calendar-assistant/releases/tag/v1.22.6)
+[![Version: v1.22.7](https://img.shields.io/badge/version-v1.22.7-blue)](https://github.com/j2st1n/ai-calendar-assistant/releases/tag/v1.22.7)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/j2st1n/ai-calendar-assistant/pkgs/container/ai-calendar-assistant)
 
 ---
@@ -28,7 +28,7 @@
   - **日历设置 (`/console/caldav`)**：左栏表单配置，右栏实时测试 CalDAV 连接、日历列表发现、只读写入权限探针与自动回滚清理，支持服务商预设、IANA 时区选择与状态双向复核。
 - 📅 **只读日历时间轴 (`/console/calendar`)**：实时拉取 CalDAV 日程数据，支持按天/周/月/全部跨度筛选，配置 30 秒内存短缓存，提供带来源标示与时区感知的轻量日程时间线。
 - 📥 **失败收件箱与事件记录 (`/console/events`)**：手机卡片化展示，支持按渠道、状态与处理日期多维度检索；历史失败智能分类（AI / CalDAV / Channel）并提供针对性处置建议；支持单条与批量事件局部防重重试（UID 幂等锁）。
-- 🎨 **多主题与可访问性 (a11y)**：支持跟随系统、浅色 (Light)、深色 (Dark) 三种现代设计主题平滑切换；WCAG AA 级高文本对比度与全局焦点环设计，适配全平台触控体验。
+- 🎨 **多主题与可访问性 (a11y)**：支持跟随系统、浅色 (Light)、深色 (Dark) 三种现代设计主题平滑切换；小听 Logo 与浏览器图标同步适配，记住选择并同步多个标签页，跟随系统时实时响应系统主题变化；WCAG AA 级高文本对比度与全局焦点环设计，适配全平台触控体验。
 
 ### 3. 连接与兼容生态
 - 🤖 **自定义 AI 供应商**：支持 OpenAI、DeepSeek、Anthropic、OpenRouter、Ollama、SiliconFlow 等任意兼容 OpenAI 协议的模型，支持独立配置识图模型。
@@ -55,7 +55,7 @@
 services:
   app:
     network_mode: host
-    image: ghcr.io/j2st1n/ai-calendar-assistant:v1.22.6
+    image: ghcr.io/j2st1n/ai-calendar-assistant:v1.22.7
     environment:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
@@ -229,7 +229,7 @@ Bot ：📦 批量日程处理完成 (共 3 项，成功 3 项)：
 创建 `.env` 文件：
 
 ```env
-APP_VERSION=v1.22.6
+APP_VERSION=v1.22.7
 PUBLIC_ORIGIN=https://calendar.example.com
 WEBAUTHN_RP_ID=calendar.example.com
 TRUSTED_HOSTS=calendar.example.com,127.0.0.1,localhost
@@ -241,7 +241,7 @@ SECURE_COOKIES=true
 
 | 变量 | 示例 | 说明 |
 |---|---|---|
-| `APP_VERSION` | `v1.22.6` | 指定镜像版本标签，生产环境建议固定版本 |
+| `APP_VERSION` | `v1.22.7` | 指定镜像版本标签，生产环境建议固定版本 |
 | `PUBLIC_ORIGIN` | `https://calendar.example.com` | 控制台公网完整 Origin，末尾切勿加 `/` |
 | `WEBAUTHN_RP_ID` | `calendar.example.com` | 通行密钥 RP ID，仅填域名，无协议/端口/路径 |
 | `TRUSTED_HOSTS` | `calendar.example.com,127.0.0.1,localhost` | 允许的主机头白名单 |
@@ -273,8 +273,8 @@ docker compose up -d
 docker compose pull && docker compose up -d
 
 # 或指定版本升级 / 回滚
-APP_VERSION=v1.22.6 docker compose pull app
-APP_VERSION=v1.22.6 docker compose up -d --force-recreate app
+APP_VERSION=v1.22.7 docker compose pull app
+APP_VERSION=v1.22.7 docker compose up -d --force-recreate app
 ```
 
 ### 备份与恢复

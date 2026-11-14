@@ -12,9 +12,13 @@ from app.main import create_app
 def test_base_html_theme_switcher_and_anti_flicker():
     template = Path("app/web/templates/base.html").read_text()
 
-    # 防闪烁内联脚本在 head 中
+    # 内联引导脚本保留首次渲染防闪烁，交互脚本延后加载。
+    theme_script = Path("app/web/static/theme.js").read_text()
     assert "localStorage.getItem('theme')" in template
     assert "document.documentElement.setAttribute('data-theme', theme);" in template
+    assert "localStorage.getItem('theme')" in theme_script
+    assert "root.setAttribute('data-theme', currentTheme);" in theme_script
+    assert template.index('/static/theme.js?v=1') < template.index('/static/styles.css?v=9')
 
     # 顶部导航栏三态快捷切换按钮
     assert 'class="theme-switcher"' in template
