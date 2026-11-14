@@ -1,0 +1,36 @@
+{
+  "name": "Little Listener / 小听",
+  "selected_at": "2026-11-14",
+  "source": "OpenAI built-in image_gen",
+  "prompt": "Use case: logo-brand. Asset type: exploratory standalone logo symbol for a friendly conversational scheduling assistant, cal-assistant.\nCreative direction D, \"Little Listener\": a warm expressive abstract assistant character, a plump softly asymmetric periwinkle speech-bubble creature with two small deep-ink oval eyes. The creature tilts very slightly forward as though listening attentively. One small peach-colored teardrop at its upper-right side suggests a thought being remembered. The compact body has one short integrated speech tail, no legs, no arms, no antenna, no robot hardware. The eyes and subtly uneven organic silhouette supply all its personality: curious, capable, friendly, not infantile. Give this a distinctive ownable memorable silhouette with sophisticated playful proportions.\nFlat contemporary editorial logo, two or three clean shapes, smooth edges, broad simple shapes, zero texture or effects. Main periwinkle #7972ED, deep ink eyes #22213A, muted apricot thought accent #F4B38E. Real transparent background; single isolated centered logo occupying 78% of square canvas, generous margins. No calendar, no calendar-binding tabs, no clock, no checkmark, no letter C, no typography, no text, no wordmark, no gradients, no 3D, no shadow, no app tile, no mockup, no presentation board. This is a fresh character-based branding exploration, not a variation of a calendar outline.",
+  "master": {
+    "path": "docs/brand/little-listener.png",
+    "size": [
+      1254,
+      1254
+    ],
+    "format": "RGBA PNG"
+  },
+  "exports": {
+    "app/web/static/cal-assistant-logo.png": {
+      "size": [
+        512,
+        512
+      ],
+      "format": "RGBA PNG"
+    },
+    "app/web/static/favicon.ico": {
+      "sizes": [
+        16,
+        24,
+        32,
+        48,
+        64,
+        128,
+        256
+      ],
+      "format": "ICO"
+    }
+  },
+  "export_method": "Resampling and format conversion only; selected artwork unchanged."
+}

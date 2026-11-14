@@ -19,3 +19,6 @@ data/*
 .venv/
 .uv-python/
 .pytest_cache/
+
+# Local logo explorations; the selected master is docs/brand/little-listener.png
+/docs/brand/logo-20261114/

@@ -104,7 +104,7 @@ def test_base_template_uses_the_standard_favicon_route():
     template = Path("app/web/templates/base.html").read_text()
 
     assert template.count('rel="icon"') == 1
-    assert 'href="/favicon.ico"' in template
+    assert 'href="/favicon.ico?v=20261114"' in template
     assert "calendar-icon-alt.png" not in template
 
 
