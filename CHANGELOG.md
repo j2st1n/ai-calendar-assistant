@@ -1,5 +1,33 @@
 # Changelog
 
+## [v1.22.6] - 2026-11-14
+
+
+### Bug Fixes
+
+- 扫码终态提示移到可见区并补手动换码说明
+
+- 收紧二维码轮询 redirect_host 校验
+
+- 修复微信扫码登录轮询断链与长轮询状态处理
+
+
+
+### Features
+
+- 采用小听 Logo 并统一应用品牌图标
+
+
+
+### Maintenance
+
+- 修正本机路径检查的自匹配
+
+- 增加本机绝对路径检查
+
+- 删除过期验收与规划文档
+
+
 ## [v1.22.5] - 2026-11-08
 
 
@@ -12,6 +40,12 @@
 ### Documentation
 
 - update version references to v1.22.4 in README
+
+
+
+### Maintenance
+
+- release v1.22.5
 
 
 ## [v1.22.4] - 2026-11-08
